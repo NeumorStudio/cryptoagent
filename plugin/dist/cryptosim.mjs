@@ -37824,8 +37824,14 @@ function dbEvents() {
     events.push({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: a.title, body: a.body ?? void 0 });
   }
   for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal").all()) {
-    const body = [j.reasoning ? `Motivo: ${j.reasoning}` : "", j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : ""].filter(Boolean).join("\n\n");
-    events.push({ id: `j${j.id}`, ts: j.ts, kind: JOURNAL_KIND[j.kind] ?? "tool", title: j.summary, body: body || void 0 });
+    events.push({
+      id: `j${j.id}`,
+      ts: j.ts,
+      kind: JOURNAL_KIND[j.kind] ?? "tool",
+      title: j.summary,
+      note: j.reasoning ?? void 0,
+      body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : void 0
+    });
   }
   for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons").all()) {
     events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lecci\xF3n #${l.id}, de la misi\xF3n #${l.mission_id}` : void 0 });
@@ -37983,6 +37989,16 @@ var MAX_WAIT_MINUTES = 10;
 var FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 var isTradingTool = (name) => name.startsWith("simulate_") || name.endsWith("_trigger_order");
 var reasoning = external_exports.string().describe("Por qu\xE9 haces esto. Queda en el diario.");
+var thesis = external_exports.object({
+  why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
+  evidence: external_exports.string().min(1).describe("Qu\xE9 has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
+  sources: external_exports.array(external_exports.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
+  exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)")
+}).describe("Tesis de la operaci\xF3n. Queda en el diario y el usuario la ve en el panel.");
+var formatThesis = (t) => `Por qu\xE9: ${t.why}
+Pruebas: ${t.evidence}
+Fuentes: ${t.sources.join(" \xB7 ")}
+Plan: ${t.exit_plan}`;
 var SIM_TOOLS = [
   tool({
     name: "field_guide",
@@ -38063,15 +38079,24 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       output: external_exports.string(),
       amount: external_exports.number().positive(),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
-      reasoning
+      thesis
     }),
-    run: async (i, ctx) => json2(await swapSolana({ sessionId: ctx.sessionId, input: i.input, output: i.output, amount: i.amount, slippageBps: i.slippage_bps, reasoning: i.reasoning }))
+    run: async (i, ctx) => json2(
+      await swapSolana({
+        sessionId: ctx.sessionId,
+        input: i.input,
+        output: i.output,
+        amount: i.amount,
+        slippageBps: i.slippage_bps,
+        reasoning: formatThesis(i.thesis)
+      })
+    )
   }),
   tool({
     name: "simulate_binance_market_order",
     description: "Ejecuta en simulaci\xF3n una orden de mercado en Binance spot contra el order book real (precio medio y slippage reales, comisi\xF3n taker incluida). BUY: amount = cantidad del activo quote a gastar. SELL: amount = cantidad del activo base a vender. symbol: par de Binance, p. ej. BTCUSDC.",
-    schema: external_exports.object({ symbol: external_exports.string(), side: external_exports.enum(["BUY", "SELL"]), amount: external_exports.number().positive(), reasoning }),
-    run: async (i, ctx) => json2(await binanceMarketOrder({ sessionId: ctx.sessionId, ...i }))
+    schema: external_exports.object({ symbol: external_exports.string(), side: external_exports.enum(["BUY", "SELL"]), amount: external_exports.number().positive(), thesis }),
+    run: async (i, ctx) => json2(await binanceMarketOrder({ sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis) }))
   }),
   tool({
     name: "simulate_transfer",
@@ -38091,7 +38116,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       amount: external_exports.number().positive().describe("Cantidad del token de entrada"),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(100),
       expires_hours: external_exports.number().positive().optional(),
-      reasoning
+      thesis
     }),
     run: async (i, ctx) => json2(
       await placeOrder({
@@ -38102,7 +38127,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         triggerPrice: i.trigger_price,
         action: { input: i.input, output: i.output, amount: i.amount, slippageBps: i.slippage_bps },
         expiresHours: i.expires_hours,
-        reasoning: i.reasoning
+        reasoning: formatThesis(i.thesis)
       })
     )
   }),
@@ -38117,7 +38142,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       side: external_exports.enum(["BUY", "SELL"]),
       amount: external_exports.number().positive().describe("BUY: cantidad de quote a gastar. SELL: cantidad base a vender"),
       expires_hours: external_exports.number().positive().optional(),
-      reasoning
+      thesis
     }),
     run: async (i, ctx) => json2(
       await placeOrder({
@@ -38128,7 +38153,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         triggerPrice: i.trigger_price,
         action: { symbol: i.symbol, side: i.side, amount: i.amount },
         expiresHours: i.expires_hours,
-        reasoning: i.reasoning
+        reasoning: formatThesis(i.thesis)
       })
     )
   }),

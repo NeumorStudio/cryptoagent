@@ -32,6 +32,8 @@ export interface TimelineEvent {
   ts: string;
   kind: EventKind;
   title: string;
+  /** Motivo o tesis de una operación: se muestra siempre visible. */
+  note?: string;
   body?: string;
 }
 
@@ -191,10 +193,14 @@ function dbEvents(): TimelineEvent[] {
     events.push({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: a.title, body: a.body ?? undefined });
   }
   for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal").all() as any[]) {
-    const body = [j.reasoning ? `Motivo: ${j.reasoning}` : "", j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : ""]
-      .filter(Boolean)
-      .join("\n\n");
-    events.push({ id: `j${j.id}`, ts: j.ts, kind: JOURNAL_KIND[j.kind] ?? "tool", title: j.summary, body: body || undefined });
+    events.push({
+      id: `j${j.id}`,
+      ts: j.ts,
+      kind: JOURNAL_KIND[j.kind] ?? "tool",
+      title: j.summary,
+      note: j.reasoning ?? undefined,
+      body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : undefined,
+    });
   }
   for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons").all() as any[]) {
     events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lección #${l.id}, de la misión #${l.mission_id}` : undefined });

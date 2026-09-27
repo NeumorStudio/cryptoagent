@@ -17,6 +17,22 @@ const isTradingTool = (name: string) => name.startsWith("simulate_") || name.end
 
 const reasoning = z.string().describe("Por qué haces esto. Queda en el diario.");
 
+// Tesis obligatoria en cada operación de trading: obliga a argumentar con pruebas y fuentes.
+const thesis = z
+  .object({
+    why: z.string().min(1).describe("Por qué esta operación y por qué ahora"),
+    evidence: z.string().min(1).describe("Qué has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
+    sources: z.array(z.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
+    exit_plan: z
+      .string()
+      .min(1)
+      .describe("Cuándo cerrarías con beneficio y cuándo la darías por fallida (si es una venta: qué harás después)"),
+  })
+  .describe("Tesis de la operación. Queda en el diario y el usuario la ve en el panel.");
+
+const formatThesis = (t: z.infer<typeof thesis>) =>
+  `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}`;
+
 // Herramientas del simulador: las comparten el runner por API y el servidor MCP.
 export const SIM_TOOLS = [
   tool({
@@ -112,10 +128,19 @@ ${json(await mission.missionStatus())}`;
       output: z.string(),
       amount: z.number().positive(),
       slippage_bps: z.number().int().min(1).max(5000).default(50),
-      reasoning,
+      thesis,
     }),
     run: async (i, ctx) =>
-      json(await sim.swapSolana({ sessionId: ctx.sessionId, input: i.input, output: i.output, amount: i.amount, slippageBps: i.slippage_bps, reasoning: i.reasoning })),
+      json(
+        await sim.swapSolana({
+          sessionId: ctx.sessionId,
+          input: i.input,
+          output: i.output,
+          amount: i.amount,
+          slippageBps: i.slippage_bps,
+          reasoning: formatThesis(i.thesis),
+        }),
+      ),
   }),
   tool({
     name: "simulate_binance_market_order",
@@ -123,8 +148,9 @@ ${json(await mission.missionStatus())}`;
       "Ejecuta en simulación una orden de mercado en Binance spot contra el order book real (precio medio y slippage reales, " +
       "comisión taker incluida). BUY: amount = cantidad del activo quote a gastar. SELL: amount = cantidad del activo base a vender. " +
       "symbol: par de Binance, p. ej. BTCUSDC.",
-    schema: z.object({ symbol: z.string(), side: z.enum(["BUY", "SELL"]), amount: z.number().positive(), reasoning }),
-    run: async (i, ctx) => json(await sim.binanceMarketOrder({ sessionId: ctx.sessionId, ...i })),
+    schema: z.object({ symbol: z.string(), side: z.enum(["BUY", "SELL"]), amount: z.number().positive(), thesis }),
+    run: async (i, ctx) =>
+      json(await sim.binanceMarketOrder({ sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis) })),
   }),
   tool({
     name: "simulate_transfer",
@@ -150,7 +176,7 @@ ${json(await mission.missionStatus())}`;
       amount: z.number().positive().describe("Cantidad del token de entrada"),
       slippage_bps: z.number().int().min(1).max(5000).default(100),
       expires_hours: z.number().positive().optional(),
-      reasoning,
+      thesis,
     }),
     run: async (i, ctx) =>
       json(
@@ -162,7 +188,7 @@ ${json(await mission.missionStatus())}`;
           triggerPrice: i.trigger_price,
           action: { input: i.input, output: i.output, amount: i.amount, slippageBps: i.slippage_bps },
           expiresHours: i.expires_hours,
-          reasoning: i.reasoning,
+          reasoning: formatThesis(i.thesis),
         }),
       ),
   }),
@@ -180,7 +206,7 @@ ${json(await mission.missionStatus())}`;
       side: z.enum(["BUY", "SELL"]),
       amount: z.number().positive().describe("BUY: cantidad de quote a gastar. SELL: cantidad base a vender"),
       expires_hours: z.number().positive().optional(),
-      reasoning,
+      thesis,
     }),
     run: async (i, ctx) =>
       json(
@@ -192,7 +218,7 @@ ${json(await mission.missionStatus())}`;
           triggerPrice: i.trigger_price,
           action: { symbol: i.symbol, side: i.side, amount: i.amount },
           expiresHours: i.expires_hours,
-          reasoning: i.reasoning,
+          reasoning: formatThesis(i.thesis),
         }),
       ),
   }),

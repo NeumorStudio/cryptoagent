@@ -18,7 +18,7 @@ Necesitas **Node.js 22.13 o superior** (usa el SQLite integrado en Node).
 En Claude Code:
 
 ```
-/plugin marketplace add elneumorstudio/cryptoagent
+/plugin marketplace add NeumorStudio/cryptoagent
 /plugin install cryptoagent@cryptoagent
 ```
 

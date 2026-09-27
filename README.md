@@ -92,6 +92,7 @@ npm run build:plugin      # regenera plugin/dist a partir de src/
 npm run typecheck
 npm test                  # tests (cada archivo usa una base de datos temporal)
 npx tsx scripts/migrate-dry.ts   # prueba las migraciones sobre una copia de ~/.cryptoagent/sim.db
+npx tsx scripts/smoke.ts         # recorrido contra las APIs reales en una base de datos temporal
 ```
 
 Los cambios de esquema van en `src/migrations.ts`, como un paso nuevo al final de la lista. Antes de migrar una

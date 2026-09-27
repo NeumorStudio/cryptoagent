@@ -1,13 +1,8 @@
 // Registro objetivo de posiciones: el simulador anota cada compra y venta con sus datos reales,
 // para que el agente aprenda de resultados medidos y no de su propia impresión.
 import { db, now } from "../db.js";
-import { fetchJson } from "../market/http.js";
-import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
-import type { TradeMeta } from "./types.js";
-
-const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
-const CASH_MINTS = new Set([USDC_MINT, USDT_MINT]);
-const CASH_TICKERS = new Set(["USDC", "USDT", "FDUSD"]);
+import type { Features, TradeMeta, VenueId } from "./types.js";
+import { getVenue } from "./venues/index.js";
 
 export type { TradeMeta };
 
@@ -17,42 +12,10 @@ interface PositionRow {
   cost_open_usd: number;
   realized_cost_usd: number;
   realized_proceeds_usd: number;
-}
-
-async function usdPrices(mints: string[]): Promise<Record<string, number>> {
-  const need = mints.filter((m) => !CASH_MINTS.has(m));
-  const prices: Record<string, number> = {};
-  for (const m of mints) if (CASH_MINTS.has(m)) prices[m] = 1;
-  if (need.length) {
-    const data = await fetchJson<Record<string, { usdPrice?: number } | null>>(`https://lite-api.jup.ag/price/v3?ids=${need.join(",")}`);
-    for (const m of need) if (typeof data[m]?.usdPrice === "number") prices[m] = data[m]!.usdPrice!;
-  }
-  return prices;
-}
-
-/** Datos del token en el momento de entrar (fuente: Jupiter y RugCheck). */
-async function entryFeatures(mint: string) {
-  const [jup, rug] = await Promise.allSettled([
-    fetchJson<any[]>(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8000),
-    fetchJson<any>(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, 8000),
-  ]);
-  const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : undefined;
-  const risks = rug.status === "fulfilled" ? (rug.value.risks ?? []) : undefined;
-  const round = (v: unknown, d = 2) => (typeof v === "number" ? Number(v.toFixed(d)) : undefined);
-  return {
-    ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 60_000) : undefined,
-    liquidityUsd: round(t?.liquidity, 0),
-    mcapUsd: round(t?.mcap, 0),
-    priceChange5mPct: round(t?.stats5m?.priceChange),
-    priceChange1hPct: round(t?.stats1h?.priceChange),
-    holders: t?.holderCount,
-    topHoldersPct: round(t?.audit?.topHoldersPercentage, 1),
-    netBuyers5m: t?.stats5m?.numNetBuyers,
-    organicScore: round(t?.organicScore, 1),
-    launchpad: t?.launchpad,
-    rugcheckDangerRisks: risks ? risks.filter((r: any) => r.level === "danger").length : undefined,
-    rugcheckWarnRisks: risks ? risks.filter((r: any) => r.level === "warn").length : undefined,
-  };
+  entry_features: string | null;
+  research: string | null;
+  thesis: string | null;
+  lessons_applied: string | null;
 }
 
 /** Cuánto investigó el agente antes de esta entrada (solo herramientas del simulador). */
@@ -83,7 +46,10 @@ async function openOrAdd(args: {
   qty: number;
   costUsd: number;
   meta?: TradeMeta;
-  mint?: string;
+  /** Datos del token al entrar (solo si es una posición nueva). */
+  features?: () => Promise<Features>;
+  /** Posición que llega de otro sitio: conserva sus datos de entrada, investigación y tesis. */
+  inherit?: Pick<PositionRow, "entry_features" | "research" | "thesis" | "lessons_applied">;
 }) {
   const missionId = args.missionId;
   const existing = db
@@ -97,8 +63,10 @@ async function openOrAdd(args: {
     );
     return;
   }
-  const features = args.mint ? await entryFeatures(args.mint).catch(() => ({})) : {};
-  const research = researchSnapshot(missionId, args.mint ?? args.asset);
+  const features = args.inherit
+    ? args.inherit.entry_features
+    : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
+  const research = args.inherit ? args.inherit.research : JSON.stringify(researchSnapshot(missionId, args.asset));
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -110,10 +78,10 @@ async function openOrAdd(args: {
     now(),
     args.qty,
     args.costUsd,
-    JSON.stringify(features),
-    JSON.stringify(research),
-    args.meta?.thesis ?? null,
-    args.meta?.lessonsApplied ?? null,
+    features,
+    research,
+    args.inherit ? args.inherit.thesis : (args.meta?.thesis ?? null),
+    args.inherit ? args.inherit.lessons_applied : (args.meta?.lessonsApplied ?? null),
   );
 }
 
@@ -142,63 +110,77 @@ function reduce(args: { missionId: number; venue: string; asset: string; qty: nu
   );
 }
 
-export async function recordSolanaSwap(args: {
+/**
+ * Registra una operación: reduce la posición del activo vendido y abre (o amplía) la del comprado.
+ * Las stablecoins no son posiciones. `valueUsd` es el valor de la operación en USD.
+ */
+export async function recordTrade(args: {
   missionId: number;
-  inputMint: string;
-  outputMint: string;
-  inputSymbol: string;
-  outputSymbol: string;
-  inAmount: number;
-  outAmount: number;
+  venue: VenueId;
+  sold: { asset: string; qty: number };
+  bought: { asset: string; symbol: string; qty: number };
+  valueUsd: number;
   meta?: TradeMeta;
 }) {
-  const prices = await usdPrices([args.inputMint, args.outputMint]);
-  const inUsd = (prices[args.inputMint] ?? 0) * args.inAmount;
-  const outUsd = (prices[args.outputMint] ?? 0) * args.outAmount;
-  // El valor de la operación: preferimos el lado estable si lo hay (es exacto).
-  const valueUsd = CASH_MINTS.has(args.inputMint) ? args.inAmount : CASH_MINTS.has(args.outputMint) ? args.outAmount : inUsd || outUsd;
-  if (!CASH_MINTS.has(args.inputMint)) {
-    reduce({ missionId: args.missionId, venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
+  const venue = getVenue(args.venue);
+  if (!venue.isCash(args.sold.asset)) {
+    reduce({ missionId: args.missionId, venue: args.venue, asset: args.sold.asset, qty: args.sold.qty, proceedsUsd: args.valueUsd, meta: args.meta });
   }
-  if (!CASH_MINTS.has(args.outputMint)) {
+  if (!venue.isCash(args.bought.asset)) {
+    // El nativo de la cadena no tiene datos de token que medir.
+    const measurable = venue.kind === "chain" && args.bought.asset !== venue.native.address;
     await openOrAdd({
       missionId: args.missionId,
-      venue: "solana",
-      asset: args.outputMint,
-      symbol: args.outputSymbol,
-      qty: args.outAmount,
-      costUsd: valueUsd,
+      venue: args.venue,
+      asset: args.bought.asset,
+      symbol: args.bought.symbol,
+      qty: args.bought.qty,
+      costUsd: args.valueUsd,
       meta: args.meta,
-      mint: args.outputMint === SOL_MINT ? undefined : args.outputMint,
+      features: measurable ? () => venue.entryFeatures(args.bought.asset) : undefined,
     });
   }
 }
 
-export async function recordBinanceTrade(args: {
+/**
+ * Mueve (parte de) una posición a otro sitio, p. ej. al transferir SOL de Solana a Binance. No es una
+ * venta: el coste viaja con el activo y el resultado se mide cuando se venda en el destino.
+ * `received` puede ser menor que `qty` por las comisiones de la transferencia.
+ */
+export async function movePosition(args: {
   missionId: number;
-  baseAsset: string;
-  quoteAsset: string;
-  side: "BUY" | "SELL";
-  baseQty: number;
-  quoteQty: number;
-  fee: number;
-  meta?: TradeMeta;
+  from: { venue: VenueId; asset: string };
+  to: { venue: VenueId; asset: string; symbol: string };
+  qty: number;
+  received: number;
 }) {
-  // Aproximación: si el quote no es estable, su valor en USD se ignora (casi siempre se opera contra USDT/USDC).
-  const quoteUsd = CASH_TICKERS.has(args.quoteAsset) ? 1 : 0;
-  if (args.side === "BUY") {
-    await openOrAdd({
-      missionId: args.missionId,
-      venue: "binance",
-      asset: args.baseAsset,
-      symbol: args.baseAsset,
-      qty: args.baseQty - args.fee,
-      costUsd: args.quoteQty * quoteUsd,
-      meta: args.meta,
-    });
-  } else {
-    reduce({ missionId: args.missionId, venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
-  }
+  const p = db
+    .prepare("SELECT * FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'")
+    .get(args.missionId, args.from.venue, args.from.asset) as PositionRow | undefined;
+  if (!p) return; // saldo que no era una posición (p. ej. el SOL inicial para fees)
+  const qty = Math.min(args.qty, p.qty_open);
+  const fraction = p.qty_open > 0 ? qty / p.qty_open : 0;
+  const costPart = p.cost_open_usd * fraction;
+  const all = fraction >= 0.999;
+  db.prepare("UPDATE positions SET qty_open = ?, cost_open_usd = ?, status = ?, closed_at = ?, exit_reason = COALESCE(?, exit_reason) WHERE id = ?").run(
+    all ? 0 : p.qty_open - qty,
+    all ? 0 : p.cost_open_usd - costPart,
+    all ? "moved" : "open",
+    all ? now() : null,
+    all ? `transferida a ${args.to.venue}` : null,
+    p.id,
+  );
+  const received = args.received * (args.qty > 0 ? qty / args.qty : 0);
+  if (received <= 0) return;
+  await openOrAdd({
+    missionId: args.missionId,
+    venue: args.to.venue,
+    asset: args.to.asset,
+    symbol: args.to.symbol,
+    qty: received,
+    costUsd: costPart,
+    inherit: p,
+  });
 }
 
 /** Posiciones con su resultado, para el propio agente y para las estadísticas de memoria. */
@@ -228,6 +210,7 @@ export function listPositions(missionId?: number) {
       exitReason: p.exit_reason,
       entry: JSON.parse(p.entry_features ?? "{}"),
       research: JSON.parse(p.research ?? "{}"),
+      thesis: p.thesis,
       lessonsApplied: p.lessons_applied,
     };
   });

@@ -2,15 +2,14 @@
 // en el momento de la llamada; nunca se firma ni se envía nada a una red real.
 import { config } from "../config.js";
 import { db, logJournal, now } from "../db.js";
-import * as binance from "../market/binance.js";
+import * as market from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
-import { SOL_MINT, USDC_MINT, fromBaseUnits, getQuote, getTokenInfo, resolveMint, toBaseUnits } from "../market/jupiter.js";
-import { recordBinanceTrade, recordSolanaSwap } from "./positions.js";
-import type { Holding, TradeMeta, VenueId } from "./types.js";
+import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
+import { movePosition, recordTrade } from "./positions.js";
+import type { ChainId, Holding, TradeMeta, VenueId } from "./types.js";
+import { fillMarketOrder } from "./venues/binance.js";
+import { allChains, binance, getChain, getVenue, type CostLine, type Delta } from "./venues/index.js";
 
-// Renta de una cuenta de token (ATA) en Solana: se paga al recibir un token nuevo
-// y se recupera al cerrar la cuenta cuando el saldo vuelve a cero.
-const TOKEN_ACCOUNT_RENT_SOL = 0.00203928;
 // Comisiones de retirada de Binance por la red Solana.
 const BINANCE_WITHDRAW_FEES: Record<string, number> = {
   USDC: config.binanceUsdcWithdrawFee,
@@ -57,6 +56,12 @@ function applyAtomically(fn: () => void) {
   }
 }
 
+function applyDeltas(missionId: number, venue: VenueId, deltas: Delta[]) {
+  applyAtomically(() => {
+    for (const d of deltas) if (d.amount !== 0) adjust(missionId, venue, d.asset, d.symbol, d.decimals, d.amount);
+  });
+}
+
 export async function solUsdPrice(): Promise<number> {
   const info = await fetchJson<Array<Record<string, any>>>(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`, 15_000, 30_000);
   const price = info.find((t) => t.id === SOL_MINT)?.usdPrice;
@@ -79,32 +84,45 @@ export function resetPortfolio(missionId: number, initialUsd: number, solPrice: 
 }
 
 /**
- * Cierra todas las posiciones a mercado con precios reales: tokens de Solana → USDC
- * (conservando el SOL justo para pagar la red) y activos de Binance → USDC/USDT.
+ * Cierra todas las posiciones a mercado con precios reales: en cada cadena, los tokens → su stablecoin
+ * (conservando el nativo justo para pagar la red) y en Binance, los activos → USDC/USDT.
  * Devuelve lo que no se pudo vender.
  */
 export async function liquidateAll(missionId: number, sessionId: number | null, reasoning: string): Promise<string[]> {
   const problems: string[] = [];
   const holdings = getHoldings(missionId);
+  const meta = { exitReason: reasoning };
 
-  for (const h of holdings.filter((h) => h.venue === "solana" && h.asset !== USDC_MINT && h.asset !== SOL_MINT)) {
-    await swapSolana({ missionId, sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning, meta: { exitReason: reasoning } }).catch((err) =>
-      problems.push(`${h.symbol} (Solana): ${(err as Error).message}`),
-    );
-  }
-  // El SOL se vende al final, dejando lo necesario para la fee de esa última transacción.
-  const solLeft = balance(missionId, "solana", SOL_MINT) - config.solanaTxFeeSol;
-  if (solLeft > 0.000001) {
-    await swapSolana({ missionId, sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning, meta: { exitReason: reasoning } }).catch(
-      (err) => problems.push(`SOL (Solana): ${(err as Error).message}`),
-    );
+  for (const chain of allChains()) {
+    const tokens = holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
+    for (const h of tokens) {
+      await swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning, meta }).catch(
+        (err) => problems.push(`${h.symbol} (${chain.label}): ${(err as Error).message}`),
+      );
+    }
+    // El nativo se vende al final, dejando lo necesario para la fee de esa última transacción.
+    const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
+    if (nativeLeft > 0.000001) {
+      const amount = Number(nativeLeft.toFixed(chain.native.decimals));
+      await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning, meta }).catch(
+        (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${(err as Error).message}`),
+      );
+    }
   }
 
-  for (const h of holdings.filter((h) => h.venue === "binance" && !STABLES.has(h.asset))) {
+  for (const h of holdings.filter((h) => h.venue === "binance" && !binance.isCash(h.asset))) {
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
+      const symbol = `${h.asset}${quote}`;
+      const info = await market.getSymbolInfo(symbol).catch(() => null);
+      if (!info) continue;
+      // Un resto por debajo del step del par no se puede vender (polvo): no es un problema de liquidación.
+      if (balance(missionId, "binance", h.asset) < info.stepSize) {
+        sold = true;
+        break;
+      }
       try {
-        await binanceMarketOrder({ missionId, sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance(missionId, "binance", h.asset), reasoning, meta: { exitReason: reasoning } });
+        await binanceMarketOrder({ missionId, sessionId, symbol, side: "SELL", amount: balance(missionId, "binance", h.asset), reasoning, meta });
         sold = true;
         break;
       } catch {
@@ -116,95 +134,102 @@ export async function liquidateAll(missionId: number, sessionId: number | null, 
   return problems;
 }
 
-// ─── Swaps en Solana (Jupiter) ──────────────────────────────────────────────
+// ─── Swaps en cadenas (agregadores de DEX) ──────────────────────────────────
 
-export async function swapSolana(args: {
+const describeCosts = (costs: CostLine[]) => costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`);
+
+export async function swap(args: {
   missionId: number;
   sessionId: number | null;
+  chain: ChainId;
   input: string;
   output: string;
-  amount: number;
+  /** Cantidad del token de entrada. Con `sellAll`, se vende todo el saldo. */
+  amount?: number;
+  sellAll?: boolean;
   slippageBps: number;
   reasoning: string;
   meta?: TradeMeta;
 }) {
-  const inputMint = resolveMint(args.input);
-  const outputMint = resolveMint(args.output);
-  if (inputMint === outputMint) throw new Error("El token de entrada y salida son el mismo");
-  if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
-
-  const [inInfo, outInfo] = await Promise.all([getTokenInfo(inputMint), getTokenInfo(outputMint)]);
-
+  const chain = getChain(args.chain);
   const m = args.missionId;
-  const inBalance = balance(m, "solana", inputMint);
-  if (args.amount > inBalance + DUST) {
-    throw new Error(`Saldo insuficiente: tienes ${inBalance} ${inInfo.symbol} y quieres vender ${args.amount}`);
+  const [input, output] = await Promise.all([chain.resolveToken(args.input), chain.resolveToken(args.output)]);
+  if (input.address === output.address) throw new Error("El token de entrada y salida son el mismo");
+
+  const have = balance(m, chain.id, input.address);
+  const amount = args.sellAll ? have : (args.amount ?? 0);
+  if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input.symbol} en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
+  if (amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${input.symbol} y quieres vender ${amount}`);
+
+  const quote = await chain.quote({ input, output, amountIn: amount, slippageBps: args.slippageBps });
+  const settled = chain.settle(quote, { balance: (asset) => balance(m, chain.id, asset) });
+  if (!settled.ok) {
+    // Una transacción que falla en la cadena puede costar igualmente (gas quemado).
+    if (settled.deltas.length) {
+      applyDeltas(m, chain.id, settled.deltas);
+      logJournal({
+        missionId: m,
+        sessionId: args.sessionId,
+        kind: "failed_tx",
+        summary: `Swap fallido en ${chain.label}: ${settled.error}`,
+        reasoning: args.reasoning,
+        details: { chain: chain.id, costs: describeCosts(settled.costs) },
+      });
+    }
+    throw new Error(settled.error);
   }
-
-  const quote = await getQuote(inputMint, outputMint, toBaseUnits(args.amount, inInfo.decimals), args.slippageBps);
-  const outAmount = fromBaseUnits(quote.outAmount, outInfo.decimals);
-
-  // Costes de red en SOL: fee de la transacción + renta si hay que crear la cuenta del token recibido.
-  const opensAccount = outputMint !== SOL_MINT && balance(m, "solana", outputMint) <= DUST;
-  const closesAccount = inputMint !== SOL_MINT && inBalance - args.amount <= DUST;
-  const solCost =
-    config.solanaTxFeeSol + (opensAccount ? TOKEN_ACCOUNT_RENT_SOL : 0) - (closesAccount ? TOKEN_ACCOUNT_RENT_SOL : 0);
-
-  const solAfter =
-    balance(m, "solana", SOL_MINT) - solCost - (inputMint === SOL_MINT ? args.amount : 0) + (outputMint === SOL_MINT ? outAmount : 0);
-  if (solAfter < -DUST) {
-    throw new Error(`SOL insuficiente para pagar la red (${solCost.toFixed(6)} SOL de fees/renta). En Solana necesitas SOL para operar.`);
-  }
-
-  applyAtomically(() => {
-    adjust(m, "solana", inputMint, inInfo.symbol, inInfo.decimals, -args.amount);
-    adjust(m, "solana", outputMint, outInfo.symbol, outInfo.decimals, outAmount);
-    adjust(m, "solana", SOL_MINT, "SOL", 9, -solCost);
-  });
+  applyDeltas(m, chain.id, settled.deltas);
 
   const result = {
-    sold: `${args.amount} ${inInfo.symbol}`,
-    received: `${outAmount} ${outInfo.symbol}`,
-    effectivePrice: `1 ${outInfo.symbol} = ${(args.amount / outAmount).toPrecision(6)} ${inInfo.symbol}`,
-    jupiterPriceImpact: quote.priceImpactPct,
-    route: quote.routePlan.map((r) => `${r.swapInfo.label ?? r.swapInfo.ammKey} (${r.percent}%)`),
-    networkCostSol: solCost,
-    tokenAccountOpened: opensAccount,
-    tokenAccountClosed: closesAccount,
-    slot: quote.contextSlot,
+    chain: chain.id,
+    sold: `${amount} ${input.symbol}`,
+    received: `${quote.amountOut} ${output.symbol}`,
+    effectivePrice: `1 ${output.symbol} = ${(amount / quote.amountOut).toPrecision(6)} ${input.symbol}`,
+    priceImpactPct: quote.priceImpactPct,
+    route: quote.route,
+    costs: describeCosts(settled.costs),
+    ...settled.info,
+    ...quote.extra,
+    ...(quote.warnings.length ? { warnings: quote.warnings } : {}),
   };
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
-    summary: `Swap ${result.sold} → ${result.received}`,
+    summary: `Swap ${result.sold} → ${result.received}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
     reasoning: args.reasoning,
-    details: { inputMint, outputMint, ...result },
+    details: { inputMint: input.address, outputMint: output.address, ...result },
   });
-  await recordSolanaSwap({
+
+  // Valor de la operación en USD: el lado estable si lo hay (es exacto); si no, el precio de mercado.
+  let valueUsd = chain.isCash(input.address) ? amount : chain.isCash(output.address) ? quote.amountOut : 0;
+  if (!valueUsd) {
+    const prices = await chain.priceUsd([input.address, output.address]).catch(() => ({}) as Record<string, number>);
+    valueUsd = (prices[input.address] ?? 0) * amount || (prices[output.address] ?? 0) * quote.amountOut;
+  }
+  await recordTrade({
     missionId: m,
-    inputMint,
-    outputMint,
-    inputSymbol: inInfo.symbol,
-    outputSymbol: outInfo.symbol,
-    inAmount: args.amount,
-    outAmount,
+    venue: chain.id,
+    sold: { asset: input.address, qty: amount },
+    bought: { asset: output.address, symbol: output.symbol, qty: quote.amountOut },
+    valueUsd,
     meta: args.meta,
   }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
   return result;
 }
 
-export async function quoteSolana(input: string, output: string, amount: number, slippageBps = 50) {
-  const inputMint = resolveMint(input);
-  const outputMint = resolveMint(output);
-  const [inInfo, outInfo] = await Promise.all([getTokenInfo(inputMint), getTokenInfo(outputMint)]);
-  const quote = await getQuote(inputMint, outputMint, toBaseUnits(amount, inInfo.decimals), slippageBps);
-  const outAmount = fromBaseUnits(quote.outAmount, outInfo.decimals);
+export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: string, amount: number, slippageBps = 50) {
+  const chain = getChain(chainId);
+  const [input, output] = await Promise.all([chain.resolveToken(inputRef), chain.resolveToken(outputRef)]);
+  const q = await chain.quote({ input, output, amountIn: amount, slippageBps });
   return {
-    input: `${amount} ${inInfo.symbol} (${inputMint})`,
-    output: `${outAmount} ${outInfo.symbol} (${outputMint})`,
-    jupiterPriceImpact: quote.priceImpactPct,
-    route: quote.routePlan.map((r) => `${r.swapInfo.label ?? r.swapInfo.ammKey} (${r.percent}%)`),
+    chain: chain.id,
+    input: `${amount} ${input.symbol} (${input.address})`,
+    output: `${q.amountOut} ${output.symbol} (${output.address})`,
+    priceImpactPct: q.priceImpactPct,
+    route: q.route,
+    ...(q.warnings.length ? { warnings: q.warnings } : {}),
+    note: "Sin contar los costes de red: se calculan al ejecutar, según tu monedero.",
   };
 }
 
@@ -219,38 +244,18 @@ export async function binanceMarketOrder(args: {
   reasoning: string;
   meta?: TradeMeta;
 }) {
-  const info = await binance.getSymbolInfo(args.symbol);
-  const book = await binance.getOrderBook(info.symbol);
-  const fee = config.binanceTakerFee;
+  const info = await market.getSymbolInfo(args.symbol);
+  const book = await market.getOrderBook(info.symbol);
   const m = args.missionId;
-
-  let fill: binance.MarketFill;
-  if (args.side === "BUY") {
-    const have = balance(m, "binance", info.quoteAsset);
-    if (args.amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.quoteAsset} en Binance`);
-    fill = binance.walkBook(book.asks, "BUY", args.amount);
-  } else {
-    const qty = binance.roundDownToStep(args.amount, info.stepSize);
-    const have = balance(m, "binance", info.baseAsset);
-    if (qty > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.baseAsset} en Binance`);
-    if (qty <= 0) throw new Error(`Cantidad menor que el mínimo (stepSize ${info.stepSize})`);
-    fill = binance.walkBook(book.bids, "SELL", qty);
-  }
-  if (fill.quoteQty < info.minNotional) {
-    throw new Error(`Orden rechazada: el importe mínimo en ${info.symbol} es ${info.minNotional} ${info.quoteAsset}`);
-  }
-
-  // La comisión taker se descuenta del activo recibido.
-  const feePaid = args.side === "BUY" ? fill.baseQty * fee : fill.quoteQty * fee;
-  applyAtomically(() => {
-    if (args.side === "BUY") {
-      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, -fill.quoteQty);
-      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, fill.baseQty - feePaid);
-    } else {
-      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, -fill.baseQty);
-      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, fill.quoteQty - feePaid);
-    }
+  const { fill, feePaid, feeAsset, deltas } = fillMarketOrder({
+    info,
+    book,
+    side: args.side,
+    amount: args.amount,
+    balance: (asset) => balance(m, "binance", asset),
+    takerFee: config.binanceTakerFee,
   });
+  applyDeltas(m, "binance", deltas);
 
   const result = {
     symbol: info.symbol,
@@ -260,7 +265,7 @@ export async function binanceMarketOrder(args: {
     avgPrice: fill.avgPrice,
     bestPrice: fill.bestPrice,
     slippagePct: fill.slippagePct,
-    fee: `${feePaid} ${args.side === "BUY" ? info.baseAsset : info.quoteAsset}`,
+    fee: `${feePaid} ${feeAsset}`,
   };
   logJournal({
     missionId: m,
@@ -270,14 +275,29 @@ export async function binanceMarketOrder(args: {
     reasoning: args.reasoning,
     details: result,
   });
-  await recordBinanceTrade({
+
+  // Lo que queda por debajo del step del par no se puede vender: es polvo y la posición se da por cerrada.
+  const dust = args.side === "SELL" ? balance(m, "binance", info.baseAsset) : 0;
+  const soldQty = dust > 0 && dust < info.stepSize ? fill.baseQty + dust : fill.baseQty;
+
+  // Valor en USD del lado quote: casi siempre una stablecoin; si no, su valor de liquidación.
+  const quoteNet = args.side === "BUY" ? fill.quoteQty : fill.quoteQty - feePaid;
+  const valueUsd = binance.isCash(info.quoteAsset)
+    ? quoteNet
+    : (
+        await binance
+          .liquidationValue({ venue: "binance", asset: info.quoteAsset, symbol: info.quoteAsset, decimals: 8, amount: quoteNet })
+          .catch(() => ({ usd: 0 }))
+      ).usd;
+  await recordTrade({
     missionId: m,
-    baseAsset: info.baseAsset,
-    quoteAsset: info.quoteAsset,
-    side: args.side,
-    baseQty: fill.baseQty,
-    quoteQty: fill.quoteQty,
-    fee: feePaid,
+    venue: "binance",
+    sold: args.side === "BUY" ? { asset: info.quoteAsset, qty: fill.quoteQty } : { asset: info.baseAsset, qty: soldQty },
+    bought:
+      args.side === "BUY"
+        ? { asset: info.baseAsset, symbol: info.baseAsset, qty: fill.baseQty - feePaid }
+        : { asset: info.quoteAsset, symbol: info.quoteAsset, qty: fill.quoteQty - feePaid },
+    valueUsd,
     meta: args.meta,
   }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
   return result;
@@ -289,11 +309,16 @@ export async function transfer(args: {
   missionId: number;
   sessionId: number | null;
   asset: "USDC" | "SOL";
-  from: Venue;
+  from: VenueId;
+  to: VenueId;
   amount: number;
   reasoning: string;
 }) {
   if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
+  const route = `${args.from}>${args.to}`;
+  if (route !== "solana>binance" && route !== "binance>solana") {
+    throw new Error("Por ahora solo se puede transferir entre tu monedero de Solana y Binance (en los dos sentidos)");
+  }
   const mint = args.asset === "SOL" ? SOL_MINT : USDC_MINT;
   const decimals = args.asset === "SOL" ? 9 : 6;
   const m = args.missionId;
@@ -309,7 +334,7 @@ export async function transfer(args: {
       adjust(m, "binance", args.asset, args.asset, 8, received);
       feeText = `${config.solanaTxFeeSol} SOL (red)`;
     } else {
-      const withdrawFee = BINANCE_WITHDRAW_FEES[args.asset];
+      const withdrawFee = BINANCE_WITHDRAW_FEES[args.asset]!;
       if (args.amount <= withdrawFee) throw new Error(`La retirada mínima debe superar la comisión de ${withdrawFee} ${args.asset}`);
       adjust(m, "binance", args.asset, args.asset, 8, -args.amount);
       received = args.amount - withdrawFee;
@@ -318,7 +343,7 @@ export async function transfer(args: {
     }
   });
 
-  const result = { asset: args.asset, from: args.from, to: args.from === "solana" ? "binance" : "solana", sent: args.amount, received: received!, fee: feeText! };
+  const result = { asset: args.asset, from: args.from, to: args.to, sent: args.amount, received: received!, fee: feeText! };
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
@@ -327,56 +352,23 @@ export async function transfer(args: {
     reasoning: args.reasoning,
     details: result,
   });
+  // El coste de lo que se mueve viaja con ello (las stablecoins no son posiciones).
+  const assetAt = (venue: VenueId) => (venue === "binance" ? args.asset : mint);
+  await movePosition({
+    missionId: m,
+    from: { venue: args.from, asset: assetAt(args.from) },
+    to: { venue: args.to, asset: assetAt(args.to), symbol: args.asset },
+    qty: args.amount,
+    received: received!,
+  }).catch((err) => console.error(`No se pudo mover la posición: ${(err as Error).message}`));
   return result;
 }
 
 // ─── Valoración a precio de mercado ─────────────────────────────────────────
 
-const STABLES = new Set(["USDT", "USDC", "FDUSD"]);
-
-/**
- * Valor de un saldo. `reliable` indica si sale de una cotización real de venta; los valores de
- * reserva (precio spot cuando no hay cotización) sirven para mostrar, no para cerrar una misión.
- */
-async function valueHolding(h: Holding): Promise<{ usd: number; method: string; reliable: boolean }> {
-  if (h.venue === "solana") {
-    if (h.asset === USDC_MINT) return { usd: h.amount, method: "stable", reliable: true };
-    if (h.asset === SOL_MINT) {
-      // El SOL se valora con el libro de Binance: igual de líquido y no gasta turnos de Jupiter.
-      try {
-        const fill = binance.walkBook((await binance.getOrderBook("SOLUSDT")).bids, "SELL", h.amount);
-        return { usd: fill.quoteQty, method: "libro Binance SOLUSDT", reliable: true };
-      } catch {
-        /* se intenta con Jupiter */
-      }
-    }
-    try {
-      // Valor de liquidación: cuánto USDC darían hoy vendiéndolo todo.
-      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 10_000);
-      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidación Jupiter", reliable: true };
-    } catch {
-      const info = await getTokenInfo(h.asset).catch(() => null);
-      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotización de venta)", reliable: false };
-    }
-  }
-  if (STABLES.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
-  for (const quoteAsset of ["USDT", "USDC"]) {
-    try {
-      const book = await binance.getOrderBook(`${h.asset}${quoteAsset}`);
-      const fill = binance.walkBook(book.bids, "SELL", h.amount);
-      return { usd: fill.quoteQty * (1 - config.binanceTakerFee), method: `liquidación Binance ${h.asset}${quoteAsset}`, reliable: true };
-    } catch {
-      /* se prueba el siguiente par */
-    }
-  }
-  return { usd: 0, method: "sin precio", reliable: false };
-}
-
 export async function valuation(missionId: number, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
-  const lines = await Promise.all(
-    holdings.map(async (h) => ({ ...h, ...(await valueHolding(h)) })),
-  );
+  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
   const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId) as
     | { created_at: string; initial_usd: number; benchmark_sol_price: number | null }

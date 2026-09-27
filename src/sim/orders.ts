@@ -4,15 +4,18 @@
 // periódico (watcher.ts y el servidor MCP mientras está activo).
 import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
-import { fetchJson } from "../market/http.js";
-import { getTokenInfo, resolveMint } from "../market/jupiter.js";
-import { binanceMarketOrder, swapSolana } from "./portfolio.js";
-import type { VenueId } from "./types.js";
+import { binanceMarketOrder, swap } from "./portfolio.js";
+import type { ChainId, VenueId } from "./types.js";
+import { getVenue } from "./venues/index.js";
 
-export interface SolanaAction {
+/** Swap en una cadena (el campo `venue` de la orden indica cuál). */
+export interface SwapAction {
   input: string;
   output: string;
+  /** Cantidad del token de entrada; se ignora con `sellAll`. */
   amount: number;
+  /** Vender todo el saldo del token de entrada en el momento de dispararse. */
+  sellAll?: boolean;
   slippageBps: number;
 }
 export interface BinanceAction {
@@ -36,24 +39,16 @@ interface OrderRow {
   status: string;
 }
 
-async function currentPrice(venue: VenueId, asset: string): Promise<number> {
-  if (venue === "solana") {
-    const data = await fetchJson<Record<string, { usdPrice?: number } | null>>(`https://lite-api.jup.ag/price/v3?ids=${asset}`);
-    const price = data[asset]?.usdPrice;
-    if (typeof price !== "number") throw new Error(`Jupiter no da precio para ${asset}`);
-    return price;
-  }
-  const data = await fetchJson<{ price: string }>(`https://api.binance.com/api/v3/ticker/price?symbol=${asset}`);
-  return Number(data.price);
-}
+const currentPrice = (venue: VenueId, asset: string) => getVenue(venue).triggerPrice(asset);
 
 const isTriggered = (condition: "above" | "below", price: number, trigger: number) =>
   condition === "above" ? price >= trigger : price <= trigger;
 
-function describeAction(venue: VenueId, action: SolanaAction | BinanceAction): string {
-  if (venue === "solana") {
-    const a = action as SolanaAction;
-    return `swap ${a.amount} ${a.input} → ${a.output}`;
+function describeAction(venue: VenueId, action: SwapAction | BinanceAction): string {
+  const v = getVenue(venue);
+  if (v.kind === "chain") {
+    const a = action as SwapAction;
+    return `swap en ${v.label} ${a.sellAll ? "todo el saldo de" : a.amount} ${a.input} → ${a.output}`;
   }
   const a = action as BinanceAction;
   return `Binance ${a.side} ${a.symbol} amount=${a.amount}`;
@@ -66,18 +61,20 @@ export async function placeOrder(args: {
   triggerAsset: string;
   condition: "above" | "below";
   triggerPrice: number;
-  action: SolanaAction | BinanceAction;
+  action: SwapAction | BinanceAction;
   expiresHours?: number;
   reasoning: string;
 }) {
   let triggerAsset: string;
   let triggerLabel: string;
-  if (args.venue === "solana") {
-    triggerAsset = resolveMint(args.triggerAsset);
-    triggerLabel = `${(await getTokenInfo(triggerAsset)).symbol}/USD`;
-    const a = args.action as SolanaAction;
+  const venue = getVenue(args.venue);
+  if (venue.kind === "chain") {
+    const trigger = await venue.resolveToken(args.triggerAsset);
+    triggerAsset = trigger.address;
+    triggerLabel = `${trigger.symbol}/USD`;
+    const a = args.action as SwapAction;
     // Valida que los tokens de la operación existen antes de aceptar la orden.
-    await Promise.all([getTokenInfo(resolveMint(a.input)), getTokenInfo(resolveMint(a.output))]);
+    await Promise.all([venue.resolveToken(a.input), venue.resolveToken(a.output)]);
   } else {
     triggerAsset = (await binance.getSymbolInfo(args.triggerAsset)).symbol;
     triggerLabel = triggerAsset;
@@ -165,10 +162,16 @@ export async function checkOrders(): Promise<string[]> {
     const reasoning = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condición ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
     try {
       const action = JSON.parse(order.action);
+      const base = {
+        missionId: order.mission_id,
+        sessionId: order.session_id,
+        reasoning,
+        meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined },
+      };
       const result =
-        order.venue === "solana"
-          ? await swapSolana({ missionId: order.mission_id, sessionId: order.session_id, ...(action as SolanaAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } })
-          : await binanceMarketOrder({ missionId: order.mission_id, sessionId: order.session_id, ...(action as BinanceAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } });
+        getVenue(order.venue).kind === "chain"
+          ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction) })
+          : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {

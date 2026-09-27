@@ -36,7 +36,7 @@ export async function getSymbolInfo(symbol: string): Promise<SymbolInfo> {
   return result;
 }
 
-type Level = [number, number]; // [precio, cantidad base]
+export type Level = [number, number]; // [precio, cantidad base]
 
 export async function getOrderBook(symbol: string): Promise<{ bids: Level[]; asks: Level[] }> {
   const raw = await fetchJson<{ bids: [string, string][]; asks: [string, string][] }>(

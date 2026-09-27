@@ -37156,7 +37156,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.7.1";
+var CODE_VERSION = "0.8.0";
 var semver = (v) => v.split(".").map((n2) => Number.parseInt(n2, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -37419,14 +37419,275 @@ function fromBaseUnits(base, decimals) {
   return Number(BigInt(base)) / 10 ** decimals;
 }
 
-// src/sim/positions.ts
+// src/sim/types.ts
+var CHAINS = ["solana"];
+var VENUES = [...CHAINS, "binance"];
+
+// src/sim/venues/binance.ts
+var CASH = /* @__PURE__ */ new Set(["USDT", "USDC", "FDUSD"]);
+var DUST = 1e-12;
+var DECIMALS = 8;
+function fillMarketOrder(args) {
+  const { info, book, side } = args;
+  let fill;
+  if (side === "BUY") {
+    const have = args.balance(info.quoteAsset);
+    if (args.amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.quoteAsset} en Binance`);
+    fill = walkBook(book.asks, "BUY", args.amount);
+  } else {
+    const qty = roundDownToStep(args.amount, info.stepSize);
+    const have = args.balance(info.baseAsset);
+    if (qty > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.baseAsset} en Binance`);
+    if (qty <= 0) throw new Error(`Cantidad menor que el m\xEDnimo (stepSize ${info.stepSize})`);
+    fill = walkBook(book.bids, "SELL", qty);
+  }
+  if (fill.quoteQty < info.minNotional) {
+    throw new Error(`Orden rechazada: el importe m\xEDnimo en ${info.symbol} es ${info.minNotional} ${info.quoteAsset}`);
+  }
+  const d = (asset2, amount) => ({ asset: asset2, symbol: asset2, decimals: DECIMALS, amount });
+  if (side === "BUY") {
+    const feePaid2 = fill.baseQty * args.takerFee;
+    return { fill, feePaid: feePaid2, feeAsset: info.baseAsset, deltas: [d(info.quoteAsset, -fill.quoteQty), d(info.baseAsset, fill.baseQty - feePaid2)] };
+  }
+  const feePaid = fill.quoteQty * args.takerFee;
+  return { fill, feePaid, feeAsset: info.quoteAsset, deltas: [d(info.baseAsset, -fill.baseQty), d(info.quoteAsset, fill.quoteQty - feePaid)] };
+}
+var binance = {
+  kind: "cex",
+  id: "binance",
+  label: "Binance",
+  isCash: (asset2) => CASH.has(asset2),
+  async triggerPrice(symbol2) {
+    const data = await fetchJson(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol2}`);
+    return Number(data.price);
+  },
+  async liquidationValue(h) {
+    if (CASH.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
+    for (const quoteAsset of ["USDT", "USDC"]) {
+      try {
+        const book = await getOrderBook(`${h.asset}${quoteAsset}`);
+        const fill = walkBook(book.bids, "SELL", h.amount);
+        return { usd: fill.quoteQty * (1 - config2.binanceTakerFee), method: `liquidaci\xF3n Binance ${h.asset}${quoteAsset}`, reliable: true };
+      } catch {
+      }
+    }
+    return { usd: 0, method: "sin precio", reliable: false };
+  }
+};
+
+// src/market/research.ts
+var n = (v, digits = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : void 0;
+var ageMinutes = (iso) => iso === void 0 ? void 0 : Math.round((Date.now() - new Date(iso).getTime()) / 6e4);
+async function attempt(label, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    return { error: `${label}: ${err.message.slice(0, 160)}` };
+  }
+}
+async function scanMarket(limit = 25) {
+  const merged = /* @__PURE__ */ new Map();
+  const add = (mint, source, data) => {
+    if (!mint) return;
+    const c = merged.get(mint) ?? { mint, sources: [] };
+    if (!c.sources.includes(source)) c.sources.push(source);
+    for (const [k, v] of Object.entries(data)) if (v !== void 0 && c[k] === void 0) c[k] = v;
+    merged.set(mint, c);
+  };
+  const jup = async (interval) => {
+    const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/toptrending/${interval}?limit=50`);
+    for (const t of list) {
+      add(t.id, `jupiter_trending_${interval}`, {
+        symbol: t.symbol,
+        name: t.name,
+        mcapUsd: n(t.mcap, 0),
+        liquidityUsd: n(t.liquidity, 0),
+        priceChange5mPct: n(t.stats5m?.priceChange),
+        priceChange1hPct: n(t.stats1h?.priceChange),
+        netBuyers5m: t.stats5m?.numNetBuyers,
+        traders5m: t.stats5m?.numTraders,
+        ageMinutes: ageMinutes(t.createdAt)
+      });
+    }
+    return list.length;
+  };
+  const pump = async () => {
+    const list = await fetchJson("https://frontend-api-v3.pump.fun/coins/currently-live?limit=40&offset=0&includeNsfw=false");
+    for (const c of list) {
+      add(c.mint, "pumpfun_live", {
+        symbol: c.symbol,
+        name: c.name,
+        mcapUsd: n(c.usd_market_cap, 0),
+        pumpfunGraduated: c.complete,
+        pumpfunReplies: c.reply_count,
+        ageMinutes: ageMinutes(c.created_timestamp)
+      });
+    }
+    return list.length;
+  };
+  const boosts = async () => {
+    const list = await fetchJson("https://api.dexscreener.com/token-boosts/latest/v1");
+    const sol = list.filter((b) => b.chainId === "solana");
+    for (const b of sol) add(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
+    return sol.length;
+  };
+  const gecko = async () => {
+    const res = await fetchJson("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools");
+    for (const p of res.data) {
+      const mint = String(p.relationships?.base_token?.data?.id ?? "").replace(/^solana_/, "");
+      const a = p.attributes ?? {};
+      add(mint, "geckoterminal_trending", {
+        name: a.name,
+        liquidityUsd: n(Number(a.reserve_in_usd), 0),
+        priceChange5mPct: n(Number(a.price_change_percentage?.m5)),
+        priceChange1hPct: n(Number(a.price_change_percentage?.h1)),
+        ageMinutes: ageMinutes(a.pool_created_at)
+      });
+    }
+    return res.data.length;
+  };
+  const status = await Promise.all([
+    attempt("jupiter_trending_5m", () => jup("5m")),
+    attempt("jupiter_trending_1h", () => jup("1h")),
+    attempt("pumpfun_live", pump),
+    attempt("dexscreener_boosted", boosts),
+    attempt("geckoterminal_trending", gecko)
+  ]);
+  const candidates = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+  return {
+    note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con chain: solana y su mint.",
+    sourcesStatus: status.map(
+      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}` : s.error
+    ),
+    totalUnique: merged.size,
+    candidates
+  };
+}
+async function tokenReport(mint) {
+  const [jupiter, dexscreener, rugcheck, pumpfun] = await Promise.all([
+    attempt("jupiter", async () => {
+      const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+      const t = list.find((x) => x.id === mint);
+      if (!t) return { error: "no encontrado en Jupiter" };
+      const stats = (s) => s && {
+        priceChangePct: n(s.priceChange),
+        buyVolumeUsd: n(s.buyVolume, 0),
+        sellVolumeUsd: n(s.sellVolume, 0),
+        buys: s.numBuys,
+        sells: s.numSells,
+        traders: s.numTraders,
+        netBuyers: s.numNetBuyers,
+        organicBuyers: s.numOrganicBuyers
+      };
+      return {
+        symbol: t.symbol,
+        name: t.name,
+        priceUsd: t.usdPrice,
+        mcapUsd: n(t.mcap, 0),
+        liquidityUsd: n(t.liquidity, 0),
+        holders: t.holderCount,
+        ageMinutes: ageMinutes(t.createdAt),
+        launchpad: t.launchpad,
+        graduatedAt: t.graduatedAt,
+        organicScore: n(t.organicScore, 1),
+        verified: t.isVerified,
+        website: t.website,
+        audit: t.audit,
+        stats5m: stats(t.stats5m),
+        stats1h: stats(t.stats1h),
+        stats24h: stats(t.stats24h)
+      };
+    }),
+    attempt("dexscreener", async () => {
+      const pairs = await fetchJson(`https://api.dexscreener.com/tokens/v1/solana/${mint}`);
+      if (!pairs.length) return { error: "sin pares en DexScreener" };
+      const top = pairs[0];
+      return {
+        pairs: pairs.length,
+        mainDex: top.dexId,
+        pairAgeMinutes: ageMinutes(top.pairCreatedAt),
+        liquidityUsd: n(top.liquidity?.usd, 0),
+        volumeUsd: top.volume,
+        txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
+        priceChangePct: top.priceChange,
+        websites: top.info?.websites?.map((w) => w.url),
+        socials: top.info?.socials?.map((s) => `${s.type}: ${s.url}`),
+        boosts: top.boosts?.active,
+        url: top.url
+      };
+    }),
+    attempt("rugcheck", async () => {
+      const r = await fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`);
+      return {
+        scoreNormalised: r.score_normalised,
+        risks: (r.risks ?? []).map((x) => `${x.level}: ${x.name}${x.value ? ` (${x.value})` : ""}`)
+      };
+    }),
+    mint.endsWith("pump") ? attempt("pumpfun", async () => {
+      const c = await fetchJson(`https://frontend-api-v3.pump.fun/coins-v2/${mint}`);
+      return {
+        description: c.description,
+        twitter: c.twitter,
+        telegram: c.telegram,
+        website: c.website,
+        replies: c.reply_count,
+        participants: c.num_participants,
+        graduated: c.complete,
+        mcapUsd: n(c.usd_market_cap, 0),
+        athMcapUsd: n(c.ath_market_cap, 0),
+        securityVerdict: c.security_verdict,
+        createdMinutesAgo: ageMinutes(c.created_timestamp),
+        url: `https://pump.fun/coin/${mint}`
+      };
+    }) : Promise.resolve(void 0)
+  ]);
+  return { mint, jupiter, dexscreener, rugcheck, ...pumpfun ? { pumpfun } : {} };
+}
+
+// src/sim/venues/solana.ts
+var TOKEN_ACCOUNT_RENT_SOL = 203928e-8;
 var USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
-var CASH_MINTS = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT]);
-var CASH_TICKERS = /* @__PURE__ */ new Set(["USDC", "USDT", "FDUSD"]);
-async function usdPrices(mints) {
-  const need = mints.filter((m) => !CASH_MINTS.has(m));
+var CASH2 = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT]);
+var DUST2 = 1e-12;
+var SOL = { address: SOL_MINT, symbol: "SOL", decimals: 9 };
+var USDC = { address: USDC_MINT, symbol: "USDC", decimals: 6 };
+function settleSolanaSwap(q, w) {
+  const input2 = q.input.address;
+  const output2 = q.output.address;
+  const inBalance = w.balance(input2);
+  if (q.amountIn > inBalance + DUST2) {
+    return { ok: false, error: `Saldo insuficiente: tienes ${inBalance} ${q.input.symbol} y quieres vender ${q.amountIn}`, deltas: [], costs: [] };
+  }
+  const opensAccount = output2 !== SOL_MINT && w.balance(output2) <= DUST2;
+  const closesAccount = input2 !== SOL_MINT && inBalance - q.amountIn <= DUST2;
+  const costs = [{ kind: "network_fee", asset: SOL_MINT, symbol: "SOL", amount: config2.solanaTxFeeSol }];
+  if (opensAccount) costs.push({ kind: "rent", asset: SOL_MINT, symbol: "SOL", amount: TOKEN_ACCOUNT_RENT_SOL });
+  if (closesAccount) costs.push({ kind: "rent_refund", asset: SOL_MINT, symbol: "SOL", amount: -TOKEN_ACCOUNT_RENT_SOL });
+  const solCost = costs.reduce((s, c) => s + c.amount, 0);
+  const solAfter = w.balance(SOL_MINT) - solCost - (input2 === SOL_MINT ? q.amountIn : 0) + (output2 === SOL_MINT ? q.amountOut : 0);
+  if (solAfter < -DUST2) {
+    return {
+      ok: false,
+      error: `SOL insuficiente para pagar la red (${solCost.toFixed(6)} SOL de fees/renta). En Solana necesitas SOL para operar.`,
+      deltas: [],
+      costs: []
+    };
+  }
+  return {
+    ok: true,
+    deltas: [
+      { asset: input2, symbol: q.input.symbol, decimals: q.input.decimals, amount: -q.amountIn },
+      { asset: output2, symbol: q.output.symbol, decimals: q.output.decimals, amount: q.amountOut },
+      { asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: -solCost }
+    ],
+    costs,
+    info: { networkCostSol: solCost, tokenAccountOpened: opensAccount, tokenAccountClosed: closesAccount }
+  };
+}
+async function priceUsd(mints) {
   const prices = {};
-  for (const m of mints) if (CASH_MINTS.has(m)) prices[m] = 1;
+  const need = [...new Set(mints)].filter((m) => !CASH2.has(m));
+  for (const m of mints) if (CASH2.has(m)) prices[m] = 1;
   if (need.length) {
     const data = await fetchJson(`https://lite-api.jup.ag/price/v3?ids=${need.join(",")}`);
     for (const m of need) if (typeof data[m]?.usdPrice === "number") prices[m] = data[m].usdPrice;
@@ -37442,6 +37703,7 @@ async function entryFeatures(mint) {
   const risks = rug.status === "fulfilled" ? rug.value.risks ?? [] : void 0;
   const round = (v, d = 2) => typeof v === "number" ? Number(v.toFixed(d)) : void 0;
   return {
+    venue: "solana",
     ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 6e4) : void 0,
     liquidityUsd: round(t?.liquidity, 0),
     mcapUsd: round(t?.mcap, 0),
@@ -37456,6 +37718,84 @@ async function entryFeatures(mint) {
     rugcheckWarnRisks: risks ? risks.filter((r) => r.level === "warn").length : void 0
   };
 }
+var solana = {
+  kind: "chain",
+  id: "solana",
+  label: "Solana",
+  native: SOL,
+  cash: USDC,
+  liquidationReserve: config2.solanaTxFeeSol,
+  isCash: (asset2) => CASH2.has(asset2),
+  async resolveToken(ref) {
+    const mint = resolveMint(ref.trim());
+    const info = await getTokenInfo(mint);
+    return { address: mint, symbol: info.symbol, decimals: info.decimals };
+  },
+  priceUsd,
+  async triggerPrice(asset2) {
+    const price = (await priceUsd([asset2]))[asset2];
+    if (typeof price !== "number") throw new Error(`Jupiter no da precio para ${asset2}`);
+    return price;
+  },
+  async quote({ input: input2, output: output2, amountIn, slippageBps }) {
+    if (input2.address === output2.address) throw new Error("El token de entrada y salida son el mismo");
+    const q = await getQuote(input2.address, output2.address, toBaseUnits(amountIn, input2.decimals), slippageBps);
+    const out = fromBaseUnits(q.outAmount, output2.decimals);
+    return {
+      chain: "solana",
+      input: input2,
+      output: output2,
+      amountIn,
+      grossOut: out,
+      amountOut: out,
+      priceImpactPct: q.priceImpactPct,
+      route: q.routePlan.map((r) => `${r.swapInfo.label ?? r.swapInfo.ammKey} (${r.percent}%)`),
+      slippageBps,
+      extra: { slot: q.contextSlot },
+      warnings: []
+    };
+  },
+  settle: settleSolanaSwap,
+  async liquidationValue(h) {
+    if (CASH2.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
+    if (h.asset === SOL_MINT) {
+      try {
+        const fill = walkBook((await getOrderBook("SOLUSDT")).bids, "SELL", h.amount);
+        return { usd: fill.quoteQty, method: "libro Binance SOLUSDT", reliable: true };
+      } catch {
+      }
+    }
+    try {
+      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 1e4);
+      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter", reliable: true };
+    } catch {
+      const info = await getTokenInfo(h.asset).catch(() => null);
+      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotizaci\xF3n de venta)", reliable: false };
+    }
+  },
+  entryFeatures,
+  research: {
+    scan: (limit) => scanMarket(limit),
+    report: (token) => tokenReport(resolveMint(token.trim()))
+  }
+};
+
+// src/sim/venues/index.ts
+var chains = { solana };
+var venues = { ...chains, binance };
+function getVenue(id) {
+  const v = venues[id];
+  if (!v) throw new Error(`No existe el sitio "${id}". Disponibles: ${Object.keys(venues).join(", ")}`);
+  return v;
+}
+function getChain(id) {
+  const c = chains[id];
+  if (!c) throw new Error(`No existe la cadena "${id}". Disponibles: ${CHAINS.join(", ")}`);
+  return c;
+}
+var allChains = () => CHAINS.map((id) => chains[id]);
+
+// src/sim/positions.ts
 function researchSnapshot(missionId, mint) {
   const mission = db.prepare("SELECT created_at FROM missions WHERE id = ?").get(missionId);
   const lastTrade = db.prepare("SELECT MAX(COALESCE(closed_at, opened_at)) AS ts FROM positions WHERE mission_id = ?").get(missionId);
@@ -37480,8 +37820,8 @@ async function openOrAdd(args) {
     );
     return;
   }
-  const features = args.mint ? await entryFeatures(args.mint).catch(() => ({})) : {};
-  const research = researchSnapshot(missionId, args.mint ?? args.asset);
+  const features = args.inherit ? args.inherit.entry_features : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
+  const research = args.inherit ? args.inherit.research : JSON.stringify(researchSnapshot(missionId, args.asset));
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -37493,10 +37833,10 @@ async function openOrAdd(args) {
     now(),
     args.qty,
     args.costUsd,
-    JSON.stringify(features),
-    JSON.stringify(research),
-    args.meta?.thesis ?? null,
-    args.meta?.lessonsApplied ?? null
+    features,
+    research,
+    args.inherit ? args.inherit.thesis : args.meta?.thesis ?? null,
+    args.inherit ? args.inherit.lessons_applied : args.meta?.lessonsApplied ?? null
   );
 }
 function reduce(args) {
@@ -37521,42 +37861,51 @@ function reduce(args) {
     p.id
   );
 }
-async function recordSolanaSwap(args) {
-  const prices = await usdPrices([args.inputMint, args.outputMint]);
-  const inUsd = (prices[args.inputMint] ?? 0) * args.inAmount;
-  const outUsd = (prices[args.outputMint] ?? 0) * args.outAmount;
-  const valueUsd = CASH_MINTS.has(args.inputMint) ? args.inAmount : CASH_MINTS.has(args.outputMint) ? args.outAmount : inUsd || outUsd;
-  if (!CASH_MINTS.has(args.inputMint)) {
-    reduce({ missionId: args.missionId, venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
+async function recordTrade(args) {
+  const venue = getVenue(args.venue);
+  if (!venue.isCash(args.sold.asset)) {
+    reduce({ missionId: args.missionId, venue: args.venue, asset: args.sold.asset, qty: args.sold.qty, proceedsUsd: args.valueUsd, meta: args.meta });
   }
-  if (!CASH_MINTS.has(args.outputMint)) {
+  if (!venue.isCash(args.bought.asset)) {
+    const measurable = venue.kind === "chain" && args.bought.asset !== venue.native.address;
     await openOrAdd({
       missionId: args.missionId,
-      venue: "solana",
-      asset: args.outputMint,
-      symbol: args.outputSymbol,
-      qty: args.outAmount,
-      costUsd: valueUsd,
+      venue: args.venue,
+      asset: args.bought.asset,
+      symbol: args.bought.symbol,
+      qty: args.bought.qty,
+      costUsd: args.valueUsd,
       meta: args.meta,
-      mint: args.outputMint === SOL_MINT ? void 0 : args.outputMint
+      features: measurable ? () => venue.entryFeatures(args.bought.asset) : void 0
     });
   }
 }
-async function recordBinanceTrade(args) {
-  const quoteUsd = CASH_TICKERS.has(args.quoteAsset) ? 1 : 0;
-  if (args.side === "BUY") {
-    await openOrAdd({
-      missionId: args.missionId,
-      venue: "binance",
-      asset: args.baseAsset,
-      symbol: args.baseAsset,
-      qty: args.baseQty - args.fee,
-      costUsd: args.quoteQty * quoteUsd,
-      meta: args.meta
-    });
-  } else {
-    reduce({ missionId: args.missionId, venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
-  }
+async function movePosition(args) {
+  const p = db.prepare("SELECT * FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(args.missionId, args.from.venue, args.from.asset);
+  if (!p) return;
+  const qty = Math.min(args.qty, p.qty_open);
+  const fraction = p.qty_open > 0 ? qty / p.qty_open : 0;
+  const costPart = p.cost_open_usd * fraction;
+  const all = fraction >= 0.999;
+  db.prepare("UPDATE positions SET qty_open = ?, cost_open_usd = ?, status = ?, closed_at = ?, exit_reason = COALESCE(?, exit_reason) WHERE id = ?").run(
+    all ? 0 : p.qty_open - qty,
+    all ? 0 : p.cost_open_usd - costPart,
+    all ? "moved" : "open",
+    all ? now() : null,
+    all ? `transferida a ${args.to.venue}` : null,
+    p.id
+  );
+  const received = args.received * (args.qty > 0 ? qty / args.qty : 0);
+  if (received <= 0) return;
+  await openOrAdd({
+    missionId: args.missionId,
+    venue: args.to.venue,
+    asset: args.to.asset,
+    symbol: args.to.symbol,
+    qty: received,
+    costUsd: costPart,
+    inherit: p
+  });
 }
 function listPositions(missionId) {
   const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
@@ -37580,6 +37929,7 @@ function listPositions(missionId) {
       exitReason: p.exit_reason,
       entry: JSON.parse(p.entry_features ?? "{}"),
       research: JSON.parse(p.research ?? "{}"),
+      thesis: p.thesis,
       lessonsApplied: p.lessons_applied
     };
   });
@@ -37589,14 +37939,13 @@ function logResearch(missionId, tool2, target) {
 }
 
 // src/sim/portfolio.ts
-var TOKEN_ACCOUNT_RENT_SOL = 203928e-8;
 var BINANCE_WITHDRAW_FEES = {
   USDC: config2.binanceUsdcWithdrawFee,
   SOL: 1e-3
 };
-var DUST = 1e-12;
+var DUST3 = 1e-12;
 function getHoldings(missionId) {
-  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST);
+  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST3);
 }
 function balance(missionId, venue, asset2) {
   const row = db.prepare("SELECT amount FROM holdings WHERE mission_id = ? AND venue = ? AND asset = ?").get(missionId, venue, asset2);
@@ -37604,7 +37953,7 @@ function balance(missionId, venue, asset2) {
 }
 function adjust(missionId, venue, asset2, symbol2, decimals, delta) {
   const next = balance(missionId, venue, asset2) + delta;
-  if (next < -DUST) throw new Error(`Saldo insuficiente de ${symbol2} en ${venue}`);
+  if (next < -DUST3) throw new Error(`Saldo insuficiente de ${symbol2} en ${venue}`);
   db.prepare(
     `INSERT INTO holdings (mission_id, venue, asset, symbol, decimals, amount) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(mission_id, venue, asset) DO UPDATE SET amount = excluded.amount`
@@ -37620,6 +37969,11 @@ function applyAtomically(fn) {
     db.exec("RELEASE apply");
     throw err;
   }
+}
+function applyDeltas(missionId, venue, deltas) {
+  applyAtomically(() => {
+    for (const d of deltas) if (d.amount !== 0) adjust(missionId, venue, d.asset, d.symbol, d.decimals, d.amount);
+  });
 }
 async function solUsdPrice() {
   const info = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`, 15e3, 3e4);
@@ -37639,22 +37993,34 @@ function resetPortfolio(missionId, initialUsd, solPrice) {
 async function liquidateAll(missionId, sessionId, reasoning2) {
   const problems = [];
   const holdings = getHoldings(missionId);
-  for (const h of holdings.filter((h2) => h2.venue === "solana" && h2.asset !== USDC_MINT && h2.asset !== SOL_MINT)) {
-    await swapSolana({ missionId, sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
-      (err) => problems.push(`${h.symbol} (Solana): ${err.message}`)
-    );
+  const meta3 = { exitReason: reasoning2 };
+  for (const chain of allChains()) {
+    const tokens = holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
+    for (const h of tokens) {
+      await swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning: reasoning2, meta: meta3 }).catch(
+        (err) => problems.push(`${h.symbol} (${chain.label}): ${err.message}`)
+      );
+    }
+    const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
+    if (nativeLeft > 1e-6) {
+      const amount = Number(nativeLeft.toFixed(chain.native.decimals));
+      await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning: reasoning2, meta: meta3 }).catch(
+        (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${err.message}`)
+      );
+    }
   }
-  const solLeft = balance(missionId, "solana", SOL_MINT) - config2.solanaTxFeeSol;
-  if (solLeft > 1e-6) {
-    await swapSolana({ missionId, sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
-      (err) => problems.push(`SOL (Solana): ${err.message}`)
-    );
-  }
-  for (const h of holdings.filter((h2) => h2.venue === "binance" && !STABLES.has(h2.asset))) {
+  for (const h of holdings.filter((h2) => h2.venue === "binance" && !binance.isCash(h2.asset))) {
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
+      const symbol2 = `${h.asset}${quote}`;
+      const info = await getSymbolInfo(symbol2).catch(() => null);
+      if (!info) continue;
+      if (balance(missionId, "binance", h.asset) < info.stepSize) {
+        sold = true;
+        break;
+      }
       try {
-        await binanceMarketOrder({ missionId, sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance(missionId, "binance", h.asset), reasoning: reasoning2, meta: { exitReason: reasoning2 } });
+        await binanceMarketOrder({ missionId, sessionId, symbol: symbol2, side: "SELL", amount: balance(missionId, "binance", h.asset), reasoning: reasoning2, meta: meta3 });
         sold = true;
         break;
       } catch {
@@ -37664,105 +38030,95 @@ async function liquidateAll(missionId, sessionId, reasoning2) {
   }
   return problems;
 }
-async function swapSolana(args) {
-  const inputMint = resolveMint(args.input);
-  const outputMint = resolveMint(args.output);
-  if (inputMint === outputMint) throw new Error("El token de entrada y salida son el mismo");
-  if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
-  const [inInfo, outInfo] = await Promise.all([getTokenInfo(inputMint), getTokenInfo(outputMint)]);
+var describeCosts = (costs) => costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`);
+async function swap(args) {
+  const chain = getChain(args.chain);
   const m = args.missionId;
-  const inBalance = balance(m, "solana", inputMint);
-  if (args.amount > inBalance + DUST) {
-    throw new Error(`Saldo insuficiente: tienes ${inBalance} ${inInfo.symbol} y quieres vender ${args.amount}`);
+  const [input2, output2] = await Promise.all([chain.resolveToken(args.input), chain.resolveToken(args.output)]);
+  if (input2.address === output2.address) throw new Error("El token de entrada y salida son el mismo");
+  const have = balance(m, chain.id, input2.address);
+  const amount = args.sellAll ? have : args.amount ?? 0;
+  if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input2.symbol} en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
+  if (amount > have + DUST3) throw new Error(`Saldo insuficiente: tienes ${have} ${input2.symbol} y quieres vender ${amount}`);
+  const quote = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps: args.slippageBps });
+  const settled = chain.settle(quote, { balance: (asset2) => balance(m, chain.id, asset2) });
+  if (!settled.ok) {
+    if (settled.deltas.length) {
+      applyDeltas(m, chain.id, settled.deltas);
+      logJournal({
+        missionId: m,
+        sessionId: args.sessionId,
+        kind: "failed_tx",
+        summary: `Swap fallido en ${chain.label}: ${settled.error}`,
+        reasoning: args.reasoning,
+        details: { chain: chain.id, costs: describeCosts(settled.costs) }
+      });
+    }
+    throw new Error(settled.error);
   }
-  const quote = await getQuote(inputMint, outputMint, toBaseUnits(args.amount, inInfo.decimals), args.slippageBps);
-  const outAmount = fromBaseUnits(quote.outAmount, outInfo.decimals);
-  const opensAccount = outputMint !== SOL_MINT && balance(m, "solana", outputMint) <= DUST;
-  const closesAccount = inputMint !== SOL_MINT && inBalance - args.amount <= DUST;
-  const solCost = config2.solanaTxFeeSol + (opensAccount ? TOKEN_ACCOUNT_RENT_SOL : 0) - (closesAccount ? TOKEN_ACCOUNT_RENT_SOL : 0);
-  const solAfter = balance(m, "solana", SOL_MINT) - solCost - (inputMint === SOL_MINT ? args.amount : 0) + (outputMint === SOL_MINT ? outAmount : 0);
-  if (solAfter < -DUST) {
-    throw new Error(`SOL insuficiente para pagar la red (${solCost.toFixed(6)} SOL de fees/renta). En Solana necesitas SOL para operar.`);
-  }
-  applyAtomically(() => {
-    adjust(m, "solana", inputMint, inInfo.symbol, inInfo.decimals, -args.amount);
-    adjust(m, "solana", outputMint, outInfo.symbol, outInfo.decimals, outAmount);
-    adjust(m, "solana", SOL_MINT, "SOL", 9, -solCost);
-  });
+  applyDeltas(m, chain.id, settled.deltas);
   const result = {
-    sold: `${args.amount} ${inInfo.symbol}`,
-    received: `${outAmount} ${outInfo.symbol}`,
-    effectivePrice: `1 ${outInfo.symbol} = ${(args.amount / outAmount).toPrecision(6)} ${inInfo.symbol}`,
-    jupiterPriceImpact: quote.priceImpactPct,
-    route: quote.routePlan.map((r) => `${r.swapInfo.label ?? r.swapInfo.ammKey} (${r.percent}%)`),
-    networkCostSol: solCost,
-    tokenAccountOpened: opensAccount,
-    tokenAccountClosed: closesAccount,
-    slot: quote.contextSlot
+    chain: chain.id,
+    sold: `${amount} ${input2.symbol}`,
+    received: `${quote.amountOut} ${output2.symbol}`,
+    effectivePrice: `1 ${output2.symbol} = ${(amount / quote.amountOut).toPrecision(6)} ${input2.symbol}`,
+    priceImpactPct: quote.priceImpactPct,
+    route: quote.route,
+    costs: describeCosts(settled.costs),
+    ...settled.info,
+    ...quote.extra,
+    ...quote.warnings.length ? { warnings: quote.warnings } : {}
   };
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
-    summary: `Swap ${result.sold} \u2192 ${result.received}`,
+    summary: `Swap ${result.sold} \u2192 ${result.received}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
     reasoning: args.reasoning,
-    details: { inputMint, outputMint, ...result }
+    details: { inputMint: input2.address, outputMint: output2.address, ...result }
   });
-  await recordSolanaSwap({
+  let valueUsd = chain.isCash(input2.address) ? amount : chain.isCash(output2.address) ? quote.amountOut : 0;
+  if (!valueUsd) {
+    const prices = await chain.priceUsd([input2.address, output2.address]).catch(() => ({}));
+    valueUsd = (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote.amountOut;
+  }
+  await recordTrade({
     missionId: m,
-    inputMint,
-    outputMint,
-    inputSymbol: inInfo.symbol,
-    outputSymbol: outInfo.symbol,
-    inAmount: args.amount,
-    outAmount,
+    venue: chain.id,
+    sold: { asset: input2.address, qty: amount },
+    bought: { asset: output2.address, symbol: output2.symbol, qty: quote.amountOut },
+    valueUsd,
     meta: args.meta
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
-async function quoteSolana(input2, output2, amount, slippageBps = 50) {
-  const inputMint = resolveMint(input2);
-  const outputMint = resolveMint(output2);
-  const [inInfo, outInfo] = await Promise.all([getTokenInfo(inputMint), getTokenInfo(outputMint)]);
-  const quote = await getQuote(inputMint, outputMint, toBaseUnits(amount, inInfo.decimals), slippageBps);
-  const outAmount = fromBaseUnits(quote.outAmount, outInfo.decimals);
+async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50) {
+  const chain = getChain(chainId);
+  const [input2, output2] = await Promise.all([chain.resolveToken(inputRef), chain.resolveToken(outputRef)]);
+  const q = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps });
   return {
-    input: `${amount} ${inInfo.symbol} (${inputMint})`,
-    output: `${outAmount} ${outInfo.symbol} (${outputMint})`,
-    jupiterPriceImpact: quote.priceImpactPct,
-    route: quote.routePlan.map((r) => `${r.swapInfo.label ?? r.swapInfo.ammKey} (${r.percent}%)`)
+    chain: chain.id,
+    input: `${amount} ${input2.symbol} (${input2.address})`,
+    output: `${q.amountOut} ${output2.symbol} (${output2.address})`,
+    priceImpactPct: q.priceImpactPct,
+    route: q.route,
+    ...q.warnings.length ? { warnings: q.warnings } : {},
+    note: "Sin contar los costes de red: se calculan al ejecutar, seg\xFAn tu monedero."
   };
 }
 async function binanceMarketOrder(args) {
   const info = await getSymbolInfo(args.symbol);
   const book = await getOrderBook(info.symbol);
-  const fee = config2.binanceTakerFee;
   const m = args.missionId;
-  let fill;
-  if (args.side === "BUY") {
-    const have = balance(m, "binance", info.quoteAsset);
-    if (args.amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.quoteAsset} en Binance`);
-    fill = walkBook(book.asks, "BUY", args.amount);
-  } else {
-    const qty = roundDownToStep(args.amount, info.stepSize);
-    const have = balance(m, "binance", info.baseAsset);
-    if (qty > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.baseAsset} en Binance`);
-    if (qty <= 0) throw new Error(`Cantidad menor que el m\xEDnimo (stepSize ${info.stepSize})`);
-    fill = walkBook(book.bids, "SELL", qty);
-  }
-  if (fill.quoteQty < info.minNotional) {
-    throw new Error(`Orden rechazada: el importe m\xEDnimo en ${info.symbol} es ${info.minNotional} ${info.quoteAsset}`);
-  }
-  const feePaid = args.side === "BUY" ? fill.baseQty * fee : fill.quoteQty * fee;
-  applyAtomically(() => {
-    if (args.side === "BUY") {
-      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, -fill.quoteQty);
-      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, fill.baseQty - feePaid);
-    } else {
-      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, -fill.baseQty);
-      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, fill.quoteQty - feePaid);
-    }
+  const { fill, feePaid, feeAsset, deltas } = fillMarketOrder({
+    info,
+    book,
+    side: args.side,
+    amount: args.amount,
+    balance: (asset2) => balance(m, "binance", asset2),
+    takerFee: config2.binanceTakerFee
   });
+  applyDeltas(m, "binance", deltas);
   const result = {
     symbol: info.symbol,
     side: args.side,
@@ -37771,7 +38127,7 @@ async function binanceMarketOrder(args) {
     avgPrice: fill.avgPrice,
     bestPrice: fill.bestPrice,
     slippagePct: fill.slippagePct,
-    fee: `${feePaid} ${args.side === "BUY" ? info.baseAsset : info.quoteAsset}`
+    fee: `${feePaid} ${feeAsset}`
   };
   logJournal({
     missionId: m,
@@ -37781,20 +38137,26 @@ async function binanceMarketOrder(args) {
     reasoning: args.reasoning,
     details: result
   });
-  await recordBinanceTrade({
+  const dust = args.side === "SELL" ? balance(m, "binance", info.baseAsset) : 0;
+  const soldQty = dust > 0 && dust < info.stepSize ? fill.baseQty + dust : fill.baseQty;
+  const quoteNet = args.side === "BUY" ? fill.quoteQty : fill.quoteQty - feePaid;
+  const valueUsd = binance.isCash(info.quoteAsset) ? quoteNet : (await binance.liquidationValue({ venue: "binance", asset: info.quoteAsset, symbol: info.quoteAsset, decimals: 8, amount: quoteNet }).catch(() => ({ usd: 0 }))).usd;
+  await recordTrade({
     missionId: m,
-    baseAsset: info.baseAsset,
-    quoteAsset: info.quoteAsset,
-    side: args.side,
-    baseQty: fill.baseQty,
-    quoteQty: fill.quoteQty,
-    fee: feePaid,
+    venue: "binance",
+    sold: args.side === "BUY" ? { asset: info.quoteAsset, qty: fill.quoteQty } : { asset: info.baseAsset, qty: soldQty },
+    bought: args.side === "BUY" ? { asset: info.baseAsset, symbol: info.baseAsset, qty: fill.baseQty - feePaid } : { asset: info.quoteAsset, symbol: info.quoteAsset, qty: fill.quoteQty - feePaid },
+    valueUsd,
     meta: args.meta
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
 async function transfer(args) {
   if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
+  const route = `${args.from}>${args.to}`;
+  if (route !== "solana>binance" && route !== "binance>solana") {
+    throw new Error("Por ahora solo se puede transferir entre tu monedero de Solana y Binance (en los dos sentidos)");
+  }
   const mint = args.asset === "SOL" ? SOL_MINT : USDC_MINT;
   const decimals = args.asset === "SOL" ? 9 : 6;
   const m = args.missionId;
@@ -37816,7 +38178,7 @@ async function transfer(args) {
       feeText = `${withdrawFee} ${args.asset} (retirada Binance)`;
     }
   });
-  const result = { asset: args.asset, from: args.from, to: args.from === "solana" ? "binance" : "solana", sent: args.amount, received, fee: feeText };
+  const result = { asset: args.asset, from: args.from, to: args.to, sent: args.amount, received, fee: feeText };
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
@@ -37825,43 +38187,19 @@ async function transfer(args) {
     reasoning: args.reasoning,
     details: result
   });
+  const assetAt = (venue) => venue === "binance" ? args.asset : mint;
+  await movePosition({
+    missionId: m,
+    from: { venue: args.from, asset: assetAt(args.from) },
+    to: { venue: args.to, asset: assetAt(args.to), symbol: args.asset },
+    qty: args.amount,
+    received
+  }).catch((err) => console.error(`No se pudo mover la posici\xF3n: ${err.message}`));
   return result;
-}
-var STABLES = /* @__PURE__ */ new Set(["USDT", "USDC", "FDUSD"]);
-async function valueHolding(h) {
-  if (h.venue === "solana") {
-    if (h.asset === USDC_MINT) return { usd: h.amount, method: "stable", reliable: true };
-    if (h.asset === SOL_MINT) {
-      try {
-        const fill = walkBook((await getOrderBook("SOLUSDT")).bids, "SELL", h.amount);
-        return { usd: fill.quoteQty, method: "libro Binance SOLUSDT", reliable: true };
-      } catch {
-      }
-    }
-    try {
-      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 1e4);
-      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter", reliable: true };
-    } catch {
-      const info = await getTokenInfo(h.asset).catch(() => null);
-      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotizaci\xF3n de venta)", reliable: false };
-    }
-  }
-  if (STABLES.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
-  for (const quoteAsset of ["USDT", "USDC"]) {
-    try {
-      const book = await getOrderBook(`${h.asset}${quoteAsset}`);
-      const fill = walkBook(book.bids, "SELL", h.amount);
-      return { usd: fill.quoteQty * (1 - config2.binanceTakerFee), method: `liquidaci\xF3n Binance ${h.asset}${quoteAsset}`, reliable: true };
-    } catch {
-    }
-  }
-  return { usd: 0, method: "sin precio", reliable: false };
 }
 async function valuation(missionId, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
-  const lines = await Promise.all(
-    holdings.map(async (h) => ({ ...h, ...await valueHolding(h) }))
-  );
+  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h) })));
   const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId);
   const initialUsd = mission?.initial_usd ?? config2.initialUsd;
@@ -37899,21 +38237,13 @@ async function valuation(missionId, recordSnapshot = false) {
 }
 
 // src/sim/orders.ts
-async function currentPrice(venue, asset2) {
-  if (venue === "solana") {
-    const data2 = await fetchJson(`https://lite-api.jup.ag/price/v3?ids=${asset2}`);
-    const price = data2[asset2]?.usdPrice;
-    if (typeof price !== "number") throw new Error(`Jupiter no da precio para ${asset2}`);
-    return price;
-  }
-  const data = await fetchJson(`https://api.binance.com/api/v3/ticker/price?symbol=${asset2}`);
-  return Number(data.price);
-}
+var currentPrice = (venue, asset2) => getVenue(venue).triggerPrice(asset2);
 var isTriggered = (condition, price, trigger) => condition === "above" ? price >= trigger : price <= trigger;
 function describeAction(venue, action) {
-  if (venue === "solana") {
+  const v = getVenue(venue);
+  if (v.kind === "chain") {
     const a2 = action;
-    return `swap ${a2.amount} ${a2.input} \u2192 ${a2.output}`;
+    return `swap en ${v.label} ${a2.sellAll ? "todo el saldo de" : a2.amount} ${a2.input} \u2192 ${a2.output}`;
   }
   const a = action;
   return `Binance ${a.side} ${a.symbol} amount=${a.amount}`;
@@ -37921,11 +38251,13 @@ function describeAction(venue, action) {
 async function placeOrder(args) {
   let triggerAsset;
   let triggerLabel;
-  if (args.venue === "solana") {
-    triggerAsset = resolveMint(args.triggerAsset);
-    triggerLabel = `${(await getTokenInfo(triggerAsset)).symbol}/USD`;
+  const venue = getVenue(args.venue);
+  if (venue.kind === "chain") {
+    const trigger = await venue.resolveToken(args.triggerAsset);
+    triggerAsset = trigger.address;
+    triggerLabel = `${trigger.symbol}/USD`;
     const a = args.action;
-    await Promise.all([getTokenInfo(resolveMint(a.input)), getTokenInfo(resolveMint(a.output))]);
+    await Promise.all([venue.resolveToken(a.input), venue.resolveToken(a.output)]);
   } else {
     triggerAsset = (await getSymbolInfo(args.triggerAsset)).symbol;
     triggerLabel = triggerAsset;
@@ -37989,7 +38321,13 @@ async function checkOrders() {
     const reasoning2 = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
     try {
       const action = JSON.parse(order.action);
-      const result = order.venue === "solana" ? await swapSolana({ missionId: order.mission_id, sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } }) : await binanceMarketOrder({ missionId: order.mission_id, sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } });
+      const base = {
+        missionId: order.mission_id,
+        sessionId: order.session_id,
+        reasoning: reasoning2,
+        meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
+      };
+      const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base, chain: order.venue, ...action }) : await binanceMarketOrder({ ...base, ...action });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {
@@ -38171,175 +38509,6 @@ import path5 from "node:path";
 // src/tools/index.ts
 import { readFileSync } from "node:fs";
 
-// src/market/research.ts
-var n = (v, digits = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : void 0;
-var ageMinutes = (iso) => iso === void 0 ? void 0 : Math.round((Date.now() - new Date(iso).getTime()) / 6e4);
-async function attempt(label, fn) {
-  try {
-    return await fn();
-  } catch (err) {
-    return { error: `${label}: ${err.message.slice(0, 160)}` };
-  }
-}
-async function scanMarket(limit = 25) {
-  const merged = /* @__PURE__ */ new Map();
-  const add = (mint, source, data) => {
-    if (!mint) return;
-    const c = merged.get(mint) ?? { mint, sources: [] };
-    if (!c.sources.includes(source)) c.sources.push(source);
-    for (const [k, v] of Object.entries(data)) if (v !== void 0 && c[k] === void 0) c[k] = v;
-    merged.set(mint, c);
-  };
-  const jup = async (interval) => {
-    const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/toptrending/${interval}?limit=50`);
-    for (const t of list) {
-      add(t.id, `jupiter_trending_${interval}`, {
-        symbol: t.symbol,
-        name: t.name,
-        mcapUsd: n(t.mcap, 0),
-        liquidityUsd: n(t.liquidity, 0),
-        priceChange5mPct: n(t.stats5m?.priceChange),
-        priceChange1hPct: n(t.stats1h?.priceChange),
-        netBuyers5m: t.stats5m?.numNetBuyers,
-        traders5m: t.stats5m?.numTraders,
-        ageMinutes: ageMinutes(t.createdAt)
-      });
-    }
-    return list.length;
-  };
-  const pump = async () => {
-    const list = await fetchJson("https://frontend-api-v3.pump.fun/coins/currently-live?limit=40&offset=0&includeNsfw=false");
-    for (const c of list) {
-      add(c.mint, "pumpfun_live", {
-        symbol: c.symbol,
-        name: c.name,
-        mcapUsd: n(c.usd_market_cap, 0),
-        pumpfunGraduated: c.complete,
-        pumpfunReplies: c.reply_count,
-        ageMinutes: ageMinutes(c.created_timestamp)
-      });
-    }
-    return list.length;
-  };
-  const boosts = async () => {
-    const list = await fetchJson("https://api.dexscreener.com/token-boosts/latest/v1");
-    const sol = list.filter((b) => b.chainId === "solana");
-    for (const b of sol) add(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
-    return sol.length;
-  };
-  const gecko = async () => {
-    const res = await fetchJson("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools");
-    for (const p of res.data) {
-      const mint = String(p.relationships?.base_token?.data?.id ?? "").replace(/^solana_/, "");
-      const a = p.attributes ?? {};
-      add(mint, "geckoterminal_trending", {
-        name: a.name,
-        liquidityUsd: n(Number(a.reserve_in_usd), 0),
-        priceChange5mPct: n(Number(a.price_change_percentage?.m5)),
-        priceChange1hPct: n(Number(a.price_change_percentage?.h1)),
-        ageMinutes: ageMinutes(a.pool_created_at)
-      });
-    }
-    return res.data.length;
-  };
-  const status = await Promise.all([
-    attempt("jupiter_trending_5m", () => jup("5m")),
-    attempt("jupiter_trending_1h", () => jup("1h")),
-    attempt("pumpfun_live", pump),
-    attempt("dexscreener_boosted", boosts),
-    attempt("geckoterminal_trending", gecko)
-  ]);
-  const candidates = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
-  return {
-    note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con su mint.",
-    sourcesStatus: status.map(
-      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}` : s.error
-    ),
-    totalUnique: merged.size,
-    candidates
-  };
-}
-async function tokenReport(mint) {
-  const [jupiter, dexscreener, rugcheck, pumpfun] = await Promise.all([
-    attempt("jupiter", async () => {
-      const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`);
-      const t = list.find((x) => x.id === mint);
-      if (!t) return { error: "no encontrado en Jupiter" };
-      const stats = (s) => s && {
-        priceChangePct: n(s.priceChange),
-        buyVolumeUsd: n(s.buyVolume, 0),
-        sellVolumeUsd: n(s.sellVolume, 0),
-        buys: s.numBuys,
-        sells: s.numSells,
-        traders: s.numTraders,
-        netBuyers: s.numNetBuyers,
-        organicBuyers: s.numOrganicBuyers
-      };
-      return {
-        symbol: t.symbol,
-        name: t.name,
-        priceUsd: t.usdPrice,
-        mcapUsd: n(t.mcap, 0),
-        liquidityUsd: n(t.liquidity, 0),
-        holders: t.holderCount,
-        ageMinutes: ageMinutes(t.createdAt),
-        launchpad: t.launchpad,
-        graduatedAt: t.graduatedAt,
-        organicScore: n(t.organicScore, 1),
-        verified: t.isVerified,
-        website: t.website,
-        audit: t.audit,
-        stats5m: stats(t.stats5m),
-        stats1h: stats(t.stats1h),
-        stats24h: stats(t.stats24h)
-      };
-    }),
-    attempt("dexscreener", async () => {
-      const pairs = await fetchJson(`https://api.dexscreener.com/tokens/v1/solana/${mint}`);
-      if (!pairs.length) return { error: "sin pares en DexScreener" };
-      const top = pairs[0];
-      return {
-        pairs: pairs.length,
-        mainDex: top.dexId,
-        pairAgeMinutes: ageMinutes(top.pairCreatedAt),
-        liquidityUsd: n(top.liquidity?.usd, 0),
-        volumeUsd: top.volume,
-        txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
-        priceChangePct: top.priceChange,
-        websites: top.info?.websites?.map((w) => w.url),
-        socials: top.info?.socials?.map((s) => `${s.type}: ${s.url}`),
-        boosts: top.boosts?.active,
-        url: top.url
-      };
-    }),
-    attempt("rugcheck", async () => {
-      const r = await fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`);
-      return {
-        scoreNormalised: r.score_normalised,
-        risks: (r.risks ?? []).map((x) => `${x.level}: ${x.name}${x.value ? ` (${x.value})` : ""}`)
-      };
-    }),
-    mint.endsWith("pump") ? attempt("pumpfun", async () => {
-      const c = await fetchJson(`https://frontend-api-v3.pump.fun/coins-v2/${mint}`);
-      return {
-        description: c.description,
-        twitter: c.twitter,
-        telegram: c.telegram,
-        website: c.website,
-        replies: c.reply_count,
-        participants: c.num_participants,
-        graduated: c.complete,
-        mcapUsd: n(c.usd_market_cap, 0),
-        athMcapUsd: n(c.ath_market_cap, 0),
-        securityVerdict: c.security_verdict,
-        createdMinutesAgo: ageMinutes(c.created_timestamp),
-        url: `https://pump.fun/coin/${mint}`
-      };
-    }) : Promise.resolve(void 0)
-  ]);
-  return { mint, jupiter, dexscreener, rugcheck, ...pumpfun ? { pumpfun } : {} };
-}
-
 // src/sim/memory.ts
 function profile(m) {
   return {
@@ -38446,6 +38615,8 @@ var mid = (ctx) => {
 var MAX_WAIT_MINUTES = 10;
 var FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 var reasoning = external_exports.string().describe("Por qu\xE9 haces esto. Queda en el diario.");
+var chainParam = external_exports.enum(CHAINS).describe("Cadena en la que operas o investigas");
+var TOKEN_ALIASES = "en Solana: SOL y USDC";
 var thesis = external_exports.object({
   why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
   evidence: external_exports.string().min(1).describe("Qu\xE9 has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
@@ -38464,17 +38635,17 @@ var SIM_TOOLS = [
     name: "scan_market",
     kind: "research",
     researchTarget: () => void 0,
-    description: "Escaneo de mercado en Solana en una sola llamada: combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal, con sus datos clave (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero.",
-    schema: external_exports.object({ limit: external_exports.number().int().min(5).max(60).default(25) }),
-    run: async ({ limit }) => json2(await scanMarket(limit))
+    description: "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
+    schema: external_exports.object({ chain: chainParam, limit: external_exports.number().int().min(5).max(60).default(25) }),
+    run: async ({ chain, limit }) => json2(await getChain(chain).research.scan(limit))
   }),
   tool({
     name: "token_report",
     kind: "research",
-    researchTarget: (i) => i.mint,
-    description: "Ficha completa de un token de Solana en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa (autoridades de mint y freeze, % del creador y de los mayores holders), riesgos de RugCheck, webs y redes sociales del proyecto y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico.",
-    schema: external_exports.object({ mint: external_exports.string() }),
-    run: async ({ mint }) => json2(await tokenReport(mint.trim()))
+    researchTarget: (i) => i.token,
+    description: "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico.",
+    schema: external_exports.object({ chain: chainParam, token: external_exports.string().describe("Direcci\xF3n del token (en Solana, su mint)") }),
+    run: async ({ chain, token }) => json2(await getChain(chain).research.report(token.trim()))
   }),
   tool({
     name: "field_guide",
@@ -38546,37 +38717,42 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     run: async (_i, ctx) => json2(await valuation(mid(ctx)))
   }),
   tool({
-    name: "quote_solana_swap",
+    name: "quote_swap",
     kind: "research",
     researchTarget: (i) => i.output,
-    description: "Cotiza un swap en Solana con Jupiter (agregador de DEX de mainnet) sin ejecutarlo. input/output: direcci\xF3n mint del token, o los alias SOL y USDC. amount en unidades del token de entrada.",
+    description: `Cotiza un swap en una cadena sin ejecutarlo, con el agregador de DEX real de esa cadena (en Solana, Jupiter). input/output: direcci\xF3n del token, o un alias (${TOKEN_ALIASES}). amount en unidades del token de entrada.`,
     schema: external_exports.object({
+      chain: chainParam,
       input: external_exports.string(),
       output: external_exports.string(),
       amount: external_exports.number().positive(),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50)
     }),
-    run: async (i) => json2(await quoteSolana(i.input, i.output, i.amount, i.slippage_bps))
+    run: async (i) => json2(await quoteSwap(i.chain, i.input, i.output, i.amount, i.slippage_bps))
   }),
   tool({
-    name: "simulate_solana_swap",
+    name: "simulate_swap",
     kind: "trade",
     journaled: true,
-    description: "Ejecuta en simulaci\xF3n un swap en tu monedero de Solana. El resultado es la cotizaci\xF3n real de Jupiter en ese instante (liquidez y comisiones de los pools incluidas). Se descuentan la fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas SOL en el monedero para pagar la red.",
+    description: `Ejecuta en simulaci\xF3n un swap en tu monedero de una cadena. El resultado es la cotizaci\xF3n real del agregador en ese instante (liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas el token nativo de la cadena para pagar la red. input/output: direcci\xF3n del token o un alias (${TOKEN_ALIASES}). Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token.`,
     schema: external_exports.object({
+      chain: chainParam,
       input: external_exports.string(),
       output: external_exports.string(),
-      amount: external_exports.number().positive(),
+      amount: external_exports.number().positive().optional(),
+      sell_all: external_exports.boolean().optional().describe("Vende todo tu saldo del token de entrada (en lugar de amount)"),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
       thesis
     }),
     run: async (i, ctx) => json2(
-      await swapSolana({
+      await swap({
         missionId: mid(ctx),
         sessionId: ctx.sessionId,
+        chain: i.chain,
         input: i.input,
         output: i.output,
         amount: i.amount,
+        sellAll: i.sell_all,
         slippageBps: i.slippage_bps,
         reasoning: formatThesis(i.thesis),
         meta: tradeMeta(i.thesis)
@@ -38596,38 +38772,49 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "trade",
     journaled: true,
     description: "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulaci\xF3n. De Solana a Binance se paga la fee de red; de Binance a Solana, la comisi\xF3n de retirada de Binance.",
-    schema: external_exports.object({ asset: external_exports.enum(["USDC", "SOL"]), from: external_exports.enum(["solana", "binance"]), amount: external_exports.number().positive(), reasoning }),
+    schema: external_exports.object({
+      asset: external_exports.enum(["USDC", "SOL"]),
+      from: external_exports.enum(VENUES),
+      to: external_exports.enum(VENUES),
+      amount: external_exports.number().positive(),
+      reasoning
+    }),
     run: async (i, ctx) => json2(await transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i }))
   }),
   tool({
-    name: "place_solana_trigger_order",
+    name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
-    description: "Deja una orden condicional en Solana: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n. El precio se comprueba aproximadamente cada minuto, as\xED que un pico muy breve puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla.",
+    description: "Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n. El precio se comprueba aproximadamente cada minuto, as\xED que un pico muy breve puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento.",
     schema: external_exports.object({
-      trigger_asset: external_exports.string().describe("Mint del token cuyo precio se vigila, o alias SOL/USDC"),
+      chain: chainParam,
+      trigger_asset: external_exports.string().describe(`Direcci\xF3n del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES})`),
       condition: external_exports.enum(["above", "below"]),
       trigger_price: external_exports.number().positive().describe("Precio en USD"),
       input: external_exports.string(),
       output: external_exports.string(),
-      amount: external_exports.number().positive().describe("Cantidad del token de entrada"),
+      amount: external_exports.number().positive().optional().describe("Cantidad del token de entrada"),
+      sell_all: external_exports.boolean().optional().describe("Vender todo el saldo del token de entrada al dispararse (en lugar de amount)"),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(100),
       expires_hours: external_exports.number().positive().optional(),
       thesis
     }),
-    run: async (i, ctx) => json2(
-      await placeOrder({
-        missionId: mid(ctx),
-        sessionId: ctx.sessionId,
-        venue: "solana",
-        triggerAsset: i.trigger_asset,
-        condition: i.condition,
-        triggerPrice: i.trigger_price,
-        action: { input: i.input, output: i.output, amount: i.amount, slippageBps: i.slippage_bps },
-        expiresHours: i.expires_hours,
-        reasoning: formatThesis(i.thesis)
-      })
-    )
+    run: async (i, ctx) => {
+      if (!i.sell_all && i.amount === void 0) throw new Error("Indica amount o sell_all");
+      return json2(
+        await placeOrder({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          venue: i.chain,
+          triggerAsset: i.trigger_asset,
+          condition: i.condition,
+          triggerPrice: i.trigger_price,
+          action: { input: i.input, output: i.output, amount: i.amount ?? 0, sellAll: i.sell_all || void 0, slippageBps: i.slippage_bps },
+          expiresHours: i.expires_hours,
+          reasoning: formatThesis(i.thesis)
+        })
+      );
+    }
   }),
   tool({
     name: "place_binance_trigger_order",
@@ -38959,6 +39146,7 @@ var JOURNAL_KIND = {
   order_cancelled: "order",
   order_expired: "order",
   order_failed: "error",
+  failed_tx: "error",
   rejected: "error",
   hypothetical: "hypothetical",
   mission: "mission"

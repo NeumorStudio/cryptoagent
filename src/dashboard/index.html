@@ -332,6 +332,7 @@
 </main>
 
 <script>
+const VENUE_LABELS = { solana: "Solana", binance: "Binance", base: "Base", bsc: "BNB Chain" };
 const $ = (id) => document.getElementById(id);
 const usd = (n) => n == null ? "…" : n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $";
 const pct = (n, d = 2) => n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -413,7 +414,7 @@ function renderState() {
   if (!rows.length) holdings.append(el("tr", {}, el("td", { colspan: "3", class: "empty" }, "Sin posiciones")));
   for (const h of rows) {
     holdings.append(el("tr", {},
-      el("td", {}, h.symbol, el("div", { class: "venue" }, h.venue === "solana" ? "Solana" : "Binance")),
+      el("td", {}, h.symbol, el("div", { class: "venue" }, VENUE_LABELS[h.venue] ?? h.venue)),
       el("td", { class: "r num" }, qty(h.amount)),
       el("td", { class: "r num" }, usd(h.usd))));
   }

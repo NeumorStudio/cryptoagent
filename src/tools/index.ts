@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { db, logActivity, logJournal, now } from "../db.js";
 import { fetchText } from "../market/http.js";
-import * as research from "../market/research.js";
+import { CHAINS, VENUES, type ChainId } from "../sim/types.js";
+import { getChain } from "../sim/venues/index.js";
 import * as mission from "../sim/mission.js";
 import * as memory from "../sim/memory.js";
 import * as orders from "../sim/orders.js";
@@ -24,6 +25,11 @@ const MAX_WAIT_MINUTES = 10;
 const FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 
 const reasoning = z.string().describe("Por qué haces esto. Queda en el diario.");
+
+const chainParam = z.enum(CHAINS as [ChainId, ...ChainId[]]).describe("Cadena en la que operas o investigas");
+
+// Alias de tokens que entiende cada cadena, para las descripciones.
+const TOKEN_ALIASES = "en Solana: SOL y USDC";
 
 // Tesis obligatoria en cada operación de trading: obliga a argumentar con pruebas y fuentes.
 const thesis = z
@@ -55,22 +61,22 @@ export const SIM_TOOLS = [
     kind: "research",
     researchTarget: () => undefined,
     description:
-      "Escaneo de mercado en Solana en una sola llamada: combina los tokens en tendencia de Jupiter (5 min y 1 h), los que están en directo " +
-      "en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal, con sus datos clave (capitalización, liquidez, " +
-      "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero.",
-    schema: z.object({ limit: z.number().int().min(5).max(60).default(25) }),
-    run: async ({ limit }) => json(await research.scanMarket(limit)),
+      "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalización, liquidez, " +
+      "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero. En Solana combina los tokens en " +
+      "tendencia de Jupiter (5 min y 1 h), los que están en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
+    schema: z.object({ chain: chainParam, limit: z.number().int().min(5).max(60).default(25) }),
+    run: async ({ chain, limit }) => json(await getChain(chain).research.scan(limit)),
   }),
   tool({
     name: "token_report",
     kind: "research",
-    researchTarget: (i) => i.mint,
+    researchTarget: (i) => i.token,
     description:
-      "Ficha completa de un token de Solana en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
-      "auditoría (autoridades de mint y freeze, % del creador y de los mayores holders), riesgos de RugCheck, webs y redes sociales del " +
-      "proyecto y, si es de pump.fun, su descripción, comentarios y máximo histórico.",
-    schema: z.object({ mint: z.string() }),
-    run: async ({ mint }) => json(await research.tokenReport(mint.trim())),
+      "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
+      "auditoría y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de " +
+      "los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripción, comentarios y máximo histórico.",
+    schema: z.object({ chain: chainParam, token: z.string().describe("Dirección del token (en Solana, su mint)") }),
+    run: async ({ chain, token }) => json(await getChain(chain).research.report(token.trim())),
   }),
   tool({
     name: "field_guide",
@@ -149,43 +155,50 @@ export const SIM_TOOLS = [
     run: async (_i, ctx) => json(await sim.valuation(mid(ctx))),
   }),
   tool({
-    name: "quote_solana_swap",
+    name: "quote_swap",
     kind: "research",
     researchTarget: (i) => i.output,
     description:
-      "Cotiza un swap en Solana con Jupiter (agregador de DEX de mainnet) sin ejecutarlo. " +
-      "input/output: dirección mint del token, o los alias SOL y USDC. amount en unidades del token de entrada.",
+      "Cotiza un swap en una cadena sin ejecutarlo, con el agregador de DEX real de esa cadena (en Solana, Jupiter). " +
+      `input/output: dirección del token, o un alias (${TOKEN_ALIASES}). amount en unidades del token de entrada.`,
     schema: z.object({
+      chain: chainParam,
       input: z.string(),
       output: z.string(),
       amount: z.number().positive(),
       slippage_bps: z.number().int().min(1).max(5000).default(50),
     }),
-    run: async (i) => json(await sim.quoteSolana(i.input, i.output, i.amount, i.slippage_bps)),
+    run: async (i) => json(await sim.quoteSwap(i.chain, i.input, i.output, i.amount, i.slippage_bps)),
   }),
   tool({
-    name: "simulate_solana_swap",
+    name: "simulate_swap",
     kind: "trade",
     journaled: true,
     description:
-      "Ejecuta en simulación un swap en tu monedero de Solana. El resultado es la cotización real de Jupiter en ese instante " +
-      "(liquidez y comisiones de los pools incluidas). Se descuentan la fee de red en SOL y, si recibes un token nuevo, " +
-      "la renta de la cuenta del token (se recupera al vaciarla). Necesitas SOL en el monedero para pagar la red.",
+      "Ejecuta en simulación un swap en tu monedero de una cadena. El resultado es la cotización real del agregador en ese instante " +
+      "(liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. " +
+      "En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). " +
+      `Necesitas el token nativo de la cadena para pagar la red. input/output: dirección del token o un alias (${TOKEN_ALIASES}). ` +
+      "Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token.",
     schema: z.object({
+      chain: chainParam,
       input: z.string(),
       output: z.string(),
-      amount: z.number().positive(),
+      amount: z.number().positive().optional(),
+      sell_all: z.boolean().optional().describe("Vende todo tu saldo del token de entrada (en lugar de amount)"),
       slippage_bps: z.number().int().min(1).max(5000).default(50),
       thesis,
     }),
     run: async (i, ctx) =>
       json(
-        await sim.swapSolana({
+        await sim.swap({
           missionId: mid(ctx),
           sessionId: ctx.sessionId,
+          chain: i.chain,
           input: i.input,
           output: i.output,
           amount: i.amount,
+          sellAll: i.sell_all,
           slippageBps: i.slippage_bps,
           reasoning: formatThesis(i.thesis),
           meta: tradeMeta(i.thesis),
@@ -211,43 +224,53 @@ export const SIM_TOOLS = [
     description:
       "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulación. " +
       "De Solana a Binance se paga la fee de red; de Binance a Solana, la comisión de retirada de Binance.",
-    schema: z.object({ asset: z.enum(["USDC", "SOL"]), from: z.enum(["solana", "binance"]), amount: z.number().positive(), reasoning }),
+    schema: z.object({
+      asset: z.enum(["USDC", "SOL"]),
+      from: z.enum(VENUES),
+      to: z.enum(VENUES),
+      amount: z.number().positive(),
+      reasoning,
+    }),
     run: async (i, ctx) => json(await sim.transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i })),
   }),
   tool({
-    name: "place_solana_trigger_order",
+    name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
     description:
-      "Deja una orden condicional en Solana: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, " +
+      "Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, " +
       "below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotización real de ese instante. " +
       "Funciona aunque no estés en sesión. El precio se comprueba aproximadamente cada minuto, así que un pico muy breve puede no dispararla. " +
-      "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla.",
+      "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento.",
     schema: z.object({
-      trigger_asset: z.string().describe("Mint del token cuyo precio se vigila, o alias SOL/USDC"),
+      chain: chainParam,
+      trigger_asset: z.string().describe(`Dirección del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES})`),
       condition: z.enum(["above", "below"]),
       trigger_price: z.number().positive().describe("Precio en USD"),
       input: z.string(),
       output: z.string(),
-      amount: z.number().positive().describe("Cantidad del token de entrada"),
+      amount: z.number().positive().optional().describe("Cantidad del token de entrada"),
+      sell_all: z.boolean().optional().describe("Vender todo el saldo del token de entrada al dispararse (en lugar de amount)"),
       slippage_bps: z.number().int().min(1).max(5000).default(100),
       expires_hours: z.number().positive().optional(),
       thesis,
     }),
-    run: async (i, ctx) =>
-      json(
+    run: async (i, ctx) => {
+      if (!i.sell_all && i.amount === undefined) throw new Error("Indica amount o sell_all");
+      return json(
         await orders.placeOrder({
           missionId: mid(ctx),
           sessionId: ctx.sessionId,
-          venue: "solana",
+          venue: i.chain,
           triggerAsset: i.trigger_asset,
           condition: i.condition,
           triggerPrice: i.trigger_price,
-          action: { input: i.input, output: i.output, amount: i.amount, slippageBps: i.slippage_bps },
+          action: { input: i.input, output: i.output, amount: i.amount ?? 0, sellAll: i.sell_all || undefined, slippageBps: i.slippage_bps },
           expiresHours: i.expires_hours,
           reasoning: formatThesis(i.thesis),
         }),
-      ),
+      );
+    },
   }),
   tool({
     name: "place_binance_trigger_order",

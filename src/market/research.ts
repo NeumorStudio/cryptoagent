@@ -109,7 +109,7 @@ export async function scanMarket(limit = 25) {
   return {
     note:
       "Candidatos combinados de varias fuentes (los que aparecen en más fuentes van primero). " +
-      "Para analizar uno a fondo usa token_report con su mint.",
+      "Para analizar uno a fondo usa token_report con chain: solana y su mint.",
     sourcesStatus: status.map((s, i) =>
       typeof s === "number"
         ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}`

@@ -8,16 +8,16 @@ Datos verificados el 27 de septiembre de 2026; las plataformas cambian, así que
 
 | Mercado | Cómo | Herramienta |
 |---|---|---|
-| Cualquier token de Solana con ruta en Jupiter | Swap al precio de cotización de Jupiter en ese instante | `simulate_solana_swap` |
-| Tokens de pump.fun **en la curva** (sin graduar) | Jupiter los enruta por el programa de pump.fun (ruta "Pump.fun") | `simulate_solana_swap` |
-| Tokens de pump.fun **graduados** | Jupiter los enruta por PumpSwap (ruta "Pump.fun Amm") | `simulate_solana_swap` |
+| Cualquier token de Solana con ruta en Jupiter | Swap al precio de cotización de Jupiter en ese instante | `simulate_swap` (chain: solana) |
+| Tokens de pump.fun **en la curva** (sin graduar) | Jupiter los enruta por el programa de pump.fun (ruta "Pump.fun") | `simulate_swap` (chain: solana) |
+| Tokens de pump.fun **graduados** | Jupiter los enruta por PumpSwap (ruta "Pump.fun Amm") | `simulate_swap` (chain: solana) |
 | Binance spot | Orden de mercado contra el order book real | `simulate_binance_market_order` |
 | Órdenes condicionales | Se disparan con el precio real, comprobado cada ~60 s | `place_*_trigger_order` |
 
 **No ejecutable** (solo se puede anotar con `record_hypothetical_action`): crear tokens, publicar en redes,
 otras blockchains (Ethereum, Base, BNB Chain…), futuros, préstamos, staking, airdrops.
 
-Para saber si un token concreto es operable, pide una cotización con `quote_solana_swap`: si no hay ruta, no se puede.
+Para saber si un token concreto es operable, pide una cotización con `quote_swap` (chain: solana): si no hay ruta, no se puede.
 
 ## 2. Cómo se simula (y qué no se simula)
 
@@ -25,7 +25,8 @@ Para saber si un token concreto es operable, pide una cotización con `quote_sol
   Las comisiones de los pools (incluida la de pump.fun) ya van dentro de la cotización.
 - Se cobran además: la fee de red de Solana (fija, configurable) y la renta de la cuenta de token
   (0,00203928 SOL al recibir un token nuevo; se recupera al vaciar esa cuenta). Sin SOL no puedes operar en Solana.
-- Binance: comisión taker 0,1 %, tamaño mínimo por par y retirada de USDC a Solana con comisión.
+- Binance: comisión taker 0,1 %, tamaño mínimo por par y retirada de USDC o SOL a Solana con comisión.
+- Al transferir un token entre Solana y Binance (`simulate_transfer`), su coste viaja con él: el resultado se mide al venderlo en el destino.
 - **No se simula**: MEV ni sandwiches, competencia por prioridad, latencia entre decidir y ejecutar,
   ni el impacto de tus operaciones en el precio que ven los demás.
 - La cartera se valora a precio de **liquidación**: lo que obtendrías vendiéndolo todo ahora. En tokens con poca

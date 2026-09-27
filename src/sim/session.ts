@@ -27,11 +27,11 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
     const group = mission.lab_group as LabGroup;
     memoryLines.push(`Laboratorio: eres ${mission.lab_label} en la tanda #${mission.lab_run_id}. ${GROUP_RULES[group]}`);
     if (group === "explorador") {
-      const banned = exploredTokens(mission.lab_run_id);
+      const banned = exploredTokens(mission.lab_run_id, mission.id);
       memoryLines.push(
         banned.length
-          ? `Tokens que no puedes comprar (ya operados en tandas anteriores): ${banned.map((t) => `${t.symbol} (${t.mint})`).join(", ")}`
-          : "Todavía no hay tokens operados en tandas anteriores: no tienes ninguno prohibido.",
+          ? `Tokens que no puedes comprar (ya operados en el laboratorio): ${banned.map((t) => `${t.symbol} (${t.mint})`).join(", ")}`
+          : "Todavía no hay tokens operados en el laboratorio: no tienes ninguno prohibido. Los que compren otros agentes de tu tanda quedarán prohibidos para ti.",
       );
     }
     memoryLines.push("");

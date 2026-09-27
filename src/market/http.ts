@@ -1,11 +1,39 @@
 // Acceso HTTP compartido a las APIs de mercado. Con varios agentes a la vez (laboratorio) evita
 // saturarlas: caché de pocos segundos, peticiones idénticas simultáneas agrupadas en una sola,
 // un máximo de peticiones en paralelo por servicio y reintentos si el servicio pide esperar.
+// Los servicios con límite por minuto (Jupiter) además se reparten turnos entre todos los procesos
+// que usan la base de datos: cada sesión de Claude Code tiene su propio servidor MCP y todos salen
+// por la misma IP.
+import { db } from "../db.js";
 
 /** Validez por defecto de una respuesta en caché. Corta: los precios tienen que ser del momento. */
 export const DEFAULT_TTL_MS = 5_000;
 const MAX_PARALLEL_PER_HOST = 6;
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5;
+
+/** Separación mínima entre peticiones a cada servicio, contando todos los procesos. */
+const MIN_INTERVAL_MS: Record<string, number> = { "lite-api.jup.ag": 1_100 };
+/** Pausa común para todos cuando el servicio responde 429. */
+const COOLDOWN_MS = 6_000;
+
+db.exec("CREATE TABLE IF NOT EXISTS http_pacing (host TEXT PRIMARY KEY, next_at INTEGER NOT NULL)");
+const reserveStmt = db.prepare(
+  `INSERT INTO http_pacing (host, next_at) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET next_at = max(next_at, ?) + ?
+   RETURNING next_at`,
+);
+const cooldownStmt = db.prepare(
+  "INSERT INTO http_pacing (host, next_at) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET next_at = max(next_at, excluded.next_at)",
+);
+
+/** Reserva el siguiente turno del servicio y espera a que llegue. */
+async function pace(host: string) {
+  const interval = MIN_INTERVAL_MS[host];
+  if (!interval) return;
+  const nowMs = Date.now();
+  const { next_at } = reserveStmt.get(host, nowMs + interval, nowMs, interval) as { next_at: number };
+  const slot = next_at - interval;
+  if (slot > nowMs) await sleep(slot - nowMs);
+}
 const MAX_CACHE_ENTRIES = 2_000;
 
 interface Cached {
@@ -39,6 +67,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function request(url: string, timeoutMs: number): Promise<{ status: number; body: string }> {
   const host = new URL(url).host;
   for (let attempt = 0; ; attempt++) {
+    await pace(host);
     await acquire(host);
     let res: Response;
     let body: string;
@@ -54,7 +83,10 @@ async function request(url: string, timeoutMs: number): Promise<{ status: number
     // Demasiadas peticiones o servicio saturado: esperar y reintentar.
     if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
       const retryAfter = Number(res.headers.get("retry-after"));
-      await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 10) * 1000 : 500 * 2 ** attempt);
+      const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 15) * 1000 : COOLDOWN_MS;
+      // Los servicios con turnos pausan a todos los procesos; el resto solo reintenta esta petición.
+      if (MIN_INTERVAL_MS[host]) cooldownStmt.run(host, Date.now() + wait);
+      else await sleep(wait);
       continue;
     }
     return { status: res.status, body };

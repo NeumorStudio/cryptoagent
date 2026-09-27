@@ -64,7 +64,7 @@ function applyAtomically(fn: () => void) {
 }
 
 export async function solUsdPrice(): Promise<number> {
-  const info = await fetchJson<Array<Record<string, any>>>(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`);
+  const info = await fetchJson<Array<Record<string, any>>>(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`, 15_000, 30_000);
   const price = info.find((t) => t.id === SOL_MINT)?.usdPrice;
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;
@@ -340,29 +340,42 @@ export async function transfer(args: {
 
 const STABLES = new Set(["USDT", "USDC", "FDUSD"]);
 
-async function valueHolding(h: Holding): Promise<{ usd: number; method: string }> {
+/**
+ * Valor de un saldo. `reliable` indica si sale de una cotización real de venta; los valores de
+ * reserva (precio spot cuando no hay cotización) sirven para mostrar, no para cerrar una misión.
+ */
+async function valueHolding(h: Holding): Promise<{ usd: number; method: string; reliable: boolean }> {
   if (h.venue === "solana") {
-    if (h.asset === USDC_MINT) return { usd: h.amount, method: "stable" };
+    if (h.asset === USDC_MINT) return { usd: h.amount, method: "stable", reliable: true };
+    if (h.asset === SOL_MINT) {
+      // El SOL se valora con el libro de Binance: igual de líquido y no gasta turnos de Jupiter.
+      try {
+        const fill = binance.walkBook((await binance.getOrderBook("SOLUSDT")).bids, "SELL", h.amount);
+        return { usd: fill.quoteQty, method: "libro Binance SOLUSDT", reliable: true };
+      } catch {
+        /* se intenta con Jupiter */
+      }
+    }
     try {
       // Valor de liquidación: cuánto USDC darían hoy vendiéndolo todo.
-      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100);
-      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidación Jupiter" };
+      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 10_000);
+      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidación Jupiter", reliable: true };
     } catch {
       const info = await getTokenInfo(h.asset).catch(() => null);
-      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin ruta de venta)" };
+      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotización de venta)", reliable: false };
     }
   }
-  if (STABLES.has(h.asset)) return { usd: h.amount, method: "stable" };
+  if (STABLES.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
   for (const quoteAsset of ["USDT", "USDC"]) {
     try {
       const book = await binance.getOrderBook(`${h.asset}${quoteAsset}`);
       const fill = binance.walkBook(book.bids, "SELL", h.amount);
-      return { usd: fill.quoteQty * (1 - config.binanceTakerFee), method: `liquidación Binance ${h.asset}${quoteAsset}` };
+      return { usd: fill.quoteQty * (1 - config.binanceTakerFee), method: `liquidación Binance ${h.asset}${quoteAsset}`, reliable: true };
     } catch {
       /* se prueba el siguiente par */
     }
   }
-  return { usd: 0, method: "sin precio" };
+  return { usd: 0, method: "sin precio", reliable: false };
 }
 
 export async function valuation(missionId: number, recordSnapshot = false) {
@@ -376,7 +389,9 @@ export async function valuation(missionId: number, recordSnapshot = false) {
     | undefined;
   const initialUsd = mission?.initial_usd ?? config.initialUsd;
   const benchSolPrice = mission?.benchmark_sol_price ?? 0;
-  const benchmarkUsd = benchSolPrice ? (initialUsd / benchSolPrice) * (await solUsdPrice()) : initialUsd;
+  // La referencia (haber mantenido SOL) es informativa: si no hay precio, no debe romper la valoración.
+  const solNow = benchSolPrice ? await solUsdPrice().catch(() => null) : null;
+  const benchmarkUsd = benchSolPrice && solNow ? (initialUsd / benchSolPrice) * solNow : initialUsd;
 
   if (recordSnapshot) {
     db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
@@ -392,6 +407,8 @@ export async function valuation(missionId: number, recordSnapshot = false) {
     startedAt: mission?.created_at,
     initialUsd,
     totalUsd,
+    /** false si algún saldo se valoró sin cotización real: el total es orientativo. */
+    reliable: lines.every((l) => l.reliable),
     pnlUsd: totalUsd - initialUsd,
     pnlPct: ((totalUsd - initialUsd) / initialUsd) * 100,
     benchmarkHoldSolUsd: benchmarkUsd,

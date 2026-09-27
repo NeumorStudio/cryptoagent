@@ -8,6 +8,7 @@ import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard } from "./dashboard/server.js";
 import { activeLabRun, checkMission, createLabRun, createMission, getActiveMission, getLastMission, getMission, labRunStatus, stopLabRun, stopMission } from "./sim/mission.js";
 import { config } from "./config.js";
+import { supersededBy } from "./db.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { statusReport } from "./sim/status.js";
 import { SIM_TOOLS, runTool } from "./tools/index.js";
@@ -15,6 +16,14 @@ import { SIM_TOOLS, runTool } from "./tools/index.js";
 const server = new McpServer({ name: "cryptosim", version: "0.1.0" });
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+
+// Si arranca una versión más nueva del plugin, todas las herramientas de este proceso se niegan a actuar.
+const register = server.registerTool.bind(server);
+(server as unknown as { registerTool: unknown }).registerTool = (name: string, cfg: unknown, handler: (...a: unknown[]) => unknown) =>
+  (register as (...a: unknown[]) => unknown)(name, cfg, async (...args: unknown[]) => {
+    const superseded = supersededBy();
+    return superseded ? { ...text(superseded), isError: true } : handler(...args);
+  });
 
 // Varios agentes pueden trabajar a la vez (laboratorio), cada uno sobre su misión: el agente del
 // laboratorio indica su mission_id en cada llamada; si no lo indica, se usa la misión principal.
@@ -273,6 +282,7 @@ await server.connect(new StdioServerTransport());
 // Mientras Claude Code está abierto, este proceso también vigila las órdenes condicionales
 // y la misión (el reclamo atómico evita ejecutar dos veces si además corre `npm run watcher`).
 setInterval(async () => {
+  if (supersededBy()) return;
   await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misión: ${(err as Error).message}`));
 }, config.watchIntervalSeconds * 1000);

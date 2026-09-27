@@ -219,6 +219,33 @@ export function setMeta(key: string, value: string) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
 
+// ─── Versión del código que usa los datos ──────────────────────────────────
+// Una sesión de Claude Code abierta hace horas puede seguir con un servidor MCP de una versión
+// anterior del plugin. Si arranca uno más nuevo, el antiguo deja de escribir: sus datos o reglas
+// pueden haber cambiado (p. ej., antes de que cada misión tuviera su propia cartera).
+const CODE_VERSION = process.env.CRYPTOAGENT_VERSION;
+const semver = (v: string) => v.split(".").map((n) => Number.parseInt(n, 10) || 0);
+const newer = (a: string, b: string) => {
+  const [x, y] = [semver(a), semver(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+};
+if (CODE_VERSION) {
+  const stored = getMeta("code_version");
+  if (!stored || newer(CODE_VERSION, stored)) setMeta("code_version", CODE_VERSION);
+}
+
+/** Si otro proceso con una versión más nueva del plugin usa los datos, devuelve el aviso; si no, null. */
+export function supersededBy(): string | null {
+  if (!CODE_VERSION) return null;
+  const stored = getMeta("code_version");
+  if (!stored || !newer(stored, CODE_VERSION)) return null;
+  return (
+    `Esta sesión usa cryptoagent ${CODE_VERSION}, pero ya hay en marcha la versión ${stored}. ` +
+    "Para no estropear los datos, esta versión ya no hace nada: abre una sesión nueva de Claude Code."
+  );
+}
+
 export function logActivity(entry: { missionId: number | null; sessionId: number | null; kind: string; title: string; body?: string }) {
   db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?, ?)").run(
     now(),

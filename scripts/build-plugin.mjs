@@ -16,7 +16,11 @@ await build({
   format: "esm",
   target: "node22",
   // Hace que paths.ts sepa que está empaquetado (datos en la carpeta persistente del plugin).
-  define: { "process.env.CRYPTOAGENT_BUNDLED": '"1"' },
+  define: {
+    "process.env.CRYPTOAGENT_BUNDLED": '"1"',
+    // Versión del plugin: el servidor la usa para retirarse si arranca otro más nuevo.
+    "process.env.CRYPTOAGENT_VERSION": JSON.stringify(JSON.parse(readFileSync("plugin/.claude-plugin/plugin.json", "utf8")).version),
+  },
   // Algunas dependencias son CommonJS y usan require(): se lo proporcionamos en ESM.
   banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
   legalComments: "none",

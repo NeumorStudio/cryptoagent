@@ -238,8 +238,10 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
 /** Comprueba una misión y la cierra si ha llegado al objetivo o se le ha acabado el plazo. */
 async function checkOne(mission: Mission): Promise<string[]> {
   const expired = remaining(mission.deadline).ms <= 0;
-  const value = (await valuation(mission.id)).totalUsd;
-  const reached = value >= mission.target_usd;
+  const v = await valuation(mission.id);
+  const value = v.totalUsd;
+  // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido.
+  const reached = value >= mission.target_usd && v.reliable;
   if (!expired && !reached) return [];
 
   // Reclamo atómico: solo un proceso cierra la misión.
@@ -255,11 +257,13 @@ async function checkOne(mission: Mission): Promise<string[]> {
 
   // El objetivo se detecta con el valor de liquidación estimado, pero lo que cuenta es lo
   // realizado al vender. Si al cerrar se queda corto y aún hay tiempo, la misión continúa.
-  if (reached && !expired && final.totalUsd < mission.target_usd) {
+  // Si alguna venta falló, el valor no está realizado: la misión sigue y se reintenta en la próxima revisión.
+  if (reached && !expired && (final.totalUsd < mission.target_usd || problems.length)) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
-    const summary =
-      `Misión #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) quedó por debajo ` +
-      `del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misión continúa.`;
+    const summary = problems.length
+      ? `Misión #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misión continúa y se reintentará.`
+      : `Misión #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) quedó por debajo ` +
+        `del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misión continúa.`;
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
     return [summary];
   }
@@ -317,18 +321,21 @@ export const GROUP_RULES: Record<LabGroup, string> = {
   memoria:
     "Grupo MEMORIA: tienes acceso al manual de estrategia del laboratorio (recall_lessons), con lo aprendido en tandas anteriores y las estadísticas de sus operaciones.",
   explorador:
-    "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista está en tu misión).",
+    "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista está en tu misión) ni los que compre antes que tú otro agente de tu tanda.",
 };
 
-/** Tokens que ya se compraron en tandas anteriores: el grupo explorador no puede repetirlos. */
-export function exploredTokens(runId: number): Array<{ mint: string; symbol: string }> {
+/**
+ * Tokens que el explorador no puede comprar: los operados en tandas anteriores y los que ya compró
+ * otro agente de su tanda (salvo él mismo, que puede recomprar lo suyo).
+ */
+export function exploredTokens(runId: number, missionId: number): Array<{ mint: string; symbol: string }> {
   return db
     .prepare(
       `SELECT DISTINCT p.asset AS mint, p.symbol FROM positions p JOIN missions m ON m.id = p.mission_id
-       WHERE m.lab_run_id IS NOT NULL AND m.lab_run_id < ? AND p.venue = 'solana'
+       WHERE m.lab_run_id IS NOT NULL AND (m.lab_run_id < ? OR (m.lab_run_id = ? AND m.id != ?)) AND p.venue = 'solana'
          AND p.asset NOT IN ('So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')`,
     )
-    .all(runId) as Array<{ mint: string; symbol: string }>;
+    .all(runId, runId, missionId) as Array<{ mint: string; symbol: string }>;
 }
 
 /** Detiene todas las misiones activas de una tanda (por defecto, la que esté en curso). */

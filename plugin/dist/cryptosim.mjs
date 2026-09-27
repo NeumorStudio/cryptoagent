@@ -37116,6 +37116,30 @@ for (const table of ["journal", "activity", "orders", "notes", "snapshots", "ses
   }
 }
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
+function getMeta(key) {
+  const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
+  return row?.value;
+}
+function setMeta(key, value) {
+  db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+}
+var CODE_VERSION = "0.6.1";
+var semver = (v) => v.split(".").map((n2) => Number.parseInt(n2, 10) || 0);
+var newer = (a, b) => {
+  const [x, y] = [semver(a), semver(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+};
+if (CODE_VERSION) {
+  const stored = getMeta("code_version");
+  if (!stored || newer(CODE_VERSION, stored)) setMeta("code_version", CODE_VERSION);
+}
+function supersededBy() {
+  if (!CODE_VERSION) return null;
+  const stored = getMeta("code_version");
+  if (!stored || !newer(stored, CODE_VERSION)) return null;
+  return `Esta sesi\xF3n usa cryptoagent ${CODE_VERSION}, pero ya hay en marcha la versi\xF3n ${stored}. Para no estropear los datos, esta versi\xF3n ya no hace nada: abre una sesi\xF3n nueva de Claude Code.`;
+}
 function logActivity(entry) {
   db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?, ?)").run(
     now(),
@@ -37141,7 +37165,25 @@ function logJournal(entry) {
 // src/market/http.ts
 var DEFAULT_TTL_MS = 5e3;
 var MAX_PARALLEL_PER_HOST = 6;
-var MAX_RETRIES = 3;
+var MAX_RETRIES = 5;
+var MIN_INTERVAL_MS = { "lite-api.jup.ag": 1100 };
+var COOLDOWN_MS = 6e3;
+db.exec("CREATE TABLE IF NOT EXISTS http_pacing (host TEXT PRIMARY KEY, next_at INTEGER NOT NULL)");
+var reserveStmt = db.prepare(
+  `INSERT INTO http_pacing (host, next_at) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET next_at = max(next_at, ?) + ?
+   RETURNING next_at`
+);
+var cooldownStmt = db.prepare(
+  "INSERT INTO http_pacing (host, next_at) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET next_at = max(next_at, excluded.next_at)"
+);
+async function pace(host) {
+  const interval = MIN_INTERVAL_MS[host];
+  if (!interval) return;
+  const nowMs = Date.now();
+  const { next_at } = reserveStmt.get(host, nowMs + interval, nowMs, interval);
+  const slot = next_at - interval;
+  if (slot > nowMs) await sleep(slot - nowMs);
+}
 var MAX_CACHE_ENTRIES = 2e3;
 var cache = /* @__PURE__ */ new Map();
 var active = /* @__PURE__ */ new Map();
@@ -37164,6 +37206,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function request(url2, timeoutMs) {
   const host = new URL(url2).host;
   for (let attempt2 = 0; ; attempt2++) {
+    await pace(host);
     await acquire(host);
     let res;
     let body;
@@ -37178,7 +37221,9 @@ async function request(url2, timeoutMs) {
     }
     if ((res.status === 429 || res.status === 503) && attempt2 < MAX_RETRIES) {
       const retryAfter = Number(res.headers.get("retry-after"));
-      await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 10) * 1e3 : 500 * 2 ** attempt2);
+      const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 15) * 1e3 : COOLDOWN_MS;
+      if (MIN_INTERVAL_MS[host]) cooldownStmt.run(host, Date.now() + wait);
+      else await sleep(wait);
       continue;
     }
     return { status: res.status, body };
@@ -37291,7 +37336,7 @@ var tokenCache = /* @__PURE__ */ new Map();
 async function getTokenInfo(mint) {
   const cached3 = tokenCache.get(mint);
   if (cached3) return cached3;
-  const results = await fetchJson(`${BASE2}/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+  const results = await fetchJson(`${BASE2}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15e3, 3e4);
   const hit = results.find((t) => t.id === mint);
   if (!hit) throw new Error(`Token no encontrado en Solana: ${mint}`);
   const info = {
@@ -37304,9 +37349,9 @@ async function getTokenInfo(mint) {
   tokenCache.set(mint, info);
   return info;
 }
-async function getQuote(inputMint, outputMint, amountBase, slippageBps) {
+async function getQuote(inputMint, outputMint, amountBase, slippageBps, ttlMs = 2e3) {
   const url2 = `${BASE2}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
-  const quote = await fetchJson(url2, 15e3, 2e3);
+  const quote = await fetchJson(url2, 15e3, ttlMs);
   if (quote.error) throw new Error(`Jupiter: ${quote.error}`);
   return quote;
 }
@@ -37524,7 +37569,7 @@ function applyAtomically(fn) {
   }
 }
 async function solUsdPrice() {
-  const info = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`);
+  const info = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`, 15e3, 3e4);
   const price = info.find((t) => t.id === SOL_MINT)?.usdPrice;
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;
@@ -37732,25 +37777,32 @@ async function transfer(args) {
 var STABLES = /* @__PURE__ */ new Set(["USDT", "USDC", "FDUSD"]);
 async function valueHolding(h) {
   if (h.venue === "solana") {
-    if (h.asset === USDC_MINT) return { usd: h.amount, method: "stable" };
+    if (h.asset === USDC_MINT) return { usd: h.amount, method: "stable", reliable: true };
+    if (h.asset === SOL_MINT) {
+      try {
+        const fill = walkBook((await getOrderBook("SOLUSDT")).bids, "SELL", h.amount);
+        return { usd: fill.quoteQty, method: "libro Binance SOLUSDT", reliable: true };
+      } catch {
+      }
+    }
     try {
-      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100);
-      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter" };
+      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 1e4);
+      return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter", reliable: true };
     } catch {
       const info = await getTokenInfo(h.asset).catch(() => null);
-      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin ruta de venta)" };
+      return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotizaci\xF3n de venta)", reliable: false };
     }
   }
-  if (STABLES.has(h.asset)) return { usd: h.amount, method: "stable" };
+  if (STABLES.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
   for (const quoteAsset of ["USDT", "USDC"]) {
     try {
       const book = await getOrderBook(`${h.asset}${quoteAsset}`);
       const fill = walkBook(book.bids, "SELL", h.amount);
-      return { usd: fill.quoteQty * (1 - config2.binanceTakerFee), method: `liquidaci\xF3n Binance ${h.asset}${quoteAsset}` };
+      return { usd: fill.quoteQty * (1 - config2.binanceTakerFee), method: `liquidaci\xF3n Binance ${h.asset}${quoteAsset}`, reliable: true };
     } catch {
     }
   }
-  return { usd: 0, method: "sin precio" };
+  return { usd: 0, method: "sin precio", reliable: false };
 }
 async function valuation(missionId, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
@@ -37761,7 +37813,8 @@ async function valuation(missionId, recordSnapshot = false) {
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId);
   const initialUsd = mission?.initial_usd ?? config2.initialUsd;
   const benchSolPrice = mission?.benchmark_sol_price ?? 0;
-  const benchmarkUsd = benchSolPrice ? initialUsd / benchSolPrice * await solUsdPrice() : initialUsd;
+  const solNow = benchSolPrice ? await solUsdPrice().catch(() => null) : null;
+  const benchmarkUsd = benchSolPrice && solNow ? initialUsd / benchSolPrice * solNow : initialUsd;
   if (recordSnapshot) {
     db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
       now(),
@@ -37776,6 +37829,8 @@ async function valuation(missionId, recordSnapshot = false) {
     startedAt: mission?.created_at,
     initialUsd,
     totalUsd,
+    /** false si algún saldo se valoró sin cotización real: el total es orientativo. */
+    reliable: lines.every((l) => l.reliable),
     pnlUsd: totalUsd - initialUsd,
     pnlPct: (totalUsd - initialUsd) / initialUsd * 100,
     benchmarkHoldSolUsd: benchmarkUsd,
@@ -38058,8 +38113,9 @@ async function stopMission(closePositions, missionId) {
 }
 async function checkOne(mission) {
   const expired = remaining(mission.deadline).ms <= 0;
-  const value = (await valuation(mission.id)).totalUsd;
-  const reached = value >= mission.target_usd;
+  const v = await valuation(mission.id);
+  const value = v.totalUsd;
+  const reached = value >= mission.target_usd && v.reliable;
   if (!expired && !reached) return [];
   const status = reached ? "succeeded" : "expired";
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
@@ -38067,9 +38123,9 @@ async function checkOne(mission) {
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   const problems = await liquidateAll(mission.id, null, reason);
   const final = await valuation(mission.id, true);
-  if (reached && !expired && final.totalUsd < mission.target_usd) {
+  if (reached && !expired && (final.totalUsd < mission.target_usd || problems.length)) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
-    const summary2 = `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
+    const summary2 = problems.length ? `Misi\xF3n #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misi\xF3n contin\xFAa y se reintentar\xE1.` : `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });
     return [summary2];
   }
@@ -38111,14 +38167,14 @@ function activeLabRun() {
 var GROUP_RULES = {
   control: "Grupo CONTROL: trabajas sin memoria de misiones anteriores. Sirves de referencia para medir si la memoria ayuda.",
   memoria: "Grupo MEMORIA: tienes acceso al manual de estrategia del laboratorio (recall_lessons), con lo aprendido en tandas anteriores y las estad\xEDsticas de sus operaciones.",
-  explorador: "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista est\xE1 en tu misi\xF3n)."
+  explorador: "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista est\xE1 en tu misi\xF3n) ni los que compre antes que t\xFA otro agente de tu tanda."
 };
-function exploredTokens(runId) {
+function exploredTokens(runId, missionId) {
   return db.prepare(
     `SELECT DISTINCT p.asset AS mint, p.symbol FROM positions p JOIN missions m ON m.id = p.mission_id
-       WHERE m.lab_run_id IS NOT NULL AND m.lab_run_id < ? AND p.venue = 'solana'
+       WHERE m.lab_run_id IS NOT NULL AND (m.lab_run_id < ? OR (m.lab_run_id = ? AND m.id != ?)) AND p.venue = 'solana'
          AND p.asset NOT IN ('So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')`
-  ).all(runId);
+  ).all(runId, runId, missionId);
 }
 async function stopLabRun(closePositions, runId) {
   const id = runId ?? activeLabRun()?.id;
@@ -38518,9 +38574,9 @@ async function sessionBriefing(sessionId, missionId) {
     const group = mission.lab_group;
     memoryLines.push(`Laboratorio: eres ${mission.lab_label} en la tanda #${mission.lab_run_id}. ${GROUP_RULES[group]}`);
     if (group === "explorador") {
-      const banned = exploredTokens(mission.lab_run_id);
+      const banned = exploredTokens(mission.lab_run_id, mission.id);
       memoryLines.push(
-        banned.length ? `Tokens que no puedes comprar (ya operados en tandas anteriores): ${banned.map((t) => `${t.symbol} (${t.mint})`).join(", ")}` : "Todav\xEDa no hay tokens operados en tandas anteriores: no tienes ninguno prohibido."
+        banned.length ? `Tokens que no puedes comprar (ya operados en el laboratorio): ${banned.map((t) => `${t.symbol} (${t.mint})`).join(", ")}` : "Todav\xEDa no hay tokens operados en el laboratorio: no tienes ninguno prohibido. Los que compren otros agentes de tu tanda quedar\xE1n prohibidos para ti."
       );
     }
     memoryLines.push("");
@@ -39183,10 +39239,10 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
     }
     if (group === "explorador" && (name === "simulate_solana_swap" || name === "place_solana_trigger_order")) {
       const target = String(input2.output ?? "");
-      const banned = exploredTokens(current.lab_run_id).find((t) => t.mint === target);
+      const banned = exploredTokens(current.lab_run_id, current.id).find((t) => t.mint === target);
       if (banned) {
         return {
-          content: `Error: eres del grupo explorador y ${banned.symbol} (${banned.mint}) ya se oper\xF3 en tandas anteriores. Busca algo nuevo.`,
+          content: `Error: eres del grupo explorador y ${banned.symbol} (${banned.mint}) ya lo oper\xF3 otro agente del laboratorio. Busca algo nuevo.`,
           isError: true
         };
       }
@@ -39224,6 +39280,11 @@ ${ended.join("\n")}`, isError: false };
 // src/mcp.ts
 var server = new McpServer({ name: "cryptosim", version: "0.1.0" });
 var text = (t) => ({ content: [{ type: "text", text: t }] });
+var register = server.registerTool.bind(server);
+server.registerTool = (name, cfg, handler2) => register(name, cfg, async (...args) => {
+  const superseded = supersededBy();
+  return superseded ? { ...text(superseded), isError: true } : handler2(...args);
+});
 var missionIdParam = external_exports.number().int().optional().describe("Solo en el laboratorio: la misi\xF3n sobre la que trabajas. Si no la indicas, se usa la misi\xF3n principal.");
 function resolveMission(requested) {
   if (requested !== void 0) {
@@ -39435,6 +39496,7 @@ for (const tool2 of SIM_TOOLS) {
 }
 await server.connect(new StdioServerTransport());
 setInterval(async () => {
+  if (supersededBy()) return;
   await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misi\xF3n: ${err.message}`));
 }, config2.watchIntervalSeconds * 1e3);

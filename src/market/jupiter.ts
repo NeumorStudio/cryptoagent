@@ -27,7 +27,7 @@ const tokenCache = new Map<string, TokenInfo>();
 export async function getTokenInfo(mint: string): Promise<TokenInfo> {
   const cached = tokenCache.get(mint);
   if (cached) return cached;
-  const results = await fetchJson<Array<Record<string, any>>>(`${BASE}/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+  const results = await fetchJson<Array<Record<string, any>>>(`${BASE}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15_000, 30_000);
   const hit = results.find((t) => t.id === mint);
   if (!hit) throw new Error(`Token no encontrado en Solana: ${mint}`);
   const info: TokenInfo = {
@@ -50,12 +50,12 @@ export interface JupiterQuote {
   contextSlot?: number;
 }
 
-export async function getQuote(inputMint: string, outputMint: string, amountBase: bigint, slippageBps: number): Promise<JupiterQuote> {
+export async function getQuote(inputMint: string, outputMint: string, amountBase: bigint, slippageBps: number, ttlMs = 2_000): Promise<JupiterQuote> {
   const url =
     `${BASE}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}` +
     `&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
   // Determina el precio de ejecución: caché muy corta (solo agrupa peticiones idénticas casi simultáneas).
-  const quote = await fetchJson<JupiterQuote & { error?: string }>(url, 15_000, 2_000);
+  const quote = await fetchJson<JupiterQuote & { error?: string }>(url, 15_000, ttlMs);
   if (quote.error) throw new Error(`Jupiter: ${quote.error}`);
   return quote;
 }

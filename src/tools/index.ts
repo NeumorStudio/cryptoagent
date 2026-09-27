@@ -445,10 +445,10 @@ export async function runTool(
     }
     if (group === "explorador" && (name === "simulate_solana_swap" || name === "place_solana_trigger_order")) {
       const target = String(input.output ?? "");
-      const banned = mission.exploredTokens(current.lab_run_id).find((t) => t.mint === target);
+      const banned = mission.exploredTokens(current.lab_run_id, current.id).find((t) => t.mint === target);
       if (banned) {
         return {
-          content: `Error: eres del grupo explorador y ${banned.symbol} (${banned.mint}) ya se operó en tandas anteriores. Busca algo nuevo.`,
+          content: `Error: eres del grupo explorador y ${banned.symbol} (${banned.mint}) ya lo operó otro agente del laboratorio. Busca algo nuevo.`,
           isError: true,
         };
       }

@@ -15,6 +15,9 @@ Solana a través de Jupiter (incluidos los tokens de pump.fun) y Binance spot. N
 
 Necesitas **Node.js 22.13 o superior** (usa el SQLite integrado en Node).
 
+Funciona solo en **Claude Code**: la pestaña **Code** de la app de escritorio, la terminal o las extensiones
+de VS Code y JetBrains. En el chat normal de Claude las habilidades se cargan, pero el simulador y el agente no pueden arrancar.
+
 En Claude Code:
 
 ```

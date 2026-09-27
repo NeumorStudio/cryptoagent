@@ -9,7 +9,9 @@ Vas a preparar y lanzar una misión del agente `cryptoagent:trader`. Habla con e
 
 ## 1. Comprobar el simulador
 
-Las herramientas del servidor MCP `cryptosim` (`mission_status`, `create_mission`, `start_dashboard`) pueden estar diferidas: si no las tienes cargadas, cárgalas con ToolSearch (`+cryptosim`). Si no aparecen, explica al usuario que el plugin `cryptoagent` debe estar instalado y activado, y que después hay que abrir una sesión nueva; para aquí.
+Las herramientas del servidor MCP `cryptosim` (`mission_status`, `create_mission`, `start_dashboard`) pueden estar diferidas: si no las tienes cargadas, cárgalas con ToolSearch (`+cryptosim`). Si no aparecen, díselo al usuario según el caso y para aquí:
+- Si no tienes la herramienta Agent, estás en el chat normal de Claude, no en Claude Code. Explica que este plugin solo funciona en **Claude Code** (la pestaña **Code** de la app de escritorio, la terminal o las extensiones de VS Code y JetBrains), porque el simulador se ejecuta en su ordenador y el agente trabaja en segundo plano; el chat normal no puede arrancarlos. Dile que abra una sesión en la pestaña Code (sirve cualquier carpeta) y escriba `/cryptoagent:trading`.
+- Si sí la tienes, estás en Claude Code pero el plugin no está cargado: que compruebe en el gestor de plugins que `cryptoagent` está instalado y activado, y que abra una sesión nueva.
 
 Llama a `mission_status`.
 

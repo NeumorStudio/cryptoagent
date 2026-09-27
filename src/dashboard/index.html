@@ -158,9 +158,6 @@
   .empty { font-size: 14px; color: var(--muted); margin: 0; }
   .ok { color: var(--gain); }
   .ko { color: var(--loss); }
-  .lab-meta { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
-  #labGroups { margin: 10px 0 0; }
-  .lab-status { display: block; color: var(--muted); font-size: 12px; }
   .lesson { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
   .lesson .when { color: var(--muted); font-size: 12px; }
   #lessons { margin-top: 12px; }
@@ -269,16 +266,6 @@
 
 <main>
   <aside>
-    <section aria-labelledby="h-lab" id="labSection" hidden>
-      <h2 id="h-lab">Laboratorio</h2>
-      <p class="lab-meta" id="labMeta"></p>
-      <table>
-        <thead><tr><th>Agente</th><th class="r">Valor</th><th class="r">Resultado</th></tr></thead>
-        <tbody id="labRows"></tbody>
-      </table>
-      <p class="lab-meta" id="labGroups"></p>
-    </section>
-
     <section aria-labelledby="h-value">
       <h2 id="h-value">Valor de la cartera</h2>
       <div class="value-row">
@@ -385,37 +372,6 @@ function renderClock() {
   $("clockLabel").textContent = `Tiempo restante · plazo ${dateTime(m.deadline)}`;
 }
 setInterval(renderClock, 1000);
-
-// ── Laboratorio: clasificación de la última tanda ────────────────────────
-const LAB_STATUS = { active: "en curso", closing: "cerrando", succeeded: "conseguida", expired: "sin llegar", cancelled: "detenida" };
-function renderLab() {
-  const lab = state.lab;
-  $("labSection").hidden = !lab;
-  if (!lab) return;
-  const { run, leaderboard } = lab;
-  $("labMeta").textContent =
-    `Tanda #${run.id} · ${run.status === "active" ? "en curso" : "terminada"} · ${leaderboard.length} agentes · ` +
-    `de ${usd(run.capital_usd)} a ${usd(run.target_usd)} en ${run.duration_minutes} min`;
-  const rows = $("labRows");
-  rows.replaceChildren();
-  for (const r of leaderboard) {
-    const cls = r.status === "succeeded" ? "ok" : r.resultPct < 0 ? "ko" : "";
-    rows.append(el("tr", {},
-      el("td", {}, r.label, el("span", { class: "lab-status" }, `${r.group} · ${LAB_STATUS[r.status] ?? r.status}`)),
-      el("td", { class: "r num" }, usd(r.valueUsd)),
-      el("td", { class: `r num ${cls}` }, `${r.resultPct >= 0 ? "+" : "−"}${pct(Math.abs(r.resultPct))} %`)));
-  }
-  // Media por grupo: es la comparación que dirá si la memoria ayuda.
-  const groups = {};
-  for (const r of leaderboard) (groups[r.group] ??= []).push(r.resultPct);
-  const entries = Object.entries(groups);
-  $("labGroups").textContent = entries.length > 1
-    ? "Media por grupo: " + entries.map(([g, v]) => {
-        const avg = v.reduce((s, x) => s + x, 0) / v.length;
-        return `${g} ${avg >= 0 ? "+" : "−"}${pct(Math.abs(avg))} %`;
-      }).join(" · ")
-    : "";
-}
 
 function renderState() {
   const { mission: m, valuation: v } = state;
@@ -672,7 +628,6 @@ async function poll() {
     const key = s.mission?.id ?? "none";
     if (key !== missionKey) { missionKey = key; seen.clear(); $("log").replaceChildren(); firstLoad = true; }
     state = s;
-    renderLab();
     renderState();
     renderEvents(events.filter((e) => !seen.has(e.id) || (e.body && !seen.get(e.id).querySelector("details"))));
     lastOk = Date.now();

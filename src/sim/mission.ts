@@ -1,8 +1,6 @@
 // Misión: capital inicial ficticio, objetivo y plazo real. Termina sola cuando la cartera
 // llega al objetivo o se acaba el tiempo; entonces se cierran todas las posiciones a mercado.
-//
-// Hay una "misión principal" (la del usuario, lab_run_id NULL) y, en el laboratorio, tandas de
-// varias misiones a la vez, cada una con su propia cartera, órdenes, diario y posiciones.
+// Cada misión tiene su propia cartera, órdenes, diario y posiciones.
 import { db, logJournal, now } from "../db.js";
 import { liquidateAll, resetPortfolio, solUsdPrice, valuation } from "./portfolio.js";
 
@@ -17,41 +15,36 @@ export interface Mission {
   final_usd: number | null;
   instructions: string | null;
   reviewed_at: string | null;
-  lab_run_id: number | null;
-  lab_group: string | null;
-  lab_label: string | null;
   benchmark_sol_price: number | null;
 }
-
-export type LabGroup = "control" | "memoria" | "explorador";
 
 export function getMission(id: number): Mission | undefined {
   return db.prepare("SELECT * FROM missions WHERE id = ?").get(id) as Mission | undefined;
 }
 
-/** Misión principal activa (la del usuario, fuera del laboratorio). */
+/** Misión activa. */
 export function getActiveMission(): Mission | undefined {
-  return db.prepare("SELECT * FROM missions WHERE status = 'active' AND lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get() as
+  return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id DESC LIMIT 1").get() as
     | Mission
     | undefined;
 }
 
-/** Última misión principal, activa o no. */
+/** Última misión, activa o no. */
 export function getLastMission(): Mission | undefined {
-  return db.prepare("SELECT * FROM missions WHERE lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get() as Mission | undefined;
+  return db.prepare("SELECT * FROM missions ORDER BY id DESC LIMIT 1").get() as Mission | undefined;
 }
 
-/** Todas las misiones activas: la principal y las del laboratorio. */
+/** Misiones activas (normalmente una). */
 export function activeMissions(): Mission[] {
   return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id").all() as unknown as Mission[];
 }
 
-/** Historial objetivo de misiones principales terminadas (lo calcula el simulador, no el agente). */
+/** Historial objetivo de misiones terminadas (lo calcula el simulador, no el agente). */
 export function missionHistory() {
   const rows = db
     .prepare(
       `SELECT m.*, (SELECT COUNT(*) FROM lessons l WHERE l.mission_id = m.id) AS lessons
-       FROM missions m WHERE m.status NOT IN ('active', 'closing') AND m.lab_run_id IS NULL ORDER BY m.id`,
+       FROM missions m WHERE m.status NOT IN ('active', 'closing') ORDER BY m.id`,
     )
     .all() as unknown as Array<Mission & { lessons: number }>;
   return rows.map((m) => {
@@ -77,26 +70,14 @@ function insertMission(args: {
   durationMinutes: number;
   instructions?: string;
   solPrice: number;
-  lab?: { runId: number; group: LabGroup; label: string };
 }): number {
   const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
   const id = Number(
     db
       .prepare(
-        `INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price, lab_run_id, lab_group, lab_label)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price) VALUES (?, ?, ?, ?, ?, ?)",
       )
-      .run(
-        now(),
-        args.initialUsd,
-        args.targetUsd,
-        deadline,
-        args.instructions?.trim() || null,
-        args.solPrice,
-        args.lab?.runId ?? null,
-        args.lab?.group ?? null,
-        args.lab?.label ?? null,
-      ).lastInsertRowid,
+      .run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, args.solPrice).lastInsertRowid,
   );
   resetPortfolio(id, args.initialUsd, args.solPrice);
   logJournal({
@@ -104,7 +85,7 @@ function insertMission(args: {
     sessionId: null,
     kind: "mission",
     summary:
-      `Misión #${id}${args.lab ? ` (${args.lab.label}, grupo ${args.lab.group})` : ""} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD ` +
+      `Misión #${id} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD ` +
       `antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`,
   });
   return id;
@@ -115,7 +96,7 @@ function validate(initialUsd: number, targetUsd: number, durationMinutes: number
   if (!(durationMinutes > 0)) throw new Error("La duración debe ser positiva");
 }
 
-/** Crea la misión principal (cancela la anterior si seguía activa). */
+/** Crea una misión (cancela la anterior si seguía activa). */
 export async function createMission(initialUsd: number, targetUsd: number, durationMinutes: number, instructions?: string): Promise<Mission> {
   validate(initialUsd, targetUsd, durationMinutes);
   const solPrice = await solUsdPrice();
@@ -127,51 +108,6 @@ export async function createMission(initialUsd: number, targetUsd: number, durat
   }
   // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
   return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, solPrice }))!;
-}
-
-/**
- * Crea una tanda del laboratorio: `agents` misiones idénticas a la vez, repartidas entre grupos.
- * Todas parten del mismo precio de SOL, para que las carteras iniciales sean exactamente iguales.
- */
-export async function createLabRun(args: {
-  capitalUsd: number;
-  targetUsd: number;
-  durationMinutes: number;
-  instructions?: string;
-  groups: Partial<Record<LabGroup, number>>;
-}) {
-  validate(args.capitalUsd, args.targetUsd, args.durationMinutes);
-  const running = activeLabRun();
-  if (running) throw new Error(`Ya hay una tanda en curso (#${running.id}). Espera a que termine o detenla antes de lanzar otra.`);
-  const plan = (Object.entries(args.groups) as Array<[LabGroup, number]>).filter(([, n]) => n > 0);
-  const total = plan.reduce((s, [, n]) => s + n, 0);
-  if (total < 1) throw new Error("La tanda necesita al menos un agente");
-  if (total > 50) throw new Error("Como máximo 50 agentes por tanda");
-
-  const solPrice = await solUsdPrice();
-  const runId = Number(
-    db
-      .prepare("INSERT INTO lab_runs (created_at, capital_usd, target_usd, duration_minutes, instructions, groups) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(now(), args.capitalUsd, args.targetUsd, args.durationMinutes, args.instructions?.trim() || null, JSON.stringify(args.groups))
-      .lastInsertRowid,
-  );
-  const missions: Array<{ missionId: number; label: string; group: LabGroup }> = [];
-  let n = 0;
-  for (const [group, count] of plan) {
-    for (let i = 0; i < count; i++) {
-      const label = `T${runId}-A${++n}`;
-      const missionId = insertMission({
-        initialUsd: args.capitalUsd,
-        targetUsd: args.targetUsd,
-        durationMinutes: args.durationMinutes,
-        instructions: args.instructions,
-        solPrice,
-        lab: { runId, group, label },
-      });
-      missions.push({ missionId, label, group });
-    }
-  }
-  return { runId, missions };
 }
 
 function remaining(deadline: string) {
@@ -196,7 +132,6 @@ export async function missionStatus(missionId?: number) {
   return {
     active: true,
     missionId: mission.id,
-    ...(mission.lab_run_id ? { labRun: mission.lab_run_id, labLabel: mission.lab_label } : {}),
     initialUsd: mission.initial_usd,
     targetUsd: mission.target_usd,
     currentUsd: Number(v.totalUsd.toFixed(2)),
@@ -231,7 +166,6 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
       `${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`,
     details: { problems },
   });
-  closeFinishedLabRuns();
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
 
@@ -273,24 +207,13 @@ async function checkOne(mission: Mission): Promise<string[]> {
     `Misión #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD ` +
     `(objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
-  closeFinishedLabRuns();
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
-}
-
-/** Marca como terminadas las tandas cuyas misiones han terminado todas. */
-function closeFinishedLabRuns() {
-  db.prepare(
-    `UPDATE lab_runs SET status = 'finished', ended_at = ?
-     WHERE status = 'active' AND NOT EXISTS (
-       SELECT 1 FROM missions m WHERE m.lab_run_id = lab_runs.id AND m.status IN ('active', 'closing')
-     )`,
-  ).run(now());
 }
 
 const checking = new Set<number>();
 
 /**
- * Comprueba todas las misiones activas (la principal y las del laboratorio) y cierra las que
+ * Comprueba las misiones activas y cierra las que
  * hayan terminado. Devuelve líneas de log. Si se indica una misión, solo comprueba esa.
  */
 export async function checkMission(missionId?: number): Promise<string[]> {
@@ -309,69 +232,4 @@ export async function checkMission(missionId?: number): Promise<string[]> {
     }),
   );
   return results.flat();
-}
-
-/** Tanda del laboratorio en curso, si la hay. */
-export function activeLabRun(): { id: number } | undefined {
-  return db.prepare("SELECT id FROM lab_runs WHERE status = 'active' ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
-}
-
-export const GROUP_RULES: Record<LabGroup, string> = {
-  control: "Grupo CONTROL: trabajas sin memoria de misiones anteriores. Sirves de referencia para medir si la memoria ayuda.",
-  memoria:
-    "Grupo MEMORIA: tienes acceso al manual de estrategia del laboratorio (recall_lessons), con lo aprendido en tandas anteriores y las estadísticas de sus operaciones.",
-  explorador:
-    "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista está en tu misión) ni los que compre antes que tú otro agente de tu tanda.",
-};
-
-/**
- * Tokens que el explorador no puede comprar: los operados en tandas anteriores y los que ya compró
- * otro agente de su tanda (salvo él mismo, que puede recomprar lo suyo).
- */
-export function exploredTokens(runId: number, missionId: number): Array<{ mint: string; symbol: string }> {
-  return db
-    .prepare(
-      `SELECT DISTINCT p.asset AS mint, p.symbol FROM positions p JOIN missions m ON m.id = p.mission_id
-       WHERE m.lab_run_id IS NOT NULL AND (m.lab_run_id < ? OR (m.lab_run_id = ? AND m.id != ?)) AND p.venue = 'solana'
-         AND p.asset NOT IN ('So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')`,
-    )
-    .all(runId, runId, missionId) as Array<{ mint: string; symbol: string }>;
-}
-
-/** Detiene todas las misiones activas de una tanda (por defecto, la que esté en curso). */
-export async function stopLabRun(closePositions: boolean, runId?: number) {
-  const id = runId ?? activeLabRun()?.id;
-  if (id === undefined) throw new Error("No hay ninguna tanda del laboratorio en curso");
-  const missions = db.prepare("SELECT id FROM missions WHERE lab_run_id = ? AND status = 'active'").all(id) as Array<{ id: number }>;
-  const results = await Promise.all(missions.map((m) => stopMission(closePositions, m.id).catch((err) => ({ missionId: m.id, error: (err as Error).message }))));
-  closeFinishedLabRuns();
-  return { runId: id, stopped: results };
-}
-
-/** Clasificación de una tanda del laboratorio (por defecto, la última). */
-export async function labRunStatus(runId?: number) {
-  const run = (
-    runId !== undefined
-      ? db.prepare("SELECT * FROM lab_runs WHERE id = ?").get(runId)
-      : db.prepare("SELECT * FROM lab_runs ORDER BY id DESC LIMIT 1").get()
-  ) as
-    | { id: number; created_at: string; capital_usd: number; target_usd: number; duration_minutes: number; instructions: string | null; status: string }
-    | undefined;
-  if (!run) return null;
-  const missions = db.prepare("SELECT * FROM missions WHERE lab_run_id = ? ORDER BY id").all(run.id) as unknown as Mission[];
-  const rows = await Promise.all(
-    missions.map(async (m) => {
-      const value = m.status === "active" ? (await valuation(m.id)).totalUsd : (m.final_usd ?? (await valuation(m.id)).totalUsd);
-      return {
-        missionId: m.id,
-        label: m.lab_label,
-        group: m.lab_group,
-        status: m.status,
-        valueUsd: Number(value.toFixed(2)),
-        resultPct: Number((((value - m.initial_usd) / m.initial_usd) * 100).toFixed(2)),
-      };
-    }),
-  );
-  rows.sort((a, b) => b.valueUsd - a.valueUsd);
-  return { run, leaderboard: rows };
 }

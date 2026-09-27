@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard } from "./dashboard/server.js";
-import { activeLabRun, checkMission, createLabRun, createMission, getActiveMission, getLastMission, getMission, labRunStatus, stopLabRun, stopMission } from "./sim/mission.js";
+import { checkMission, createMission, getActiveMission, getLastMission, stopMission } from "./sim/mission.js";
 import { config } from "./config.js";
 import { supersededBy } from "./db.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
@@ -25,31 +25,8 @@ const register = server.registerTool.bind(server);
     return superseded ? { ...text(superseded), isError: true } : handler(...args);
   });
 
-// Varios agentes pueden trabajar a la vez (laboratorio), cada uno sobre su misión: el agente del
-// laboratorio indica su mission_id en cada llamada; si no lo indica, se usa la misión principal.
-const missionIdParam = z
-  .number()
-  .int()
-  .optional()
-  .describe("Solo en el laboratorio: la misión sobre la que trabajas. Si no la indicas, se usa la misión principal.");
-
-function resolveMission(requested: number | undefined): number | null {
-  if (requested !== undefined) {
-    if (!getMission(requested)) throw new Error(`No existe la misión #${requested}`);
-    return requested;
-  }
-  // Todos los agentes comparten este servidor y no se sabe quién llama: durante una tanda, una
-  // llamada sin mission_id podría ser de un agente del laboratorio que lo olvidó y acabaría
-  // operando la misión principal. Se rechaza.
-  const run = activeLabRun();
-  if (run) {
-    throw new Error(
-      `Hay una tanda del laboratorio en curso (#${run.id}): indica tu mission_id en cada llamada. ` +
-        "La misión principal no se puede usar hasta que la tanda termine.",
-    );
-  }
-  return (getActiveMission() ?? getLastMission())?.id ?? null;
-}
+/** Misión sobre la que trabaja el agente: la activa o, si no hay, la última. */
+const currentMission = (): number | null => (getActiveMission() ?? getLastMission())?.id ?? null;
 
 // Una sesión de trabajo abierta por misión.
 const sessions = new Map<number | null, number>();
@@ -63,13 +40,13 @@ server.registerTool(
   {
     description:
       "Empieza una sesión de trabajo. Llámala antes que cualquier otra herramienta: devuelve la hora, tu cartera, tus notas y el diario reciente.",
-    inputSchema: { mission_id: missionIdParam },
+    inputSchema: {},
   },
-  async ({ mission_id }) => {
+  async () => {
     try {
       await checkOrders().catch(() => []);
       await checkMission().catch(() => []);
-      const missionId = resolveMission(mission_id);
+      const missionId = currentMission();
       const sessionId = startSession(missionId);
       sessions.set(missionId, sessionId);
       return text(await sessionBriefing(sessionId, missionId));
@@ -83,11 +60,11 @@ server.registerTool(
   "end_session",
   {
     description: "Cierra la sesión con un resumen de lo que hiciste. Devuelve el estado final de la cartera.",
-    inputSchema: { summary: z.string(), mission_id: missionIdParam },
+    inputSchema: { summary: z.string() },
   },
-  async ({ summary, mission_id }) => {
+  async ({ summary }) => {
     try {
-      const missionId = resolveMission(mission_id);
+      const missionId = currentMission();
       const sessionId = sessions.get(missionId);
       if (sessionId === undefined) return { ...text("No hay ninguna sesión abierta."), isError: true };
       const end = await endSession(sessionId, missionId, summary);
@@ -137,83 +114,17 @@ server.registerTool(
   "stop_mission",
   {
     description:
-      "[Solo para el usuario, no para el agente trader] Detiene una misión antes de tiempo (por defecto, la principal) y cancela sus órdenes. " +
+      "[Solo para el usuario, no para el agente trader] Detiene la misión activa antes de tiempo y cancela sus órdenes. " +
       "Con close_positions = true vende todas las posiciones a mercado; si no, la cartera queda como está.",
-    inputSchema: { close_positions: z.boolean(), mission_id: z.number().int().optional() },
+    inputSchema: { close_positions: z.boolean() },
   },
-  async ({ close_positions, mission_id }) => {
+  async ({ close_positions }) => {
     try {
-      const r = await stopMission(close_positions, mission_id);
+      const r = await stopMission(close_positions);
       return text(
         `Misión #${r.missionId} detenida. Valor final: ${r.finalUsd.toFixed(2)} USD.` +
           (r.problems.length ? `\nNo se pudo vender: ${r.problems.join("; ")}` : ""),
       );
-    } catch (err) {
-      return { ...text(`Error: ${(err as Error).message}`), isError: true };
-    }
-  },
-);
-
-server.registerTool(
-  "create_lab_run",
-  {
-    description:
-      "[Solo para el usuario, no para los agentes] Crea una tanda del laboratorio: varias misiones idénticas a la vez, cada una con su " +
-      "propia cartera, repartidas entre grupos (control: sin memoria; memoria: con el manual de estrategia; explorador: sin repetir lo " +
-      "conocido). Devuelve el id de la tanda y el id de misión de cada agente.",
-    inputSchema: {
-      capital_usd: z.number().positive(),
-      target_usd: z.number().positive(),
-      duration_minutes: z.number().positive(),
-      instructions: z.string().optional(),
-      control: z.number().int().min(0).default(0),
-      memoria: z.number().int().min(0).default(0),
-      explorador: z.number().int().min(0).default(0),
-    },
-  },
-  async ({ capital_usd, target_usd, duration_minutes, instructions, control, memoria, explorador }) => {
-    try {
-      const run = await createLabRun({
-        capitalUsd: capital_usd,
-        targetUsd: target_usd,
-        durationMinutes: duration_minutes,
-        instructions,
-        groups: { control, memoria, explorador },
-      });
-      return text(JSON.stringify(run, null, 2));
-    } catch (err) {
-      return { ...text(`Error: ${(err as Error).message}`), isError: true };
-    }
-  },
-);
-
-server.registerTool(
-  "stop_lab_run",
-  {
-    description:
-      "[Solo para el usuario, no para los agentes] Detiene todas las misiones activas de una tanda del laboratorio (por defecto, la que " +
-      "está en curso). Con close_positions = true vende todas las posiciones a mercado.",
-    inputSchema: { close_positions: z.boolean(), run_id: z.number().int().optional() },
-  },
-  async ({ close_positions, run_id }) => {
-    try {
-      return text(JSON.stringify(await stopLabRun(close_positions, run_id), null, 2));
-    } catch (err) {
-      return { ...text(`Error: ${(err as Error).message}`), isError: true };
-    }
-  },
-);
-
-server.registerTool(
-  "lab_status",
-  {
-    description: "Clasificación de una tanda del laboratorio (por defecto, la última): valor y resultado de cada agente y su grupo.",
-    inputSchema: { run_id: z.number().int().optional() },
-  },
-  async ({ run_id }) => {
-    try {
-      const status = await labRunStatus(run_id);
-      return text(status ? JSON.stringify(status, null, 2) : "Todavía no hay ninguna tanda del laboratorio.");
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }
@@ -257,18 +168,9 @@ server.registerTool(
 );
 
 for (const tool of SIM_TOOLS) {
-  // Las herramientas que ya tienen su propio mission_id (p. ej. journal_history) lo usan para otra cosa:
-  // el de la misión de trabajo se llama igual, así que solo se añade donde no existe.
-  const shape = {
-    ...(tool.schema.shape as Record<string, z.ZodType>),
-    ...("mission_id" in tool.schema.shape ? {} : { mission_id: missionIdParam }),
-  } as z.ZodRawShape;
-  server.registerTool(tool.name, { description: tool.description, inputSchema: shape }, async (raw: Record<string, unknown>) => {
+  server.registerTool(tool.name, { description: tool.description, inputSchema: tool.schema.shape as z.ZodRawShape }, async (input: Record<string, unknown>) => {
     try {
-      const ownsParam = "mission_id" in tool.schema.shape;
-      const { mission_id, ...rest } = raw as { mission_id?: number };
-      const missionId = resolveMission(mission_id);
-      const input = ownsParam ? raw : rest;
+      const missionId = currentMission();
       const { content, isError } = await runTool(tool.name, input, { sessionId: sessionFor(missionId), missionId });
       return { ...text(typeof content === "string" ? content : JSON.stringify(content)), isError };
     } catch (err) {

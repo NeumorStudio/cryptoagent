@@ -37060,27 +37060,9 @@ function addColumns(table, columns) {
 addColumns("missions", {
   instructions: "TEXT",
   reviewed_at: "TEXT",
-  // Laboratorio: tanda a la que pertenece la misión (NULL = misión principal del usuario), grupo y etiqueta.
-  lab_run_id: "INTEGER",
-  lab_group: "TEXT",
-  lab_label: "TEXT",
   benchmark_sol_price: "REAL"
 });
 addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
-db.exec(`
-  -- Tandas del laboratorio: varias misiones con los mismos par\xE1metros lanzadas a la vez.
-  CREATE TABLE IF NOT EXISTS lab_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    capital_usd REAL NOT NULL,
-    target_usd REAL NOT NULL,
-    duration_minutes REAL NOT NULL,
-    instructions TEXT,
-    groups TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    ended_at TEXT
-  );
-`);
 for (const table of ["journal", "activity", "orders", "notes", "snapshots", "sessions"]) addColumns(table, { mission_id: "INTEGER" });
 {
   const holdingCols = db.prepare("PRAGMA table_info(holdings)").all().map((c) => c.name);
@@ -37123,7 +37105,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.6.1";
+var CODE_VERSION = "0.7.0";
 var semver = (v) => v.split(".").map((n2) => Number.parseInt(n2, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -37502,11 +37484,8 @@ async function recordBinanceTrade(args) {
     reduce({ missionId: args.missionId, venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
   }
 }
-function listPositions(filter) {
-  const rows = filter === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : typeof filter === "number" ? db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(filter) : db.prepare(
-    `SELECT p.* FROM positions p JOIN missions m ON m.id = p.mission_id
-               WHERE m.lab_run_id IS ${filter.scope === "main" ? "" : "NOT "}NULL ORDER BY p.id DESC`
-  ).all();
+function listPositions(missionId) {
+  const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
   return rows.map((p) => {
     const pnlUsd = p.status === "closed" ? p.realized_proceeds_usd - p.realized_cost_usd : null;
     return {
@@ -37959,10 +37938,10 @@ function getMission(id) {
   return db.prepare("SELECT * FROM missions WHERE id = ?").get(id);
 }
 function getActiveMission() {
-  return db.prepare("SELECT * FROM missions WHERE status = 'active' AND lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get();
+  return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id DESC LIMIT 1").get();
 }
 function getLastMission() {
-  return db.prepare("SELECT * FROM missions WHERE lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get();
+  return db.prepare("SELECT * FROM missions ORDER BY id DESC LIMIT 1").get();
 }
 function activeMissions() {
   return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id").all();
@@ -37970,7 +37949,7 @@ function activeMissions() {
 function missionHistory() {
   const rows = db.prepare(
     `SELECT m.*, (SELECT COUNT(*) FROM lessons l WHERE l.mission_id = m.id) AS lessons
-       FROM missions m WHERE m.status NOT IN ('active', 'closing') AND m.lab_run_id IS NULL ORDER BY m.id`
+       FROM missions m WHERE m.status NOT IN ('active', 'closing') ORDER BY m.id`
   ).all();
   return rows.map((m) => {
     const minutes = Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4);
@@ -37992,26 +37971,15 @@ function insertMission(args) {
   const deadline = new Date(Date.now() + args.durationMinutes * 6e4).toISOString();
   const id = Number(
     db.prepare(
-      `INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price, lab_run_id, lab_group, lab_label)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      now(),
-      args.initialUsd,
-      args.targetUsd,
-      deadline,
-      args.instructions?.trim() || null,
-      args.solPrice,
-      args.lab?.runId ?? null,
-      args.lab?.group ?? null,
-      args.lab?.label ?? null
-    ).lastInsertRowid
+      "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, args.solPrice).lastInsertRowid
   );
   resetPortfolio(id, args.initialUsd, args.solPrice);
   logJournal({
     missionId: id,
     sessionId: null,
     kind: "mission",
-    summary: `Misi\xF3n #${id}${args.lab ? ` (${args.lab.label}, grupo ${args.lab.group})` : ""} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`
+    summary: `Misi\xF3n #${id} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`
   });
   return id;
 }
@@ -38029,36 +37997,6 @@ async function createMission(initialUsd, targetUsd, durationMinutes, instruction
     logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misi\xF3n #${previous.id} cancelada por el usuario al crear una nueva` });
   }
   return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, solPrice }));
-}
-async function createLabRun(args) {
-  validate2(args.capitalUsd, args.targetUsd, args.durationMinutes);
-  const running2 = activeLabRun();
-  if (running2) throw new Error(`Ya hay una tanda en curso (#${running2.id}). Espera a que termine o detenla antes de lanzar otra.`);
-  const plan = Object.entries(args.groups).filter(([, n3]) => n3 > 0);
-  const total = plan.reduce((s, [, n3]) => s + n3, 0);
-  if (total < 1) throw new Error("La tanda necesita al menos un agente");
-  if (total > 50) throw new Error("Como m\xE1ximo 50 agentes por tanda");
-  const solPrice = await solUsdPrice();
-  const runId = Number(
-    db.prepare("INSERT INTO lab_runs (created_at, capital_usd, target_usd, duration_minutes, instructions, groups) VALUES (?, ?, ?, ?, ?, ?)").run(now(), args.capitalUsd, args.targetUsd, args.durationMinutes, args.instructions?.trim() || null, JSON.stringify(args.groups)).lastInsertRowid
-  );
-  const missions = [];
-  let n2 = 0;
-  for (const [group, count] of plan) {
-    for (let i = 0; i < count; i++) {
-      const label = `T${runId}-A${++n2}`;
-      const missionId = insertMission({
-        initialUsd: args.capitalUsd,
-        targetUsd: args.targetUsd,
-        durationMinutes: args.durationMinutes,
-        instructions: args.instructions,
-        solPrice,
-        lab: { runId, group, label }
-      });
-      missions.push({ missionId, label, group });
-    }
-  }
-  return { runId, missions };
 }
 function remaining(deadline) {
   const ms = new Date(deadline).getTime() - Date.now();
@@ -38080,7 +38018,6 @@ async function missionStatus(missionId) {
   return {
     active: true,
     missionId: mission.id,
-    ...mission.lab_run_id ? { labRun: mission.lab_run_id, labLabel: mission.lab_label } : {},
     initialUsd: mission.initial_usd,
     targetUsd: mission.target_usd,
     currentUsd: Number(v.totalUsd.toFixed(2)),
@@ -38108,7 +38045,6 @@ async function stopMission(closePositions, missionId) {
     summary: `Misi\xF3n #${mission.id} detenida por el usuario ${closePositions ? "cerrando posiciones" : "sin cerrar posiciones"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`,
     details: { problems }
   });
-  closeFinishedLabRuns();
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
 async function checkOne(mission) {
@@ -38132,16 +38068,7 @@ async function checkOne(mission) {
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
   const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
-  closeFinishedLabRuns();
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
-}
-function closeFinishedLabRuns() {
-  db.prepare(
-    `UPDATE lab_runs SET status = 'finished', ended_at = ?
-     WHERE status = 'active' AND NOT EXISTS (
-       SELECT 1 FROM missions m WHERE m.lab_run_id = lab_runs.id AND m.status IN ('active', 'closing')
-     )`
-  ).run(now());
 }
 var checking = /* @__PURE__ */ new Set();
 async function checkMission(missionId) {
@@ -38160,49 +38087,6 @@ async function checkMission(missionId) {
     })
   );
   return results.flat();
-}
-function activeLabRun() {
-  return db.prepare("SELECT id FROM lab_runs WHERE status = 'active' ORDER BY id DESC LIMIT 1").get();
-}
-var GROUP_RULES = {
-  control: "Grupo CONTROL: trabajas sin memoria de misiones anteriores. Sirves de referencia para medir si la memoria ayuda.",
-  memoria: "Grupo MEMORIA: tienes acceso al manual de estrategia del laboratorio (recall_lessons), con lo aprendido en tandas anteriores y las estad\xEDsticas de sus operaciones.",
-  explorador: "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista est\xE1 en tu misi\xF3n) ni los que compre antes que t\xFA otro agente de tu tanda."
-};
-function exploredTokens(runId, missionId) {
-  return db.prepare(
-    `SELECT DISTINCT p.asset AS mint, p.symbol FROM positions p JOIN missions m ON m.id = p.mission_id
-       WHERE m.lab_run_id IS NOT NULL AND (m.lab_run_id < ? OR (m.lab_run_id = ? AND m.id != ?)) AND p.venue = 'solana'
-         AND p.asset NOT IN ('So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')`
-  ).all(runId, runId, missionId);
-}
-async function stopLabRun(closePositions, runId) {
-  const id = runId ?? activeLabRun()?.id;
-  if (id === void 0) throw new Error("No hay ninguna tanda del laboratorio en curso");
-  const missions = db.prepare("SELECT id FROM missions WHERE lab_run_id = ? AND status = 'active'").all(id);
-  const results = await Promise.all(missions.map((m) => stopMission(closePositions, m.id).catch((err) => ({ missionId: m.id, error: err.message }))));
-  closeFinishedLabRuns();
-  return { runId: id, stopped: results };
-}
-async function labRunStatus(runId) {
-  const run = runId !== void 0 ? db.prepare("SELECT * FROM lab_runs WHERE id = ?").get(runId) : db.prepare("SELECT * FROM lab_runs ORDER BY id DESC LIMIT 1").get();
-  if (!run) return null;
-  const missions = db.prepare("SELECT * FROM missions WHERE lab_run_id = ? ORDER BY id").all(run.id);
-  const rows = await Promise.all(
-    missions.map(async (m) => {
-      const value = m.status === "active" ? (await valuation(m.id)).totalUsd : m.final_usd ?? (await valuation(m.id)).totalUsd;
-      return {
-        missionId: m.id,
-        label: m.lab_label,
-        group: m.lab_group,
-        status: m.status,
-        valueUsd: Number(value.toFixed(2)),
-        resultPct: Number(((value - m.initial_usd) / m.initial_usd * 100).toFixed(2))
-      };
-    })
-  );
-  rows.sort((a, b) => b.valueUsd - a.valueUsd);
-  return { run, leaderboard: rows };
 }
 
 // src/dashboard/timeline.ts
@@ -38373,14 +38257,9 @@ function timeline(since, missionId) {
 // src/dashboard/server.ts
 var INDEX_HTML = asset("index.html", "src/dashboard/index.html");
 var cached2 = null;
-var cachedLab = null;
 var lastSnapshot = 0;
 var running = null;
 async function refreshValuation(log) {
-  cachedLab = await labRunStatus().catch((err) => {
-    log(`Error valorando el laboratorio: ${err.message}`);
-    return cachedLab;
-  });
   try {
     const mission = getActiveMission() ?? getLastMission();
     if (!mission) {
@@ -38406,7 +38285,6 @@ function state() {
     orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
-    lab: cachedLab,
     lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all()
   };
 }
@@ -38479,12 +38357,12 @@ function distance(a, b) {
 var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
 var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
 function finishedMissions() {
-  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND lab_run_id IS NULL ORDER BY id").all();
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
 }
 function pendingReviews() {
   return db.prepare(
     `SELECT m.id FROM missions m
-         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL AND m.lab_run_id IS NULL
+         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
          ORDER BY m.id`
   ).all().map((r) => r.id);
@@ -38541,7 +38419,7 @@ function recall(missionId, limitLessons) {
     relevance: l.mission_id && distByMission.has(l.mission_id) ? similarityLabel(distByMission.get(l.mission_id)) : "sin misi\xF3n vinculada",
     _d: l.mission_id && distByMission.has(l.mission_id) ? distByMission.get(l.mission_id) : 99
   })).sort((a, b) => a._d - b._d).map(({ _d, ...rest }) => rest);
-  const all = listPositions({ scope: "main" });
+  const all = listPositions();
   const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
   return {
     currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
@@ -38570,17 +38448,7 @@ async function sessionBriefing(sessionId, missionId) {
   const openOrders = listOrders(missionId, "open");
   const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15").all(missionId);
   const memoryLines = [];
-  if (mission.lab_run_id !== null) {
-    const group = mission.lab_group;
-    memoryLines.push(`Laboratorio: eres ${mission.lab_label} en la tanda #${mission.lab_run_id}. ${GROUP_RULES[group]}`);
-    if (group === "explorador") {
-      const banned = exploredTokens(mission.lab_run_id, mission.id);
-      memoryLines.push(
-        banned.length ? `Tokens que no puedes comprar (ya operados en el laboratorio): ${banned.map((t) => `${t.symbol} (${t.mint})`).join(", ")}` : "Todav\xEDa no hay tokens operados en el laboratorio: no tienes ninguno prohibido. Los que compren otros agentes de tu tanda quedar\xE1n prohibidos para ti."
-      );
-    }
-    memoryLines.push("");
-  } else {
+  {
     const mem = recall(missionId, 8);
     if (mem.pendingReview.length) {
       memoryLines.push(
@@ -38634,41 +38502,16 @@ function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 }
-async function labReport() {
-  const lab = await labRunStatus();
-  if (!lab) return [];
-  const { run, leaderboard } = lab;
-  const statusLabel = { active: "activa", closing: "cerrando", succeeded: "CONSEGUIDA", expired: "sin llegar", cancelled: "detenida" };
-  const lines = [
-    `Laboratorio \xB7 tanda #${run.id} ${run.status === "active" ? "en curso" : "terminada"}: ${leaderboard.length} agentes, de ${usd(run.capital_usd)} a ${usd(run.target_usd)} en ${run.duration_minutes} min`
-  ];
-  for (const r of leaderboard) {
-    lines.push(`- ${r.label} (${r.group}): ${usd(r.valueUsd)} (${pct(r.resultPct)}) \xB7 ${statusLabel[r.status] ?? r.status}`);
-  }
-  const groups = /* @__PURE__ */ new Map();
-  for (const r of leaderboard) groups.set(r.group ?? "?", [...groups.get(r.group ?? "?") ?? [], r.resultPct]);
-  if (groups.size > 1) {
-    lines.push(`Media por grupo: ${[...groups].map(([g, v]) => `${g} ${pct(v.reduce((s, x) => s + x, 0) / v.length)}`).join(" \xB7 ")}`);
-  }
-  return lines;
-}
 async function statusReport(missionId) {
-  const lab = missionId === void 0 ? await labReport() : [];
-  const labActive = missionId === void 0 && activeLabRun() !== void 0;
-  const main = await missionReport(missionId);
-  if (labActive) return [...lab, "", main].join("\n");
-  return lab.length ? [main, "", ...lab].join("\n") : main;
-}
-async function missionReport(missionId) {
   const m = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
-  if (!m) return "No hay ninguna misi\xF3n principal. Crea una con /cryptoagent:trading.";
+  if (!m) return "No hay ninguna misi\xF3n. Crea una con /cryptoagent:trading.";
   const v = await valuation(m.id);
   const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
   const change = (current - m.initial_usd) / m.initial_usd * 100;
   const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
   const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : "detenida por el usuario";
   const lines = [];
-  lines.push(`Misi\xF3n #${m.id}${m.lab_label ? ` (${m.lab_label}, grupo ${m.lab_group})` : ""}: ${statusText}`);
+  lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
   lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
   const open2 = listPositions(m.id).filter((p) => p.status === "open");
@@ -38909,7 +38752,6 @@ Fuentes: ${t.sources.join(" \xB7 ")}
 Plan: ${t.exit_plan}
 Lecciones: ${t.lessons_applied}`;
 var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
-var LAB_FORBIDDEN_TOOLS = /* @__PURE__ */ new Set(["write_lesson", "delete_lesson", "mark_mission_reviewed"]);
 var RESEARCH_TOOLS = /* @__PURE__ */ new Set([
   "scan_market",
   "token_report",
@@ -39143,22 +38985,13 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "recall_lessons",
     description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual (plazo, objetivo y enfoque): historial de misiones con su resultado, tus lecciones con su contexto y estad\xEDsticas reales de tus operaciones cerradas agrupadas por caracter\xEDsticas (antig\xFCedad y liquidez del token, si sub\xEDa mucho al comprar, si investigaste antes\u2026), en todas las misiones y en las parecidas.",
     schema: external_exports.object({}),
-    run: async (_i, ctx) => {
-      const current = ctx.missionId !== null ? getMission(ctx.missionId) : void 0;
-      if (current?.lab_run_id != null) {
-        return "Todav\xEDa no hay manual de estrategia del laboratorio: se crear\xE1 a partir de las pr\xF3ximas tandas.";
-      }
-      return json2(recall(ctx.missionId));
-    }
+    run: async (_i, ctx) => json2(recall(ctx.missionId))
   }),
   tool({
     name: "trade_history",
     description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos) y cu\xE1nto hab\xEDas investigado antes. Lo registra el simulador.",
     schema: external_exports.object({ mission_id: external_exports.number().int().optional(), limit: external_exports.number().int().min(1).max(200).default(50) }),
-    run: async ({ mission_id, limit }, ctx) => {
-      const isLab = ctx.missionId !== null && getMission(ctx.missionId)?.lab_run_id != null;
-      return json2(listPositions(mission_id ?? (isLab ? ctx.missionId : void 0)).slice(0, limit));
-    }
+    run: async ({ mission_id, limit }) => json2(listPositions(mission_id).slice(0, limit))
   }),
   tool({
     name: "mark_mission_reviewed",
@@ -39225,30 +39058,7 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   if (isTradingTool(name) && current?.status !== "active") {
     return { content: `Error: no hay ninguna misi\xF3n activa. ${(await missionStatus(ctx.missionId ?? void 0)).message ?? ""}`, isError: true };
   }
-  if (current && current.lab_run_id !== null) {
-    const group = current.lab_group;
-    if (LAB_FORBIDDEN_TOOLS.has(name)) {
-      return { content: "Error: en el laboratorio no escribes lecciones; al final de cada tanda un analista revisa todas las operaciones.", isError: true };
-    }
-    if (name === "recall_lessons" && group === "control") {
-      return { content: "Error: tu grupo (control) trabaja sin memoria de misiones anteriores.", isError: true };
-    }
-    const input2 = parsed.data;
-    if (name === "trade_history" && input2.mission_id !== void 0 && input2.mission_id !== current.id) {
-      return { content: "Error: en el laboratorio solo puedes ver tus propias posiciones.", isError: true };
-    }
-    if (group === "explorador" && (name === "simulate_solana_swap" || name === "place_solana_trigger_order")) {
-      const target = String(input2.output ?? "");
-      const banned = exploredTokens(current.lab_run_id, current.id).find((t) => t.mint === target);
-      if (banned) {
-        return {
-          content: `Error: eres del grupo explorador y ${banned.symbol} (${banned.mint}) ya lo oper\xF3 otro agente del laboratorio. Busca algo nuevo.`,
-          isError: true
-        };
-      }
-    }
-  }
-  const unreviewed = isTradingTool(name) && current?.lab_run_id === null ? pendingReviews() : [];
+  const unreviewed = isTradingTool(name) ? pendingReviews() : [];
   if (unreviewed.length) {
     return {
       content: `Error: antes de operar tienes que revisar ${unreviewed.length > 1 ? "las misiones" : "la misi\xF3n"} #${unreviewed.join(", #")}. Analiza qu\xE9 pas\xF3 (trade_history y journal_history con su mission_id) y guarda lo aprendido con write_lesson, o usa mark_mission_reviewed si no aporta nada nuevo.`,
@@ -39285,20 +39095,7 @@ server.registerTool = (name, cfg, handler2) => register(name, cfg, async (...arg
   const superseded = supersededBy();
   return superseded ? { ...text(superseded), isError: true } : handler2(...args);
 });
-var missionIdParam = external_exports.number().int().optional().describe("Solo en el laboratorio: la misi\xF3n sobre la que trabajas. Si no la indicas, se usa la misi\xF3n principal.");
-function resolveMission(requested) {
-  if (requested !== void 0) {
-    if (!getMission(requested)) throw new Error(`No existe la misi\xF3n #${requested}`);
-    return requested;
-  }
-  const run = activeLabRun();
-  if (run) {
-    throw new Error(
-      `Hay una tanda del laboratorio en curso (#${run.id}): indica tu mission_id en cada llamada. La misi\xF3n principal no se puede usar hasta que la tanda termine.`
-    );
-  }
-  return (getActiveMission() ?? getLastMission())?.id ?? null;
-}
+var currentMission = () => (getActiveMission() ?? getLastMission())?.id ?? null;
 var sessions = /* @__PURE__ */ new Map();
 var sessionFor = (missionId) => {
   if (!sessions.has(missionId)) sessions.set(missionId, startSession(missionId));
@@ -39308,13 +39105,13 @@ server.registerTool(
   "start_session",
   {
     description: "Empieza una sesi\xF3n de trabajo. Ll\xE1mala antes que cualquier otra herramienta: devuelve la hora, tu cartera, tus notas y el diario reciente.",
-    inputSchema: { mission_id: missionIdParam }
+    inputSchema: {}
   },
-  async ({ mission_id }) => {
+  async () => {
     try {
       await checkOrders().catch(() => []);
       await checkMission().catch(() => []);
-      const missionId = resolveMission(mission_id);
+      const missionId = currentMission();
       const sessionId = startSession(missionId);
       sessions.set(missionId, sessionId);
       return text(await sessionBriefing(sessionId, missionId));
@@ -39327,11 +39124,11 @@ server.registerTool(
   "end_session",
   {
     description: "Cierra la sesi\xF3n con un resumen de lo que hiciste. Devuelve el estado final de la cartera.",
-    inputSchema: { summary: external_exports.string(), mission_id: missionIdParam }
+    inputSchema: { summary: external_exports.string() }
   },
-  async ({ summary, mission_id }) => {
+  async ({ summary }) => {
     try {
-      const missionId = resolveMission(mission_id);
+      const missionId = currentMission();
       const sessionId = sessions.get(missionId);
       if (sessionId === void 0) return { ...text("No hay ninguna sesi\xF3n abierta."), isError: true };
       const end = await endSession(sessionId, missionId, summary);
@@ -39373,74 +39170,16 @@ server.registerTool(
 server.registerTool(
   "stop_mission",
   {
-    description: "[Solo para el usuario, no para el agente trader] Detiene una misi\xF3n antes de tiempo (por defecto, la principal) y cancela sus \xF3rdenes. Con close_positions = true vende todas las posiciones a mercado; si no, la cartera queda como est\xE1.",
-    inputSchema: { close_positions: external_exports.boolean(), mission_id: external_exports.number().int().optional() }
+    description: "[Solo para el usuario, no para el agente trader] Detiene la misi\xF3n activa antes de tiempo y cancela sus \xF3rdenes. Con close_positions = true vende todas las posiciones a mercado; si no, la cartera queda como est\xE1.",
+    inputSchema: { close_positions: external_exports.boolean() }
   },
-  async ({ close_positions, mission_id }) => {
+  async ({ close_positions }) => {
     try {
-      const r = await stopMission(close_positions, mission_id);
+      const r = await stopMission(close_positions);
       return text(
         `Misi\xF3n #${r.missionId} detenida. Valor final: ${r.finalUsd.toFixed(2)} USD.` + (r.problems.length ? `
 No se pudo vender: ${r.problems.join("; ")}` : "")
       );
-    } catch (err) {
-      return { ...text(`Error: ${err.message}`), isError: true };
-    }
-  }
-);
-server.registerTool(
-  "create_lab_run",
-  {
-    description: "[Solo para el usuario, no para los agentes] Crea una tanda del laboratorio: varias misiones id\xE9nticas a la vez, cada una con su propia cartera, repartidas entre grupos (control: sin memoria; memoria: con el manual de estrategia; explorador: sin repetir lo conocido). Devuelve el id de la tanda y el id de misi\xF3n de cada agente.",
-    inputSchema: {
-      capital_usd: external_exports.number().positive(),
-      target_usd: external_exports.number().positive(),
-      duration_minutes: external_exports.number().positive(),
-      instructions: external_exports.string().optional(),
-      control: external_exports.number().int().min(0).default(0),
-      memoria: external_exports.number().int().min(0).default(0),
-      explorador: external_exports.number().int().min(0).default(0)
-    }
-  },
-  async ({ capital_usd, target_usd, duration_minutes, instructions, control, memoria, explorador }) => {
-    try {
-      const run = await createLabRun({
-        capitalUsd: capital_usd,
-        targetUsd: target_usd,
-        durationMinutes: duration_minutes,
-        instructions,
-        groups: { control, memoria, explorador }
-      });
-      return text(JSON.stringify(run, null, 2));
-    } catch (err) {
-      return { ...text(`Error: ${err.message}`), isError: true };
-    }
-  }
-);
-server.registerTool(
-  "stop_lab_run",
-  {
-    description: "[Solo para el usuario, no para los agentes] Detiene todas las misiones activas de una tanda del laboratorio (por defecto, la que est\xE1 en curso). Con close_positions = true vende todas las posiciones a mercado.",
-    inputSchema: { close_positions: external_exports.boolean(), run_id: external_exports.number().int().optional() }
-  },
-  async ({ close_positions, run_id }) => {
-    try {
-      return text(JSON.stringify(await stopLabRun(close_positions, run_id), null, 2));
-    } catch (err) {
-      return { ...text(`Error: ${err.message}`), isError: true };
-    }
-  }
-);
-server.registerTool(
-  "lab_status",
-  {
-    description: "Clasificaci\xF3n de una tanda del laboratorio (por defecto, la \xFAltima): valor y resultado de cada agente y su grupo.",
-    inputSchema: { run_id: external_exports.number().int().optional() }
-  },
-  async ({ run_id }) => {
-    try {
-      const status = await labRunStatus(run_id);
-      return text(status ? JSON.stringify(status, null, 2) : "Todav\xEDa no hay ninguna tanda del laboratorio.");
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }
@@ -39477,16 +39216,9 @@ server.registerTool(
   }
 );
 for (const tool2 of SIM_TOOLS) {
-  const shape = {
-    ...tool2.schema.shape,
-    ..."mission_id" in tool2.schema.shape ? {} : { mission_id: missionIdParam }
-  };
-  server.registerTool(tool2.name, { description: tool2.description, inputSchema: shape }, async (raw) => {
+  server.registerTool(tool2.name, { description: tool2.description, inputSchema: tool2.schema.shape }, async (input2) => {
     try {
-      const ownsParam = "mission_id" in tool2.schema.shape;
-      const { mission_id, ...rest } = raw;
-      const missionId = resolveMission(mission_id);
-      const input2 = ownsParam ? raw : rest;
+      const missionId = currentMission();
       const { content, isError } = await runTool(tool2.name, input2, { sessionId: sessionFor(missionId), missionId });
       return { ...text(typeof content === "string" ? content : JSON.stringify(content)), isError };
     } catch (err) {

@@ -15,7 +15,7 @@ if (!m) {
 if (m.status === "active") console.log(await missionStatus(m.id));
 else
   console.log(
-    `Misión #${m.id}${m.lab_label ? ` (${m.lab_label}, grupo ${m.lab_group})` : ""} ` +
+    `Misión #${m.id} ` +
       `${m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "TERMINADA POR TIEMPO" : m.status.toUpperCase()}: ` +
       `${m.initial_usd} → ${m.final_usd?.toFixed(2) ?? "?"} USD (objetivo ${m.target_usd} USD, plazo ${m.deadline}, cerrada ${m.ended_at})`,
   );

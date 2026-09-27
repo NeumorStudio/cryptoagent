@@ -38,12 +38,6 @@ este repositorio es su código fuente.
 - `/cryptoagent:estado`: resumen de la misión en el chat (progreso, posiciones, últimos movimientos con su motivo
   y la última nota del agente). Pensado también para consultarlo desde el móvil con Remote Control.
 - `/cryptoagent:parar`: detiene la misión activa (cerrando posiciones o no).
-- `/cryptoagent:laboratorio`: lanza una tanda de varios agentes a la vez con la misma misión, cada uno con su
-  cartera, repartidos en grupos: **control** (sin memoria), **memoria** (con el manual de estrategia del
-  laboratorio) y **explorador** (no puede repetir tokens ya operados en tandas anteriores). Sirve para acumular
-  experiencia y medir si la memoria mejora los resultados. La clasificación sale en el panel y en
-  `/cryptoagent:estado`. Mientras dura una tanda, el agente normal no está disponible. Cada agente consume
-  del plan de uso: empieza con tandas pequeñas (3-5).
 
 Al terminar una misión, Claude te avisa con una notificación; con Remote Control conectado, también en el móvil.
 
@@ -84,8 +78,7 @@ plugin/                           el plugin que se instala
   .claude-plugin/plugin.json      manifiesto y versión
   .mcp.json                       servidor MCP del simulador
   agents/trader.md                el agente
-  agents/lab-trader.md            el agente del laboratorio
-  skills/                         los comandos (trading, estado, parar, laboratorio)
+  skills/trading, skills/parar    los comandos
   dist/                           servidor MCP empaquetado (generado, se sube al repo)
 src/                              código fuente del simulador, el panel y el runner por API
 knowledge/                        guía del terreno

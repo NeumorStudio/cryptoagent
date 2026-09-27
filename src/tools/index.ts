@@ -49,8 +49,6 @@ const formatThesis = (t: z.infer<typeof thesis>) =>
 
 const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
 
-// En el laboratorio las lecciones las escribe el analista, no cada agente.
-const LAB_FORBIDDEN_TOOLS = new Set(["write_lesson", "delete_lesson", "mark_mission_reviewed"]);
 
 // Llamadas que cuentan como investigación para el registro de posiciones.
 const RESEARCH_TOOLS = new Set([
@@ -330,14 +328,7 @@ export const SIM_TOOLS = [
       "resultado, tus lecciones con su contexto y estadísticas reales de tus operaciones cerradas agrupadas por características " +
       "(antigüedad y liquidez del token, si subía mucho al comprar, si investigaste antes…), en todas las misiones y en las parecidas.",
     schema: z.object({}),
-    run: async (_i, ctx) => {
-      const current = ctx.missionId !== null ? mission.getMission(ctx.missionId) : undefined;
-      if (current?.lab_run_id != null) {
-        // La memoria del laboratorio es el manual que mantiene el analista (fase 3).
-        return "Todavía no hay manual de estrategia del laboratorio: se creará a partir de las próximas tandas.";
-      }
-      return json(memory.recall(ctx.missionId));
-    },
+    run: async (_i, ctx) => json(memory.recall(ctx.missionId)),
   }),
   tool({
     name: "trade_history",
@@ -345,11 +336,7 @@ export const SIM_TOOLS = [
       "Tus posiciones (de la misión indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al " +
       "entrar (antigüedad, liquidez, variación, holders, riesgos) y cuánto habías investigado antes. Lo registra el simulador.",
     schema: z.object({ mission_id: z.number().int().optional(), limit: z.number().int().min(1).max(200).default(50) }),
-    run: async ({ mission_id, limit }, ctx) => {
-      // En el laboratorio, sin mission_id se muestran solo las posiciones propias.
-      const isLab = ctx.missionId !== null && mission.getMission(ctx.missionId)?.lab_run_id != null;
-      return json(positions.listPositions(mission_id ?? (isLab ? ctx.missionId! : undefined)).slice(0, limit));
-    },
+    run: async ({ mission_id, limit }) => json(positions.listPositions(mission_id).slice(0, limit)),
   }),
   tool({
     name: "mark_mission_reviewed",
@@ -430,32 +417,8 @@ export async function runTool(
   if (isTradingTool(name) && current?.status !== "active") {
     return { content: `Error: no hay ninguna misión activa. ${(await mission.missionStatus(ctx.missionId ?? undefined)).message ?? ""}`, isError: true };
   }
-  // Reglas del laboratorio: la memoria la gestiona el analista, y cada grupo tiene su papel.
-  if (current && current.lab_run_id !== null) {
-    const group = current.lab_group as mission.LabGroup;
-    if (LAB_FORBIDDEN_TOOLS.has(name)) {
-      return { content: "Error: en el laboratorio no escribes lecciones; al final de cada tanda un analista revisa todas las operaciones.", isError: true };
-    }
-    if (name === "recall_lessons" && group === "control") {
-      return { content: "Error: tu grupo (control) trabaja sin memoria de misiones anteriores.", isError: true };
-    }
-    const input = parsed.data as Record<string, unknown>;
-    if (name === "trade_history" && input.mission_id !== undefined && input.mission_id !== current.id) {
-      return { content: "Error: en el laboratorio solo puedes ver tus propias posiciones.", isError: true };
-    }
-    if (group === "explorador" && (name === "simulate_solana_swap" || name === "place_solana_trigger_order")) {
-      const target = String(input.output ?? "");
-      const banned = mission.exploredTokens(current.lab_run_id, current.id).find((t) => t.mint === target);
-      if (banned) {
-        return {
-          content: `Error: eres del grupo explorador y ${banned.symbol} (${banned.mint}) ya lo operó otro agente del laboratorio. Busca algo nuevo.`,
-          isError: true,
-        };
-      }
-    }
-  }
-  // Ciclo de aprendizaje (misión principal): no se opera sin haber revisado antes la misión anterior.
-  const unreviewed = isTradingTool(name) && current?.lab_run_id === null ? memory.pendingReviews() : [];
+  // Ciclo de aprendizaje: no se opera sin haber revisado antes la misión anterior.
+  const unreviewed = isTradingTool(name) ? memory.pendingReviews() : [];
   if (unreviewed.length) {
     return {
       content:

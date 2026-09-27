@@ -1,5 +1,5 @@
-// Acceso HTTP compartido a las APIs de mercado. Con varios agentes a la vez (laboratorio) evita
-// saturarlas: caché de pocos segundos, peticiones idénticas simultáneas agrupadas en una sola,
+// Acceso HTTP compartido a las APIs de mercado. Evita saturarlas (el agente, el panel y el
+// vigilante consultan los mismos precios): caché de pocos segundos, peticiones idénticas simultáneas agrupadas en una sola,
 // un máximo de peticiones en paralelo por servicio y reintentos si el servicio pide esperar.
 // Los servicios con límite por minuto (Jupiter) además se reparten turnos entre todos los procesos
 // que usan la base de datos: cada sesión de Claude Code tiene su propio servidor MCP y todos salen

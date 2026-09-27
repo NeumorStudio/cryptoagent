@@ -1,6 +1,6 @@
 import { db, now } from "../db.js";
 import { recall } from "./memory.js";
-import { exploredTokens, getMission, GROUP_RULES, missionStatus, type LabGroup } from "./mission.js";
+import { getMission, missionStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
 
@@ -21,21 +21,8 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
     .prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15")
     .all(missionId) as Array<{ ts: string; kind: string; summary: string }>;
 
-  // La memoria entre misiones es de la misión principal; en el laboratorio cada grupo tiene su papel.
   const memoryLines: string[] = [];
-  if (mission.lab_run_id !== null) {
-    const group = mission.lab_group as LabGroup;
-    memoryLines.push(`Laboratorio: eres ${mission.lab_label} en la tanda #${mission.lab_run_id}. ${GROUP_RULES[group]}`);
-    if (group === "explorador") {
-      const banned = exploredTokens(mission.lab_run_id, mission.id);
-      memoryLines.push(
-        banned.length
-          ? `Tokens que no puedes comprar (ya operados en el laboratorio): ${banned.map((t) => `${t.symbol} (${t.mint})`).join(", ")}`
-          : "Todavía no hay tokens operados en el laboratorio: no tienes ninguno prohibido. Los que compren otros agentes de tu tanda quedarán prohibidos para ti.",
-      );
-    }
-    memoryLines.push("");
-  } else {
+  {
     const mem = recall(missionId, 8);
     if (mem.pendingReview.length) {
       memoryLines.push(

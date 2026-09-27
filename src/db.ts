@@ -144,30 +144,11 @@ function addColumns(table: string, columns: Record<string, string>) {
 addColumns("missions", {
   instructions: "TEXT",
   reviewed_at: "TEXT",
-  // Laboratorio: tanda a la que pertenece la misión (NULL = misión principal del usuario), grupo y etiqueta.
-  lab_run_id: "INTEGER",
-  lab_group: "TEXT",
-  lab_label: "TEXT",
   benchmark_sol_price: "REAL",
 });
 addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
 
-db.exec(`
-  -- Tandas del laboratorio: varias misiones con los mismos parámetros lanzadas a la vez.
-  CREATE TABLE IF NOT EXISTS lab_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    capital_usd REAL NOT NULL,
-    target_usd REAL NOT NULL,
-    duration_minutes REAL NOT NULL,
-    instructions TEXT,
-    groups TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    ended_at TEXT
-  );
-`);
-
-// Todo lo que pertenece a una misión lleva su mission_id: así pueden convivir varias misiones a la vez.
+// Todo lo que pertenece a una misión lleva su mission_id: cada misión tiene sus propios datos.
 for (const table of ["journal", "activity", "orders", "notes", "snapshots", "sessions"]) addColumns(table, { mission_id: "INTEGER" });
 
 // Migración de bases de datos anteriores (una sola cartera global, sin mission_id).

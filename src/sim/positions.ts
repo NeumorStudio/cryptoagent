@@ -206,18 +206,11 @@ export async function recordBinanceTrade(args: {
 }
 
 /** Posiciones con su resultado, para el propio agente y para las estadísticas de memoria. */
-export function listPositions(filter?: number | { scope: "main" | "lab" }) {
+export function listPositions(missionId?: number) {
   const rows = (
-    filter === undefined
+    missionId === undefined
       ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all()
-      : typeof filter === "number"
-        ? db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(filter)
-        : db
-            .prepare(
-              `SELECT p.* FROM positions p JOIN missions m ON m.id = p.mission_id
-               WHERE m.lab_run_id IS ${filter.scope === "main" ? "" : "NOT "}NULL ORDER BY p.id DESC`,
-            )
-            .all()
+      : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId)
   ) as any[];
   return rows.map((p) => {
     const pnlUsd = p.status === "closed" ? p.realized_proceeds_usd - p.realized_cost_usd : null;

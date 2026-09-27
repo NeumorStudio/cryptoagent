@@ -13,7 +13,8 @@
     "reset": "tsx src/reset.ts",
     "typecheck": "tsc --noEmit",
     "build:plugin": "node scripts/build-plugin.mjs",
-    "test": "tsx --test --import ./test/setup.ts \"test/**/*.test.ts\""
+    "test": "tsx --test --import ./test/setup.ts \"test/**/*.test.ts\"",
+    "install:opencode": "npm run build:plugin && tsx scripts/install-opencode.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

@@ -54,6 +54,26 @@ No inicies sesión en exchanges ni redes sociales dentro del navegador de la app
 Los datos (misiones, diario, lecciones) se guardan en `~/.cryptoagent`, fuera del plugin: se conservan al
 actualizar o reinstalar, y son los mismos se instale desde la app o desde la CLI.
 
+## Usar en OpenCode
+
+También funciona en [OpenCode](https://opencode.ai) (escritorio o terminal), con el modelo que tengas seleccionado allí.
+Desde este repositorio:
+
+```bash
+npm install
+npm run install:opencode
+```
+
+Copia el simulador a `~/.cryptoagent/opencode`, añade el servidor MCP `cryptosim` a `~/.config/opencode/opencode.json`
+(sin tocar el resto), y genera los agentes `trader` y `reviewer` (a partir de los mismos prompts) y los comandos:
+`/cryptoagent-trading` (p. ej. `/cryptoagent-trading 20 40 5`), `/cryptoagent-estado`, `/cryptoagent-parar`,
+`/cryptoagent-peticiones` y `/cryptoagent-panel`. Después, reinicia OpenCode.
+
+La base de datos es la misma que en Claude Code: misiones y memoria se comparten. Diferencias: en OpenCode los agentes
+van uno detrás de otro (el revisor prepara, el trader trabaja y el revisor hace la retrospectiva al final, sin revisar a
+mitad), no hay navegador ni aviso al terminar, y el panel no muestra la transcripción del agente (sí todo lo demás).
+Tras actualizar el código, vuelve a ejecutar `npm run install:opencode`.
+
 ## Actualizaciones
 
 En marketplaces que no son de Anthropic la actualización automática viene desactivada. Para actualizar:

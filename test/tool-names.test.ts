@@ -38,6 +38,7 @@ const NOT_TOOLS = new Set([
   "fixes_error_ids",
   "interval_due",
   "mission_ended",
+  "slippage_bps",
 ]);
 
 const docs = [

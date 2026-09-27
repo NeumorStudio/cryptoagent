@@ -278,6 +278,36 @@ export function recall(missionId?: number | null, limit?: number) {
   };
 }
 
+const clip = (text: unknown, n: number) => {
+  const s = String(text ?? "");
+  return s.length > n ? `${s.slice(0, n).replace(/\s\S*$/, "")}…` : s;
+};
+
+/**
+ * La memoria resumida: lo más relevante primero y los textos largos recortados. Crece con cada misión,
+ * y el agente la consulta a menudo: el detalle completo está en recall con detail "completo".
+ */
+export function recallSummary(missionId?: number | null) {
+  const full = recall(missionId);
+  return {
+    currentMission: full.currentMission,
+    missionHistory: full.missionHistory.slice(0, 8).map((h) => ({ ...h, ...(h.nextTime ? { nextTime: clip(h.nextTime, 300) } : {}) })),
+    howtos: full.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title, steps: clip(h.steps, 600) })),
+    beliefs: full.beliefs.slice(0, 10).map((b) => ({
+      id: b.id,
+      statement: clip(b.statement, 300),
+      appliesTo: b.appliesTo,
+      ...(b.condition ? { condition: b.condition, expectation: b.expectation } : {}),
+      evidence: b.evidence.verdict,
+    })),
+    totalBeliefs: full.totalBeliefs,
+    tradeStats: full.tradeStats,
+    recurringErrors: full.recurringErrors,
+    apis: full.apis.slice(0, 10),
+    note: "Resumen: textos recortados y solo las 10 creencias más relevantes. recall_memory con detail: completo trae todo.",
+  };
+}
+
 /** Errores de herramientas agrupados por tipo (últimos 30 días), con el howto que los resuelve si lo hay. */
 export function recurringErrors() {
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();

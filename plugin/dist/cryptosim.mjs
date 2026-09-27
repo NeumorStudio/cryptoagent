@@ -12535,9 +12535,9 @@ var Class = class {
   constructor(..._args) {
   }
 };
-function members(proto, table) {
-  for (const key in table) {
-    const desc = Object.getOwnPropertyDescriptor(table, key);
+function members(proto, table2) {
+  for (const key in table2) {
+    const desc = Object.getOwnPropertyDescriptor(table2, key);
     if (desc.get)
       Object.defineProperty(proto, key, { ...desc, enumerable: false });
     else
@@ -12552,10 +12552,10 @@ function hide(inst, key, value) {
   return own(inst, key, value, false);
 }
 // @__NO_SIDE_EFFECTS__
-function derived(computes, table) {
+function derived(computes, table2) {
   for (const key in computes) {
     const compute = computes[key];
-    Object.defineProperty(table, key, {
+    Object.defineProperty(table2, key, {
       configurable: true,
       enumerable: true,
       get() {
@@ -12566,7 +12566,7 @@ function derived(computes, table) {
       }
     });
   }
-  return table;
+  return table2;
 }
 function defineBound(proto, key, fn) {
   Object.defineProperty(proto, key, {
@@ -37010,6 +37010,12 @@ var MIGRATIONS = [
         );
         CREATE INDEX transfers_pending ON transfers (status, arrives_at);
       `)
+  },
+  {
+    version: 5,
+    description: "El reloj de la misi\xF3n arranca cuando el agente empieza a trabajar",
+    // Las misiones que ya existían cuentan como empezadas al crearse.
+    up: (db2) => db2.exec("ALTER TABLE missions ADD COLUMN started_at TEXT; UPDATE missions SET started_at = created_at;")
   }
 ];
 function memoryV2(db2) {
@@ -37314,10 +37320,10 @@ db.exec(`
     target TEXT
   );
 `);
-function addColumns(table, columns) {
-  const existing = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+function addColumns(table2, columns) {
+  const existing = db.prepare(`PRAGMA table_info(${table2})`).all().map((c) => c.name);
   for (const [name, type] of Object.entries(columns)) {
-    if (!existing.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    if (!existing.includes(name)) db.exec(`ALTER TABLE ${table2} ADD COLUMN ${name} ${type}`);
   }
 }
 addColumns("missions", {
@@ -37326,7 +37332,7 @@ addColumns("missions", {
   benchmark_sol_price: "REAL"
 });
 addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
-for (const table of ["journal", "activity", "orders", "notes", "snapshots", "sessions"]) addColumns(table, { mission_id: "INTEGER" });
+for (const table2 of ["journal", "activity", "orders", "notes", "snapshots", "sessions"]) addColumns(table2, { mission_id: "INTEGER" });
 {
   const holdingCols = db.prepare("PRAGMA table_info(holdings)").all().map((c) => c.name);
   if (!holdingCols.includes("mission_id")) {
@@ -37344,8 +37350,8 @@ for (const table of ["journal", "activity", "orders", "notes", "snapshots", "ses
   }
   const done = db.prepare("SELECT value FROM meta WHERE key = 'migration_mission_ids'").get();
   if (!done) {
-    const byTime = (table, tsCol) => db.exec(`UPDATE ${table} SET mission_id = (
-        SELECT m.id FROM missions m WHERE m.created_at <= ${table}.${tsCol} ORDER BY m.created_at DESC LIMIT 1
+    const byTime = (table2, tsCol) => db.exec(`UPDATE ${table2} SET mission_id = (
+        SELECT m.id FROM missions m WHERE m.created_at <= ${table2}.${tsCol} ORDER BY m.created_at DESC LIMIT 1
       ) WHERE mission_id IS NULL`);
     byTime("journal", "ts");
     byTime("activity", "ts");
@@ -37369,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.12.1";
+var CODE_VERSION = "0.13.0";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -38444,8 +38450,8 @@ var solana = {
   native: SOL,
   cash: USDC,
   liquidationReserve: config2.solanaTxFeeSol,
-  // Entre ~0,01 SOL (unas cuantas cuentas de token) y ~0,05 SOL.
-  gasBudgetUsd: { min: 1.5, max: 7.5 },
+  // Entre ~0,005 SOL (la fee de muchas operaciones y la renta de dos tokens a la vez) y ~0,05 SOL.
+  gasBudgetUsd: { min: 0.75, max: 7.5 },
   isCash: (asset2) => CASH2.has(asset2),
   async resolveToken(ref) {
     const mint = resolveMint(ref.trim());
@@ -38810,6 +38816,21 @@ async function swap(args) {
     }
     throw new Error(settled.error);
   }
+  const key = quoteKey(m, chain.id, input2.address, output2.address);
+  const ref = lastQuotes.get(key);
+  lastQuotes.delete(key);
+  if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * 0.02) {
+    const expected = ref.amountOut * (amount / ref.amountIn);
+    const minOut = expected * (1 - args.slippageBps / 1e4);
+    if (quote2.amountOut < minOut) {
+      const burned = settled.costs.filter((c) => c.kind === "network_fee" || c.kind === "l1_fee" || c.kind === "approval").reduce((s, c) => s + c.amount, 0);
+      if (burned > 0) applyDeltas(m, chain.id, [{ asset: chain.native.address, symbol: chain.native.symbol, decimals: chain.native.decimals, amount: -burned }]);
+      const worse = (1 - quote2.amountOut / expected) * 100;
+      const error62 = `El swap revierte: el precio se ha movido m\xE1s que tu slippage. Cotizaste ${Number(expected.toPrecision(6))} ${output2.symbol} y ahora saldr\xEDan ${Number(quote2.amountOut.toPrecision(6))} (${worse.toFixed(1)} % menos; tu l\xEDmite era ${args.slippageBps / 100} %). Has pagado la red (${Number(burned.toPrecision(3))} ${chain.native.symbol}).`;
+      logJournal({ missionId: m, sessionId: args.sessionId, kind: "failed_tx", summary: `Swap fallido en ${chain.label}: slippage superado (${worse.toFixed(1)} % peor que tu cotizaci\xF3n)`, reasoning: args.reasoning });
+      throw new Error(error62);
+    }
+  }
   applyDeltas(m, chain.id, settled.deltas);
   const result = {
     chain: chain.id,
@@ -38845,10 +38866,14 @@ async function swap(args) {
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
-async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50) {
+var lastQuotes = /* @__PURE__ */ new Map();
+var QUOTE_TTL_MS = 6e4;
+var quoteKey = (missionId, chain, input2, output2) => `${missionId}:${chain}:${input2}:${output2}`;
+async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50, missionId) {
   const chain = getChain(chainId);
   const [input2, output2] = await Promise.all([chain.resolveToken(inputRef), chain.resolveToken(outputRef)]);
   const q = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps });
+  if (missionId != null) lastQuotes.set(quoteKey(missionId, chain.id, input2.address, output2.address), { amountIn: amount, amountOut: q.amountOut, at: Date.now() });
   return {
     chain: chain.id,
     input: `${amount} ${input2.symbol} (${input2.address})`,
@@ -38856,7 +38881,7 @@ async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50)
     priceImpactPct: q.priceImpactPct,
     route: q.route,
     ...q.warnings.length ? { warnings: q.warnings } : {},
-    note: "Sin contar los costes de red: se calculan al ejecutar, seg\xFAn tu monedero."
+    note: "Sin contar los costes de red: se calculan al ejecutar, seg\xFAn tu monedero. Si ejecutas este mismo swap (mismo importe) en menos de 60 s, tu slippage se mide contra esta cotizaci\xF3n: si el precio se ha movido m\xE1s, el swap revierte y pagas solo la red."
   };
 }
 async function binanceMarketOrder(args) {
@@ -39507,8 +39532,18 @@ async function createMission(initialUsd, targetUsd, durationMinutes, instruction
 }
 function remaining(deadline) {
   const ms = new Date(deadline).getTime() - Date.now();
-  const totalMin = Math.max(0, Math.floor(ms / 6e4));
-  return { ms, text: `${Math.floor(totalMin / 60)} h ${totalMin % 60} min` };
+  const totalSec = Math.max(0, Math.floor(ms / 1e3));
+  const h = Math.floor(totalSec / 3600), m = Math.floor(totalSec / 60) % 60, s = totalSec % 60;
+  return { ms, seconds: totalSec, text: h ? `${h} h ${m} min` : `${m} min ${s} s` };
+}
+function startMissionClock(missionId) {
+  if (missionId === null) return;
+  const m = getMission(missionId);
+  if (!m || m.status !== "active" || m.started_at) return;
+  const durationMs = new Date(m.deadline).getTime() - new Date(m.created_at).getTime();
+  const start = /* @__PURE__ */ new Date();
+  const changed = db.prepare("UPDATE missions SET started_at = ?, created_at = ?, deadline = ? WHERE id = ? AND started_at IS NULL AND status = 'active'").run(start.toISOString(), start.toISOString(), new Date(start.getTime() + durationMs).toISOString(), missionId).changes;
+  if (changed) logJournal({ missionId, sessionId: null, kind: "mission", summary: `El agente empieza a trabajar: el reloj de la misi\xF3n #${missionId} arranca ahora` });
 }
 async function missionStatus(missionId) {
   const mission = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
@@ -39530,8 +39565,10 @@ async function missionStatus(missionId) {
     currentUsd: Number(v.totalUsd.toFixed(2)),
     missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
     progressPct: Number(((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd) * 100).toFixed(1)),
+    now: (/* @__PURE__ */ new Date()).toISOString(),
     deadline: mission.deadline,
     timeLeft: left.text,
+    secondsLeft: left.seconds,
     userInstructions: mission.instructions ?? "ninguna: modo libre"
   };
 }
@@ -39770,6 +39807,30 @@ function recall(missionId, limit) {
     apis: db.prepare("SELECT host, path, ok, fail, last_status, last_ok_at, last_fail_at FROM api_observations ORDER BY COALESCE(last_ok_at, last_fail_at) DESC LIMIT 25").all()
   };
 }
+var clip = (text2, n3) => {
+  const s = String(text2 ?? "");
+  return s.length > n3 ? `${s.slice(0, n3).replace(/\s\S*$/, "")}\u2026` : s;
+};
+function recallSummary(missionId) {
+  const full = recall(missionId);
+  return {
+    currentMission: full.currentMission,
+    missionHistory: full.missionHistory.slice(0, 8).map((h) => ({ ...h, ...h.nextTime ? { nextTime: clip(h.nextTime, 300) } : {} })),
+    howtos: full.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title, steps: clip(h.steps, 600) })),
+    beliefs: full.beliefs.slice(0, 10).map((b) => ({
+      id: b.id,
+      statement: clip(b.statement, 300),
+      appliesTo: b.appliesTo,
+      ...b.condition ? { condition: b.condition, expectation: b.expectation } : {},
+      evidence: b.evidence.verdict
+    })),
+    totalBeliefs: full.totalBeliefs,
+    tradeStats: full.tradeStats,
+    recurringErrors: full.recurringErrors,
+    apis: full.apis.slice(0, 10),
+    note: "Resumen: textos recortados y solo las 10 creencias m\xE1s relevantes. recall_memory con detail: completo trae todo."
+  };
+}
 function recurringErrors() {
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
   return db.prepare(
@@ -39777,8 +39838,8 @@ function recurringErrors() {
        FROM tool_errors WHERE ts >= ? GROUP BY error_class, tool ORDER BY count DESC, lastAt DESC LIMIT 20`
   ).all(since);
 }
-function duplicateOf(table, fp, exceptId) {
-  const rows = db.prepare(`SELECT id, fingerprint FROM ${table} WHERE status = 'active' AND id IS NOT ?`).all(exceptId ?? null);
+function duplicateOf(table2, fp, exceptId) {
+  const rows = db.prepare(`SELECT id, fingerprint FROM ${table2} WHERE status = 'active' AND id IS NOT ?`).all(exceptId ?? null);
   return rows.find((r) => similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD)?.id;
 }
 function writeHowto(a) {
@@ -40147,11 +40208,36 @@ async function estimateTokenLaunch(a) {
   };
 }
 
+// src/tools/format.ts
+var json2 = (value) => JSON.stringify(value);
+var isRecord = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+function cell(v) {
+  if (v === void 0 || v === null) return "";
+  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+  return s.replace(/\|/g, "\xA6").replace(/\r?\n/g, " ");
+}
+function table(rows, indent = "") {
+  const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  return [`${indent}[${rows.length}] ${keys.join("|")}`, ...rows.map((r) => indent + keys.map((k) => cell(r[k])).join("|"))].join("\n");
+}
+function toText(value, indent = "") {
+  if (Array.isArray(value) && value.length > 1 && value.every(isRecord)) return table(value, indent);
+  if (isRecord(value)) {
+    return Object.entries(value).filter(([, v]) => v !== void 0).map(([k, v]) => {
+      if (Array.isArray(v) && v.length > 1 && v.every(isRecord)) return `${indent}${k}:
+${table(v, indent + "  ")}`;
+      if (isRecord(v) && Object.keys(v).length > 0) return `${indent}${k}:
+${toText(v, indent + "  ")}`;
+      return `${indent}${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`;
+    }).join("\n");
+  }
+  return indent + JSON.stringify(value);
+}
+
 // src/tools/define.ts
 function tool(def) {
   return def;
 }
-var json2 = (value) => JSON.stringify(value, null, 2);
 
 // src/tools/index.ts
 var mid = (ctx) => {
@@ -40193,7 +40279,7 @@ var SIM_TOOLS = [
     researchTarget: () => void 0,
     description: "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
     schema: external_exports.object({ chain: chainParam, limit: external_exports.number().int().min(5).max(60).default(25) }),
-    run: async ({ chain, limit }) => json2(await getChain(chain).research.scan(limit))
+    run: async ({ chain, limit }) => toText(await getChain(chain).research.scan(limit))
   }),
   tool({
     name: "token_report",
@@ -40288,13 +40374,13 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       amount: external_exports.number().positive(),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50)
     }),
-    run: async (i) => json2(await quoteSwap(i.chain, i.input, i.output, i.amount, i.slippage_bps))
+    run: async (i, ctx) => json2(await quoteSwap(i.chain, i.input, i.output, i.amount, i.slippage_bps, ctx.missionId))
   }),
   tool({
     name: "simulate_swap",
     kind: "trade",
     journaled: true,
-    description: `Ejecuta en simulaci\xF3n un swap en tu monedero de una cadena. El resultado es la cotizaci\xF3n real del agregador en ese instante (liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas el token nativo de la cadena para pagar la red. input/output: direcci\xF3n del token o un alias (${TOKEN_ALIASES}). Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token.`,
+    description: `Ejecuta en simulaci\xF3n un swap en tu monedero de una cadena. El resultado es la cotizaci\xF3n real del agregador en ese instante (liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas el token nativo de la cadena para pagar la red. input/output: direcci\xF3n del token o un alias (${TOKEN_ALIASES}). Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token. slippage_bps protege la cotizaci\xF3n que acabas de ver: si cotizaste este mismo swap con quote_swap hace menos de 60 s y el precio se ha movido m\xE1s que tu slippage, el swap revierte (pagas solo la red). Sin cotizaci\xF3n previa, se ejecuta al precio del momento.`,
     schema: external_exports.object({
       chain: chainParam,
       input: external_exports.string(),
@@ -40453,7 +40539,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "misc",
     description: "Lista tus \xF3rdenes condicionales: abiertas, cerradas (ejecutadas, fallidas, canceladas, caducadas) o todas.",
     schema: external_exports.object({ status: external_exports.enum(["open", "closed", "all"]).default("open") }),
-    run: async ({ status }, ctx) => json2(listOrders(mid(ctx), status))
+    run: async ({ status }, ctx) => toText(listOrders(mid(ctx), status))
   }),
   tool({
     name: "cancel_order",
@@ -40506,7 +40592,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     run: async ({ limit, mission_id }, ctx) => {
       const target = mission_id ?? ctx.missionId;
       if (target === null || !getMission(target)) throw new Error(mission_id === void 0 ? "No hay misiones" : `No existe la misi\xF3n #${mission_id}`);
-      return json2(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
+      return toText(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
     }
   }),
   // ─── Memoria entre misiones (el agente que opera la lee; la escribe el revisor) ─
@@ -40515,9 +40601,9 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "memory",
     role: "trader",
     researchTarget: () => void 0,
-    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual. La escribe un agente revisor a partir de lo que pas\xF3 en tus misiones. Incluye: howtos (c\xF3mo se hace algo y qu\xE9 errores evitar), creencias sobre el mercado con su evidencia real (calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la pr\xF3xima vez, estad\xEDsticas de tus operaciones, los errores que se repiten y qu\xE9 APIs han respondido bien.",
-    schema: external_exports.object({}),
-    run: async (_i, ctx) => json2(recall(ctx.missionId))
+    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual. La escribe un agente revisor a partir de lo que pas\xF3 en tus misiones. Incluye: howtos (c\xF3mo se hace algo y qu\xE9 errores evitar), creencias sobre el mercado con su evidencia real (calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la pr\xF3xima vez, estad\xEDsticas de tus operaciones, los errores que se repiten y qu\xE9 APIs han respondido bien. Por defecto, un resumen con lo m\xE1s relevante (textos recortados); con detail: completo, todo sin recortar.",
+    schema: external_exports.object({ detail: external_exports.enum(["resumen", "completo"]).default("resumen") }),
+    run: async ({ detail }, ctx) => toText(detail === "completo" ? recall(ctx.missionId) : recallSummary(ctx.missionId))
   }),
   tool({
     name: "trade_history",
@@ -40526,7 +40612,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     researchTarget: () => void 0,
     description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos), cu\xE1nto hab\xEDas investigado antes, tu tesis y las creencias que aplicaste.",
     schema: external_exports.object({ mission_id: external_exports.number().int().optional(), limit: external_exports.number().int().min(1).max(200).default(50) }),
-    run: async ({ mission_id, limit }) => json2(listPositions(mission_id).slice(0, limit))
+    run: async ({ mission_id, limit }) => toText(listPositions(mission_id).slice(0, limit))
   }),
   tool({
     name: "report_observation",
@@ -40564,7 +40650,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     role: "reviewer",
     description: "Lo que tienes pendiente como revisor: misiones terminadas sin retrospectiva, la misi\xF3n activa (actividad desde tu \xFAltima revisi\xF3n, cada cu\xE1nto conviene revisarla y si tiene briefing), observaciones del agente sin procesar, errores repetidos sin howto y creencias sin condici\xF3n.",
     schema: external_exports.object({}),
-    run: async () => json2(reviewQueue())
+    run: async () => toText(reviewQueue())
   }),
   tool({
     name: "mission_review_data",
@@ -40572,7 +40658,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     role: "reviewer",
     description: "Todo lo ocurrido en una misi\xF3n en una sola llamada: misi\xF3n, estad\xEDsticas, posiciones (con tesis, creencias aplicadas, datos de entrada y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. Con since (fecha ISO) solo lo posterior a esa fecha (\xFAtil a mitad de misi\xF3n).",
     schema: external_exports.object({ mission_id: external_exports.number().int(), since: external_exports.string().optional() }),
-    run: async ({ mission_id, since }) => json2(missionReviewData(mission_id, since))
+    run: async ({ mission_id, since }) => toText(missionReviewData(mission_id, since))
   }),
   tool({
     name: "memory_catalog",
@@ -40580,7 +40666,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     role: "reviewer",
     description: "La memoria completa tal como la ve el agente (howtos, creencias activas con su evidencia calculada, historial, estad\xEDsticas, errores repetidos, APIs), ordenada por parecido con la misi\xF3n indicada o la activa.",
     schema: external_exports.object({ mission_id: external_exports.number().int().optional() }),
-    run: async ({ mission_id }, ctx) => json2(recall(mission_id ?? ctx.missionId))
+    run: async ({ mission_id }, ctx) => toText(recall(mission_id ?? ctx.missionId))
   }),
   tool({
     name: "wait_for_activity",
@@ -41126,7 +41212,7 @@ function startSession(missionId) {
 }
 async function sessionBriefing(sessionId, missionId) {
   const header = `Sesi\xF3n #${sessionId}. Fecha y hora actual: ${now()}.`;
-  if (missionId === null) return [header, "", JSON.stringify(await missionStatus(), null, 2)].join("\n");
+  if (missionId === null) return [header, "", toText(await missionStatus())].join("\n");
   const mission = getMission(missionId);
   const portfolio = await valuation(missionId, true);
   const notes = db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId);
@@ -41140,18 +41226,14 @@ async function sessionBriefing(sessionId, missionId) {
       markBriefingSeen(missionId);
     }
     const mem = recall(missionId, 6);
-    const clip = (t, n3 = 300) => t.length > n3 ? t.slice(0, n3) + "\u2026" : t;
+    const clip2 = (t, n3 = 300) => t.length > n3 ? t.slice(0, n3) + "\u2026" : t;
     memoryLines.push(
-      mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length ? "Tu memoria, resumida y ordenada por parecido con esta misi\xF3n (recall_memory tiene el detalle completo):\n" + JSON.stringify(
-        {
-          missionHistory: mem.missionHistory,
-          howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
-          beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
-          totalBeliefs: mem.totalBeliefs
-        },
-        null,
-        2
-      ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
+      mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length ? "Tu memoria, resumida y ordenada por parecido con esta misi\xF3n (recall_memory tiene el detalle completo):\n" + toText({
+        missionHistory: mem.missionHistory.map(({ distance: _d, ...h }) => h),
+        howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
+        beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip2(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
+        totalBeliefs: mem.totalBeliefs
+      }) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
       ""
     );
   }
@@ -41159,15 +41241,15 @@ async function sessionBriefing(sessionId, missionId) {
     header,
     "",
     "Misi\xF3n:",
-    JSON.stringify(await missionStatus(missionId), null, 2),
+    toText(await missionStatus(missionId)),
     "",
     ...memoryLines,
     "Cartera:",
-    JSON.stringify(portfolio, null, 2),
+    toText(portfolio),
     "",
     notes.length ? "Tus notas:\n" + notes.map((n3) => `- (id ${n3.id}, ${n3.ts}) ${n3.text}`).join("\n") : "No tienes notas guardadas.",
     "",
-    openOrders.length ? "\xD3rdenes condicionales abiertas:\n" + JSON.stringify(openOrders, null, 2) : "No tienes \xF3rdenes condicionales abiertas.",
+    openOrders.length ? "\xD3rdenes condicionales abiertas:\n" + toText(openOrders) : "No tienes \xF3rdenes condicionales abiertas.",
     "",
     recent.length ? "\xDAltimas entradas del diario:\n" + recent.reverse().map((j) => `- ${j.ts} [${j.kind}] ${j.summary}`).join("\n") : "El diario est\xE1 vac\xEDo: es tu primera sesi\xF3n."
   ].join("\n");
@@ -41260,7 +41342,10 @@ server.registerTool = (name, cfg, handler2) => register(name, cfg, async (...arg
 var currentMission = () => (getActiveMission() ?? getLastMission())?.id ?? null;
 var sessions = /* @__PURE__ */ new Map();
 var sessionFor = (missionId) => {
-  if (!sessions.has(missionId)) sessions.set(missionId, startSession(missionId));
+  if (!sessions.has(missionId)) {
+    const last = db.prepare("SELECT MAX(id) AS id FROM sessions WHERE mission_id IS ?").get(missionId).id;
+    sessions.set(missionId, last ?? startSession(missionId));
+  }
   return sessions.get(missionId);
 };
 server.registerTool(
@@ -41274,6 +41359,7 @@ server.registerTool(
       await checkOrders().catch(() => []);
       await checkMission().catch(() => []);
       const missionId = currentMission();
+      startMissionClock(missionId);
       const sessionId = startSession(missionId);
       sessions.set(missionId, sessionId);
       return text(await sessionBriefing(sessionId, missionId));
@@ -41295,7 +41381,7 @@ server.registerTool(
       if (sessionId === void 0) return { ...text("No hay ninguna sesi\xF3n abierta."), isError: true };
       const end = await endSession(sessionId, missionId, summary);
       sessions.delete(missionId);
-      return text(JSON.stringify(end, null, 2));
+      return text(JSON.stringify(end));
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }
@@ -41324,7 +41410,7 @@ server.registerTool(
     }
     try {
       const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
-      return text(JSON.stringify(mission, null, 2));
+      return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }

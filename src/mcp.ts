@@ -6,9 +6,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard } from "./dashboard/server.js";
-import { checkMission, createMission, getActiveMission, getLastMission, stopMission } from "./sim/mission.js";
+import { checkMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission } from "./sim/mission.js";
 import { config } from "./config.js";
-import { supersededBy } from "./db.js";
+import { db, supersededBy } from "./db.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { DEFAULT_ALLOCATION, VENUES } from "./sim/types.js";
 import { statusReport } from "./sim/status.js";
@@ -29,10 +29,14 @@ const register = server.registerTool.bind(server);
 /** Misión sobre la que trabaja el agente: la activa o, si no hay, la última. */
 const currentMission = (): number | null => (getActiveMission() ?? getLastMission())?.id ?? null;
 
-// Una sesión de trabajo abierta por misión.
+// Una sesión de trabajo abierta por misión. Las llamadas sin sesión abierta (p. ej. del revisor, que
+// comparte este servidor) se anotan en la última sesión de la misión en vez de abrir una vacía.
 const sessions = new Map<number | null, number>();
 const sessionFor = (missionId: number | null) => {
-  if (!sessions.has(missionId)) sessions.set(missionId, startSession(missionId));
+  if (!sessions.has(missionId)) {
+    const last = (db.prepare("SELECT MAX(id) AS id FROM sessions WHERE mission_id IS ?").get(missionId) as { id: number | null }).id;
+    sessions.set(missionId, last ?? startSession(missionId));
+  }
   return sessions.get(missionId)!;
 };
 
@@ -48,6 +52,7 @@ server.registerTool(
       await checkOrders().catch(() => []);
       await checkMission().catch(() => []);
       const missionId = currentMission();
+      startMissionClock(missionId);
       const sessionId = startSession(missionId);
       sessions.set(missionId, sessionId);
       return text(await sessionBriefing(sessionId, missionId));
@@ -70,7 +75,7 @@ server.registerTool(
       if (sessionId === undefined) return { ...text("No hay ninguna sesión abierta."), isError: true };
       const end = await endSession(sessionId, missionId, summary);
       sessions.delete(missionId);
-      return text(JSON.stringify(end, null, 2));
+      return text(JSON.stringify(end));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }
@@ -108,7 +113,7 @@ server.registerTool(
     }
     try {
       const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
-      return text(JSON.stringify(mission, null, 2));
+      return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }

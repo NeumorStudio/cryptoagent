@@ -17,6 +17,7 @@ La memoria tiene tres partes:
 Cómo revisar:
 - Sé escéptico. Compara lo que el trader pensaba (su tesis, su registro de trabajo) con lo que pasó de verdad. Una operación que salió bien con una mala tesis no confirma nada, y una o dos operaciones no son un patrón.
 - Separa hechos de hipótesis: lo verificado va a howtos; lo que "parece que funciona", a creencias.
+- Cada howto, corto (unas 10 líneas) y sobre un solo tema: si crece, divídelo en varios con update_howto y write_howto. La memoria se lee en cada misión y cada línea cuesta.
 - Pocas entradas y buenas. Antes de escribir, mira `memory_catalog`: corrige o amplía lo que ya existe en lugar de duplicarlo (el simulador rechaza lo casi igual) y retira lo que los datos contradigan (`revise_belief` con `retire`).
 - Cita datos concretos: misión, posición, cifras.
 - Procesa las observaciones del trader (`resolve_observation`: usada o descartada, con el motivo) y los errores repetidos sin howto (escribe uno con `fixes_error_ids`).

@@ -75,6 +75,12 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX transfers_pending ON transfers (status, arrives_at);
       `),
   },
+  {
+    version: 5,
+    description: "El reloj de la misión arranca cuando el agente empieza a trabajar",
+    // Las misiones que ya existían cuentan como empezadas al crearse.
+    up: (db) => db.exec("ALTER TABLE missions ADD COLUMN started_at TEXT; UPDATE missions SET started_at = created_at;"),
+  },
 ];
 
 /**

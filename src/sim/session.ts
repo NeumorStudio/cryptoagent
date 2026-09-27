@@ -3,6 +3,7 @@ import { getBriefing, markBriefingSeen, recall } from "./memory.js";
 import { getMission, missionStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
+import { toText } from "../tools/format.js";
 
 export function startSession(missionId: number | null): number {
   return Number(db.prepare("INSERT INTO sessions (started_at, mission_id) VALUES (?, ?)").run(now(), missionId).lastInsertRowid);
@@ -11,7 +12,7 @@ export function startSession(missionId: number | null): number {
 /** Lo que el agente ve al empezar cada sesión: su misión, su memoria, su cartera, sus notas y su diario reciente. */
 export async function sessionBriefing(sessionId: number, missionId: number | null): Promise<string> {
   const header = `Sesión #${sessionId}. Fecha y hora actual: ${now()}.`;
-  if (missionId === null) return [header, "", JSON.stringify(await missionStatus(), null, 2)].join("\n");
+  if (missionId === null) return [header, "", toText(await missionStatus())].join("\n");
 
   const mission = getMission(missionId)!;
   const portfolio = await valuation(missionId, true);
@@ -33,16 +34,12 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
     memoryLines.push(
       mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length
         ? "Tu memoria, resumida y ordenada por parecido con esta misión (recall_memory tiene el detalle completo):\n" +
-            JSON.stringify(
-              {
-                missionHistory: mem.missionHistory,
-                howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
-                beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
-                totalBeliefs: mem.totalBeliefs,
-              },
-              null,
-              2,
-            )
+            toText({
+              missionHistory: mem.missionHistory.map(({ distance: _d, ...h }) => h),
+              howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
+              beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
+              totalBeliefs: mem.totalBeliefs,
+            })
         : "Es tu primera misión: todavía no tienes memoria.",
       "",
     );
@@ -52,15 +49,15 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
     header,
     "",
     "Misión:",
-    JSON.stringify(await missionStatus(missionId), null, 2),
+    toText(await missionStatus(missionId)),
     "",
     ...memoryLines,
     "Cartera:",
-    JSON.stringify(portfolio, null, 2),
+    toText(portfolio),
     "",
     notes.length ? "Tus notas:\n" + notes.map((n) => `- (id ${n.id}, ${n.ts}) ${n.text}`).join("\n") : "No tienes notas guardadas.",
     "",
-    openOrders.length ? "Órdenes condicionales abiertas:\n" + JSON.stringify(openOrders, null, 2) : "No tienes órdenes condicionales abiertas.",
+    openOrders.length ? "Órdenes condicionales abiertas:\n" + toText(openOrders) : "No tienes órdenes condicionales abiertas.",
     "",
     recent.length
       ? "Últimas entradas del diario:\n" + recent.reverse().map((j) => `- ${j.ts} [${j.kind}] ${j.summary}`).join("\n")

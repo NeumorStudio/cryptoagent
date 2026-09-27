@@ -212,6 +212,27 @@ export async function swap(args: {
     }
     throw new Error(settled.error);
   }
+
+  // Como al firmar la cotización que viste: si hace poco cotizaste este mismo swap, la ejecución no puede
+  // salir peor que esa cotización menos tu slippage. Si sale peor, la transacción revierte y pagas la red.
+  const key = quoteKey(m, chain.id, input.address, output.address);
+  const ref = lastQuotes.get(key);
+  lastQuotes.delete(key);
+  if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * 0.02) {
+    const expected = ref.amountOut * (amount / ref.amountIn);
+    const minOut = expected * (1 - args.slippageBps / 10_000);
+    if (quote.amountOut < minOut) {
+      const burned = settled.costs.filter((c) => c.kind === "network_fee" || c.kind === "l1_fee" || c.kind === "approval").reduce((s, c) => s + c.amount, 0);
+      if (burned > 0) applyDeltas(m, chain.id, [{ asset: chain.native.address, symbol: chain.native.symbol, decimals: chain.native.decimals, amount: -burned }]);
+      const worse = (1 - quote.amountOut / expected) * 100;
+      const error =
+        `El swap revierte: el precio se ha movido más que tu slippage. Cotizaste ${Number(expected.toPrecision(6))} ${output.symbol} y ahora ` +
+        `saldrían ${Number(quote.amountOut.toPrecision(6))} (${worse.toFixed(1)} % menos; tu límite era ${args.slippageBps / 100} %). ` +
+        `Has pagado la red (${Number(burned.toPrecision(3))} ${chain.native.symbol}).`;
+      logJournal({ missionId: m, sessionId: args.sessionId, kind: "failed_tx", summary: `Swap fallido en ${chain.label}: slippage superado (${worse.toFixed(1)} % peor que tu cotización)`, reasoning: args.reasoning });
+      throw new Error(error);
+    }
+  }
   applyDeltas(m, chain.id, settled.deltas);
 
   const result = {
@@ -251,10 +272,16 @@ export async function swap(args: {
   return result;
 }
 
-export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: string, amount: number, slippageBps = 50) {
+// Última cotización de cada swap por misión: al ejecutar ese mismo swap poco después, el slippage se mide contra ella.
+const lastQuotes = new Map<string, { amountIn: number; amountOut: number; at: number }>();
+const QUOTE_TTL_MS = 60_000;
+const quoteKey = (missionId: number, chain: string, input: string, output: string) => `${missionId}:${chain}:${input}:${output}`;
+
+export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: string, amount: number, slippageBps = 50, missionId?: number | null) {
   const chain = getChain(chainId);
   const [input, output] = await Promise.all([chain.resolveToken(inputRef), chain.resolveToken(outputRef)]);
   const q = await chain.quote({ input, output, amountIn: amount, slippageBps });
+  if (missionId != null) lastQuotes.set(quoteKey(missionId, chain.id, input.address, output.address), { amountIn: amount, amountOut: q.amountOut, at: Date.now() });
   return {
     chain: chain.id,
     input: `${amount} ${input.symbol} (${input.address})`,
@@ -262,7 +289,9 @@ export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: s
     priceImpactPct: q.priceImpactPct,
     route: q.route,
     ...(q.warnings.length ? { warnings: q.warnings } : {}),
-    note: "Sin contar los costes de red: se calculan al ejecutar, según tu monedero.",
+    note:
+      "Sin contar los costes de red: se calculan al ejecutar, según tu monedero. Si ejecutas este mismo swap (mismo importe) en menos " +
+      "de 60 s, tu slippage se mide contra esta cotización: si el precio se ha movido más, el swap revierte y pagas solo la red.",
   };
 }
 

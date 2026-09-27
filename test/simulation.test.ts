@@ -7,7 +7,7 @@ import { db, now } from "../src/db.js";
 import { SOL_MINT, USDC_MINT } from "../src/market/jupiter.js";
 import { createMission } from "../src/sim/mission.js";
 import { checkOrders } from "../src/sim/orders.js";
-import { binanceMarketOrder, getHoldings, liquidateAll, swap, valuation } from "../src/sim/portfolio.js";
+import { binanceMarketOrder, getHoldings, liquidateAll, quoteSwap, swap, valuation } from "../src/sim/portfolio.js";
 import { cexTransfer, settleTransfers } from "../src/sim/transfers.js";
 import { listPositions } from "../src/sim/positions.js";
 import { TOKEN_ACCOUNT_RENT_SOL } from "../src/sim/venues/solana.js";
@@ -110,6 +110,25 @@ test("sell_all y cadena desconocida", async () => {
     swap({ missionId: m, sessionId: null, chain: "tron" as never, input: "USDC", output: "TRX", amount: 1, slippageBps: 50, reasoning: "test" }),
     /No existe la cadena/,
   );
+});
+
+test("slippage: protege la cotización recién vista; si el precio se mueve más, revierte y se paga la red", async () => {
+  const base = { missionId: m, sessionId: null, chain: "solana" as const, input: "USDC", output: MEME, amount: 10, reasoning: "test" };
+  await quoteSwap("solana", "USDC", MEME, 10, 100, m);
+  setPrice(MEME, 0.0137); // +5,4 %: por 10 USDC salen un 5 % menos tokens que en la cotización
+  const usdc = bal(m, "solana", USDC_MINT);
+  const sol = bal(m, "solana", SOL_MINT);
+  await assert.rejects(swap({ ...base, slippageBps: 100 }), /revierte.*slippage/);
+  assert.equal(bal(m, "solana", USDC_MINT), usdc);
+  close(bal(m, "solana", SOL_MINT), sol - config.solanaTxFeeSol, 1e-12);
+  // Con un slippage que cubre el movimiento, se ejecuta.
+  await quoteSwap("solana", "USDC", MEME, 10, 1000, m);
+  setPrice(MEME, 0.014);
+  await swap({ ...base, slippageBps: 1000 });
+  // Sin cotización previa no hay contra qué medir: se ejecuta al precio del momento.
+  setPrice(MEME, 0.02);
+  await swap({ ...base, input: MEME, output: "USDC", amount: undefined, sellAll: true, slippageBps: 10 });
+  assert.equal(bal(m, "solana", MEME), 0);
 });
 
 test("liquidar deja la cartera en stablecoins (el SOL reservado paga la última transacción)", async () => {

@@ -23,6 +23,8 @@ export interface Mission {
   allocation: string | null;
   /** Cartera inicial (JSON de saldos): la referencia "sin operar". */
   benchmark: string | null;
+  /** Cuándo empezó a trabajar el agente (y arrancó el reloj); null mientras se prepara. */
+  started_at: string | null;
 }
 
 export function getMission(id: number): Mission | undefined {
@@ -135,8 +137,25 @@ export async function createMission(
 
 function remaining(deadline: string) {
   const ms = new Date(deadline).getTime() - Date.now();
-  const totalMin = Math.max(0, Math.floor(ms / 60_000));
-  return { ms, text: `${Math.floor(totalMin / 60)} h ${totalMin % 60} min` };
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600), m = Math.floor(totalSec / 60) % 60, s = totalSec % 60;
+  return { ms, seconds: totalSec, text: h ? `${h} h ${m} min` : `${m} min ${s} s` };
+}
+
+/**
+ * El reloj de la misión arranca cuando el agente empieza a trabajar, no al crearla: así no se pierde
+ * el tiempo que tarda en prepararse (el briefing del revisor, arrancar el agente). Solo la primera vez.
+ */
+export function startMissionClock(missionId: number | null) {
+  if (missionId === null) return;
+  const m = getMission(missionId);
+  if (!m || m.status !== "active" || m.started_at) return;
+  const durationMs = new Date(m.deadline).getTime() - new Date(m.created_at).getTime();
+  const start = new Date();
+  const changed = db
+    .prepare("UPDATE missions SET started_at = ?, created_at = ?, deadline = ? WHERE id = ? AND started_at IS NULL AND status = 'active'")
+    .run(start.toISOString(), start.toISOString(), new Date(start.getTime() + durationMs).toISOString(), missionId).changes;
+  if (changed) logJournal({ missionId, sessionId: null, kind: "mission", summary: `El agente empieza a trabajar: el reloj de la misión #${missionId} arranca ahora` });
 }
 
 /** Estado de una misión (por defecto, la principal activa o la última). */
@@ -160,8 +179,10 @@ export async function missionStatus(missionId?: number) {
     currentUsd: Number(v.totalUsd.toFixed(2)),
     missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
     progressPct: Number((((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd)) * 100).toFixed(1)),
+    now: new Date().toISOString(),
     deadline: mission.deadline,
     timeLeft: left.text,
+    secondsLeft: left.seconds,
     userInstructions: mission.instructions ?? "ninguna: modo libre",
   };
 }

@@ -45,6 +45,9 @@ Mover dinero entre sitios (el dinero sale al momento y llega después; mientras 
 ## 2. Cómo se simula (y qué no se simula)
 
 - El precio de ejecución es la cotización de Jupiter o el order book de Binance **en el momento de la llamada**.
+- **Slippage**: como al firmar en un monedero, protege la cotización que viste. Si cotizas un swap con `quote_swap` y lo
+  ejecutas con el mismo importe en menos de 60 s, y el precio se ha movido más que tu `slippage_bps`, el swap revierte y
+  solo pagas la red. Si ejecutas sin cotizar antes, se ejecuta al precio de ese momento (y el slippage no tiene contra qué medirse).
   Las comisiones de los pools (incluida la de pump.fun) ya van dentro de la cotización.
 - Se cobran además: la fee de red de Solana (fija, configurable) y la renta de la cuenta de token
   (0,00203928 SOL al recibir un token nuevo; se recupera al vaciar esa cuenta). Sin SOL no puedes operar en Solana.

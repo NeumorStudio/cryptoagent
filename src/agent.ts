@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { logActivity } from "./db.js";
 import { apiSystemPrompt } from "./prompt.js";
-import { getActiveMission, getLastMission } from "./sim/mission.js";
+import { getActiveMission, getLastMission, startMissionClock } from "./sim/mission.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { runTool, toolDefinitions, type AgentRole } from "./tools/runner.js";
 
@@ -25,6 +25,7 @@ function log(tag: string, text: string) {
 export async function runSession(opts: { role?: AgentRole; missionId?: number | null; task?: string } = {}): Promise<void> {
   const role = opts.role ?? "trader";
   const missionId = opts.missionId !== undefined ? opts.missionId : ((getActiveMission() ?? getLastMission())?.id ?? null);
+  if (role === "trader") startMissionClock(missionId);
   const sessionId = startSession(missionId);
   log("▶", `Sesión #${sessionId} (${role === "trader" ? "trader" : "revisor"}) iniciada`);
 

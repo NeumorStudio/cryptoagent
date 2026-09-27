@@ -48,4 +48,4 @@ export function tool<S extends z.ZodObject>(def: ToolDef<S>) {
   return def;
 }
 
-export const json = (value: unknown) => JSON.stringify(value, null, 2);
+export { json } from "./format.js";

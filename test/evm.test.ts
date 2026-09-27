@@ -94,8 +94,8 @@ test("reparto: suma el capital, con una parte en nativo para el gas de cada cade
 
 test("reparto: con poco capital, el gas mínimo sin pasar de la mitad", () => {
   const h = planPortfolio(20, { solana: 100 }, PRICES);
-  assert.equal(h.find((x) => x.asset === SOL_MINT)!.amount, 0.01); // 1,5 $
-  assert.equal(h.find((x) => x.asset === USDC_MINT)!.amount, 18.5);
+  assert.equal(h.find((x) => x.asset === SOL_MINT)!.amount, 0.005); // 0,75 $
+  assert.equal(h.find((x) => x.asset === USDC_MINT)!.amount, 19.25);
   const tiny = planPortfolio(2, { base: 100 }, PRICES);
   assert.equal(tiny.find((x) => x.asset === NATIVE)!.amount, 0.0001); // 0,3 $ (mínimo de Base)
 });

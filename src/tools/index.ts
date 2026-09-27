@@ -13,6 +13,7 @@ import * as transfers from "../sim/transfers.js";
 import { estimateTokenLaunch } from "../sim/launch.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
+import { toText } from "./format.js";
 
 /** Misión del contexto; las herramientas que la necesitan solo se ejecutan si existe. */
 const mid = (ctx: ToolCtx): number => {
@@ -85,7 +86,7 @@ export const SIM_TOOLS = [
       "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero. En Solana combina los tokens en " +
       "tendencia de Jupiter (5 min y 1 h), los que están en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
     schema: z.object({ chain: chainParam, limit: z.number().int().min(5).max(60).default(25) }),
-    run: async ({ chain, limit }) => json(await getChain(chain).research.scan(limit)),
+    run: async ({ chain, limit }) => toText(await getChain(chain).research.scan(limit)),
   }),
   tool({
     name: "token_report",
@@ -192,7 +193,7 @@ export const SIM_TOOLS = [
       amount: z.number().positive(),
       slippage_bps: z.number().int().min(1).max(5000).default(50),
     }),
-    run: async (i) => json(await sim.quoteSwap(i.chain, i.input, i.output, i.amount, i.slippage_bps)),
+    run: async (i, ctx) => json(await sim.quoteSwap(i.chain, i.input, i.output, i.amount, i.slippage_bps, ctx.missionId)),
   }),
   tool({
     name: "simulate_swap",
@@ -203,7 +204,9 @@ export const SIM_TOOLS = [
       "(liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. " +
       "En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). " +
       `Necesitas el token nativo de la cadena para pagar la red. input/output: dirección del token o un alias (${TOKEN_ALIASES}). ` +
-      "Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token.",
+      "Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token. " +
+      "slippage_bps protege la cotización que acabas de ver: si cotizaste este mismo swap con quote_swap hace menos de 60 s y el precio se ha movido " +
+      "más que tu slippage, el swap revierte (pagas solo la red). Sin cotización previa, se ejecuta al precio del momento.",
     schema: z.object({
       chain: chainParam,
       input: z.string(),
@@ -386,7 +389,7 @@ export const SIM_TOOLS = [
     kind: "misc",
     description: "Lista tus órdenes condicionales: abiertas, cerradas (ejecutadas, fallidas, canceladas, caducadas) o todas.",
     schema: z.object({ status: z.enum(["open", "closed", "all"]).default("open") }),
-    run: async ({ status }, ctx) => json(orders.listOrders(mid(ctx), status)),
+    run: async ({ status }, ctx) => toText(orders.listOrders(mid(ctx), status)),
   }),
   tool({
     name: "cancel_order",
@@ -446,7 +449,7 @@ export const SIM_TOOLS = [
     run: async ({ limit, mission_id }, ctx) => {
       const target = mission_id ?? ctx.missionId;
       if (target === null || !mission.getMission(target)) throw new Error(mission_id === undefined ? "No hay misiones" : `No existe la misión #${mission_id}`);
-      return json(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
+      return toText(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
     },
   }),
 
@@ -460,9 +463,10 @@ export const SIM_TOOLS = [
       "Tu memoria entre misiones, ordenada por parecido con la misión actual. La escribe un agente revisor a partir de lo que pasó " +
       "en tus misiones. Incluye: howtos (cómo se hace algo y qué errores evitar), creencias sobre el mercado con su evidencia real " +
       "(calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la próxima vez, " +
-      "estadísticas de tus operaciones, los errores que se repiten y qué APIs han respondido bien.",
-    schema: z.object({}),
-    run: async (_i, ctx) => json(memory.recall(ctx.missionId)),
+      "estadísticas de tus operaciones, los errores que se repiten y qué APIs han respondido bien. Por defecto, un resumen con lo más " +
+      "relevante (textos recortados); con detail: completo, todo sin recortar.",
+    schema: z.object({ detail: z.enum(["resumen", "completo"]).default("resumen") }),
+    run: async ({ detail }, ctx) => toText(detail === "completo" ? memory.recall(ctx.missionId) : memory.recallSummary(ctx.missionId)),
   }),
   tool({
     name: "trade_history",
@@ -473,7 +477,7 @@ export const SIM_TOOLS = [
       "Tus posiciones (de la misión indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al " +
       "entrar (antigüedad, liquidez, variación, holders, riesgos), cuánto habías investigado antes, tu tesis y las creencias que aplicaste.",
     schema: z.object({ mission_id: z.number().int().optional(), limit: z.number().int().min(1).max(200).default(50) }),
-    run: async ({ mission_id, limit }) => json(positions.listPositions(mission_id).slice(0, limit)),
+    run: async ({ mission_id, limit }) => toText(positions.listPositions(mission_id).slice(0, limit)),
   }),
   tool({
     name: "report_observation",
@@ -522,7 +526,7 @@ export const SIM_TOOLS = [
       "Lo que tienes pendiente como revisor: misiones terminadas sin retrospectiva, la misión activa (actividad desde tu última revisión, " +
       "cada cuánto conviene revisarla y si tiene briefing), observaciones del agente sin procesar, errores repetidos sin howto y creencias sin condición.",
     schema: z.object({}),
-    run: async () => json(memory.reviewQueue()),
+    run: async () => toText(memory.reviewQueue()),
   }),
   tool({
     name: "mission_review_data",
@@ -533,7 +537,7 @@ export const SIM_TOOLS = [
       "y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. " +
       "Con since (fecha ISO) solo lo posterior a esa fecha (útil a mitad de misión).",
     schema: z.object({ mission_id: z.number().int(), since: z.string().optional() }),
-    run: async ({ mission_id, since }) => json(memory.missionReviewData(mission_id, since)),
+    run: async ({ mission_id, since }) => toText(memory.missionReviewData(mission_id, since)),
   }),
   tool({
     name: "memory_catalog",
@@ -543,7 +547,7 @@ export const SIM_TOOLS = [
       "La memoria completa tal como la ve el agente (howtos, creencias activas con su evidencia calculada, historial, estadísticas, errores " +
       "repetidos, APIs), ordenada por parecido con la misión indicada o la activa.",
     schema: z.object({ mission_id: z.number().int().optional() }),
-    run: async ({ mission_id }, ctx) => json(memory.recall(mission_id ?? ctx.missionId)),
+    run: async ({ mission_id }, ctx) => toText(memory.recall(mission_id ?? ctx.missionId)),
   }),
   tool({
     name: "wait_for_activity",

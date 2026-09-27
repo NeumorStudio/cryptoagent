@@ -21,11 +21,15 @@ de VS Code y JetBrains. En el chat normal de Claude las habilidades se cargan, p
 En Claude Code:
 
 ```
-/plugin marketplace add NeumorStudio/cryptoagent
-/plugin install cryptoagent@cryptoagent
+/plugin marketplace add NeumorStudio/claude-plugins
+/plugin install cryptoagent@neumorstudio
 ```
 
-En la app de escritorio también: **+ → Plugins → Añadir plugin**. Después abre una sesión nueva.
+En la app de escritorio: **Ajustes → Plugins → Añadir marketplace** con `NeumorStudio/claude-plugins`, e instala
+el plugin desde **Descubrir**. Después abre una sesión nueva.
+
+El plugin se distribuye desde el marketplace [NeumorStudio/claude-plugins](https://github.com/NeumorStudio/claude-plugins);
+este repositorio es su código fuente.
 
 ## Usar
 
@@ -35,16 +39,16 @@ En la app de escritorio también: **+ → Plugins → Añadir plugin**. Después
 
 No inicies sesión en exchanges ni redes sociales dentro del navegador de la app: el agente lo usa.
 
-Los datos (misiones, diario, lecciones) se guardan en la carpeta persistente del plugin
-(`~/.claude/plugins/data/…`) y se conservan al actualizar.
+Los datos (misiones, diario, lecciones) se guardan en `~/.cryptoagent`, fuera del plugin: se conservan al
+actualizar o reinstalar, y son los mismos se instale desde la app o desde la CLI.
 
 ## Actualizaciones
 
 En marketplaces que no son de Anthropic la actualización automática viene desactivada. Para actualizar:
 
 ```
-/plugin marketplace update cryptoagent
-/plugin update cryptoagent@cryptoagent
+/plugin marketplace update neumorstudio
+/plugin update cryptoagent@neumorstudio
 ```
 
 O activa la actualización automática de este marketplace en el gestor de plugins.
@@ -66,7 +70,6 @@ El agente tiene una guía con estos detalles y las APIs de datos disponibles: [k
 ## Estructura del repositorio
 
 ```
-.claude-plugin/marketplace.json   marketplace (este repo)
 plugin/                           el plugin que se instala
   .claude-plugin/plugin.json      manifiesto y versión
   .mcp.json                       servidor MCP del simulador
@@ -85,13 +88,13 @@ npm run build:plugin      # regenera plugin/dist a partir de src/
 npm run typecheck
 ```
 
-Para probar tus cambios en tu Claude Code, añade este repositorio local como marketplace
-(`/plugin marketplace add C:\ruta\a\cryptoagent`), instala el plugin y, tras cada cambio,
-ejecuta `npm run build:plugin` y `/plugin update cryptoagent@cryptoagent`.
+Para probar tus cambios, clona `NeumorStudio/claude-plugins` junto a este repositorio (`../claude-plugins`),
+añádelo como marketplace local e instala el plugin. Tras cada cambio: `npm run build:plugin` (también copia el
+plugin a `../claude-plugins`) y `/plugin update cryptoagent@neumorstudio`.
 
-**Publicar una versión**: `npm run build:plugin`, sube `version` en `plugin/.claude-plugin/plugin.json`,
-haz commit (incluido `plugin/dist/`) y push. Los usuarios reciben la versión nueva al actualizar;
-mientras no cambies `version`, no ven los cambios.
+**Publicar una versión**: sube `version` en `plugin/.claude-plugin/plugin.json` y ejecuta `npm run build:plugin`,
+que copia el plugin a `../claude-plugins` con la versión sincronizada. Haz commit y push en los dos repositorios.
+Los usuarios reciben la versión nueva al actualizar; mientras no cambies `version`, no ven los cambios.
 
 ### Runner por API (opcional, sin Claude Code)
 

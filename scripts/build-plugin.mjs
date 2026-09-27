@@ -2,7 +2,7 @@
 // con todas sus dependencias dentro: el usuario no necesita ejecutar npm install.
 //   npm run build:plugin
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 
 const out = "plugin/dist";
 rmSync(out, { recursive: true, force: true });
@@ -27,12 +27,22 @@ await build({
 copyFileSync("src/dashboard/index.html", `${out}/index.html`);
 copyFileSync("knowledge/guia-del-terreno.md", `${out}/guia-del-terreno.md`);
 
-// La versión del plugin también va en el marketplace: algunas apps la usan para detectar actualizaciones.
-const version = JSON.parse(readFileSync("plugin/.claude-plugin/plugin.json", "utf8")).version;
-const marketplacePath = ".claude-plugin/marketplace.json";
-const marketplace = JSON.parse(readFileSync(marketplacePath, "utf8"));
-for (const p of marketplace.plugins) if (p.name === "cryptoagent") p.version = version;
-writeFileSync(marketplacePath, JSON.stringify(marketplace, null, 2) + "\n");
-
 const kb = (f) => (statSync(f).size / 1024).toFixed(0);
 console.log(`Plugin empaquetado: ${out}/cryptosim.mjs (${kb(`${out}/cryptosim.mjs`)} KB), index.html, guia-del-terreno.md`);
+
+// El plugin se distribuye desde el marketplace NeumorStudio/claude-plugins. Si está clonado junto a
+// este repositorio (../claude-plugins), se copia allí el plugin y se sincroniza su versión en el catálogo.
+const marketplaceRepo = "../claude-plugins";
+if (existsSync(`${marketplaceRepo}/.claude-plugin/marketplace.json`)) {
+  const version = JSON.parse(readFileSync("plugin/.claude-plugin/plugin.json", "utf8")).version;
+  const target = `${marketplaceRepo}/plugins/cryptoagent`;
+  rmSync(target, { recursive: true, force: true });
+  cpSync("plugin", target, { recursive: true });
+  const catalogPath = `${marketplaceRepo}/.claude-plugin/marketplace.json`;
+  const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+  for (const p of catalog.plugins) if (p.name === "cryptoagent") p.version = version;
+  writeFileSync(catalogPath, JSON.stringify(catalog, null, 2) + "\n");
+  console.log(`Copiado a ${target} (versión ${version}). Haz commit y push en ${marketplaceRepo} para publicarlo.`);
+} else {
+  console.log(`No se encuentra ${marketplaceRepo}: clona NeumorStudio/claude-plugins ahí para publicar.`);
+}

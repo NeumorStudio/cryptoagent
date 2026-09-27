@@ -43,8 +43,7 @@ Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absol
 ## 4. Panel
 
 Solo si el usuario ha dicho que sí:
-- Si tienes el navegador integrado de la app (herramientas `mcp__Claude_Browser__*`, cárgalas con ToolSearch si están diferidas), llama a `start_dashboard` y abre la URL que devuelve con `preview_start`.
-- Si no, llama a `start_dashboard` con `open_in_system_browser: true`.
+Llama a `start_dashboard` con `open_in_system_browser: true`: el panel se abre en el navegador normal del usuario. No lo abras en el navegador integrado de la app: el agente usa ese navegador para investigar y taparía el panel.
 
 Si falla, díselo al usuario con el motivo y sigue: el agente puede trabajar sin panel.
 

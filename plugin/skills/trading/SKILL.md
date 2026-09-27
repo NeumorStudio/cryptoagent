@@ -2,7 +2,7 @@
 name: trading
 description: Configura y lanza una misión del agente trader. Pregunta capital, objetivo y tiempo, abre el panel en directo si el usuario quiere y pone al agente a trabajar en segundo plano.
 disable-model-invocation: true
-allowed-tools: mcp__plugin_cryptoagent_cryptosim__mission_status, mcp__plugin_cryptoagent_cryptosim__create_mission, mcp__plugin_cryptoagent_cryptosim__start_dashboard, mcp__plugin_cryptoagent_cryptosim__stop_mission
+allowed-tools: mcp__plugin_cryptoagent_cryptosim__mission_status, mcp__plugin_cryptoagent_cryptosim__create_mission, mcp__plugin_cryptoagent_cryptosim__start_dashboard, mcp__plugin_cryptoagent_cryptosim__stop_mission, mcp__plugin_cryptoagent_cryptosim__status_report
 ---
 
 Vas a preparar y lanzar una misión del agente `cryptoagent:trader`. Habla con el usuario en español. Sigue estos pasos en orden.
@@ -59,6 +59,8 @@ No añadas nada más al prompt: ni ideas, ni estrategias, ni contexto de esta co
 
 ## 6. Avisar al usuario
 
-Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo.
+Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
 
-Cuando el agente termine, llama a `mission_status`. Si la misión sigue activa (el agente se detuvo antes de tiempo), díselo al usuario y ofrécele relanzarlo con el mismo prompt. Si ha terminado, resume el resultado.
+Cuando el agente termine, llama a `status_report`:
+- Si la misión sigue activa (el agente se detuvo antes de tiempo), díselo al usuario y ofrécele relanzarlo con el mismo prompt.
+- Si ha terminado, resume el resultado y envía una notificación con PushNotification (`status: "proactive"`), en una línea de menos de 200 caracteres y sin formato, empezando por el resultado. Por ejemplo: "Misión #4 conseguida: 100 $ → 111,20 $ (+11,2 %) en 38 min". Si la herramienta no existe o no se envía, no pasa nada: el resumen ya está en el chat.

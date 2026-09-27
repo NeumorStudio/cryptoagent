@@ -220,6 +220,8 @@ export function listPositions(missionId?: number) {
       closedAt: p.closed_at,
       heldMinutes: p.closed_at ? Math.round((new Date(p.closed_at).getTime() - new Date(p.opened_at).getTime()) / 60_000) : null,
       costUsd: Number((p.realized_cost_usd + p.cost_open_usd).toFixed(2)),
+      qtyOpen: p.qty_open,
+      openCostUsd: Number(p.cost_open_usd.toFixed(2)),
       pnlUsd: pnlUsd === null ? null : Number(pnlUsd.toFixed(2)),
       pnlPct: pnlUsd === null || !p.realized_cost_usd ? null : Number(((pnlUsd / p.realized_cost_usd) * 100).toFixed(1)),
       exitReason: p.exit_reason,

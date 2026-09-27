@@ -9,6 +9,7 @@ import { openInBrowser, startDashboard } from "./dashboard/server.js";
 import { checkMission, createMission, getActiveMission, stopMission } from "./sim/mission.js";
 import { config } from "./config.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
+import { statusReport } from "./sim/status.js";
 import { SIM_TOOLS, runTool } from "./tools/index.js";
 
 const server = new McpServer({ name: "cryptosim", version: "0.1.0" });
@@ -95,6 +96,23 @@ server.registerTool(
           (r.problems.length ? `
 No se pudo vender: ${r.problems.join("; ")}` : ""),
       );
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "status_report",
+  {
+    description:
+      "Resumen en texto de la misión actual (o la última): progreso, valor, tiempo restante, posiciones con su resultado, órdenes, " +
+      "operaciones cerradas, últimos movimientos con su motivo y la última nota del agente. Pensado para enseñárselo al usuario en el chat.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return text(await statusReport());
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }

@@ -13244,8 +13244,8 @@ function anchor(source) {
 }
 var date = /* @__PURE__ */ anchor(dateSource);
 function timeSource(args) {
-  const hhmm = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
-  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm}` : args.precision === 0 ? `${hhmm}:[0-5]\\d` : `${hhmm}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm}(?::[0-5]\\d(?:\\.\\d+)?)?`;
+  const hhmm2 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
+  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm2}` : args.precision === 0 ? `${hhmm2}:[0-5]\\d` : `${hhmm2}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm2}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm2}(?::[0-5]\\d(?:\\.\\d+)?)?`;
   return regex;
 }
 function time(args) {
@@ -37361,6 +37361,8 @@ function listPositions(missionId) {
       closedAt: p.closed_at,
       heldMinutes: p.closed_at ? Math.round((new Date(p.closed_at).getTime() - new Date(p.opened_at).getTime()) / 6e4) : null,
       costUsd: Number((p.realized_cost_usd + p.cost_open_usd).toFixed(2)),
+      qtyOpen: p.qty_open,
+      openCostUsd: Number(p.cost_open_usd.toFixed(2)),
       pnlUsd: pnlUsd === null ? null : Number(pnlUsd.toFixed(2)),
       pnlPct: pnlUsd === null || !p.realized_cost_usd ? null : Number((pnlUsd / p.realized_cost_usd * 100).toFixed(1)),
       exitReason: p.exit_reason,
@@ -38299,6 +38301,64 @@ async function endSession(sessionId2, finalText, tokens) {
   return end;
 }
 
+// src/sim/status.ts
+var usd = (n2) => `${n2.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
+var pct = (n2) => `${n2 >= 0 ? "+" : "\u2212"}${Math.abs(n2).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
+var hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+function timeLeft(deadline) {
+  const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
+  return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
+}
+async function statusReport() {
+  const m = getActiveMission() ?? getLastMission();
+  if (!m) return "No hay ninguna misi\xF3n. Crea una con /cryptoagent:trading.";
+  const v = await valuation();
+  const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
+  const change = (current - m.initial_usd) / m.initial_usd * 100;
+  const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
+  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : "detenida por el usuario";
+  const lines = [];
+  lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
+  lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
+  lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
+  const open2 = listPositions(m.id).filter((p) => p.status === "open");
+  if (m.status === "active") {
+    const cash = v.holdings.filter((h) => ["USDC", "USDT"].includes(h.symbol)).reduce((s, h) => s + h.usd, 0);
+    lines.push("", `Posiciones (${open2.length}) \xB7 liquidez ${usd(cash)}`);
+    for (const p of open2) {
+      const h = v.holdings.find((x) => x.asset === p.asset);
+      const share = h && h.amount > 0 ? Math.min(1, p.qtyOpen / h.amount) : 0;
+      const now2 = (h?.usd ?? 0) * share;
+      const cost = p.openCostUsd;
+      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
+    }
+    const orders = listOrders("open");
+    if (orders.length) {
+      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
+    }
+  }
+  const closed = listPositions(m.id).filter((p) => p.status === "closed");
+  if (closed.length) {
+    const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+    lines.push("", `Operaciones cerradas: ${closed.length} (${wins} con beneficio)`);
+    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
+  }
+  const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE ts >= ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.created_at);
+  if (recent.length) {
+    lines.push("", "\xDAltimos movimientos:");
+    for (const j of recent) {
+      const why = j.reasoning?.match(/^Por qué: (.*)$/m)?.[1];
+      lines.push(`- ${hhmm(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
+    }
+  }
+  const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND ts >= ? ORDER BY id DESC LIMIT 2").all(m.created_at);
+  if (notes.length) {
+    lines.push("", "\xDAltima nota del agente:");
+    for (const n2 of notes) lines.push(`- ${hhmm(n2.ts)} ${n2.title.slice(0, 220)}`);
+  }
+  return lines.join("\n");
+}
+
 // src/tools/index.ts
 import { readFileSync as readFileSync3 } from "node:fs";
 
@@ -38901,6 +38961,20 @@ server.registerTool(
         `Misi\xF3n #${r.missionId} detenida. Valor final: ${r.finalUsd.toFixed(2)} USD.` + (r.problems.length ? `
 No se pudo vender: ${r.problems.join("; ")}` : "")
       );
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "status_report",
+  {
+    description: "Resumen en texto de la misi\xF3n actual (o la \xFAltima): progreso, valor, tiempo restante, posiciones con su resultado, \xF3rdenes, operaciones cerradas, \xFAltimos movimientos con su motivo y la \xFAltima nota del agente. Pensado para ense\xF1\xE1rselo al usuario en el chat.",
+    inputSchema: {}
+  },
+  async () => {
+    try {
+      return text(await statusReport());
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }

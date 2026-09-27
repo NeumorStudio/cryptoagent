@@ -35,7 +35,11 @@ este repositorio es su código fuente.
 
 - `/cryptoagent:trading`: te pregunta capital, objetivo, tiempo, enfoque y si abrir el panel; crea la misión
   y lanza el agente en segundo plano. Si ya hay una misión activa, te deja continuarla, reemplazarla o detenerla.
+- `/cryptoagent:estado`: resumen de la misión en el chat (progreso, posiciones, últimos movimientos con su motivo
+  y la última nota del agente). Pensado también para consultarlo desde el móvil con Remote Control.
 - `/cryptoagent:parar`: detiene la misión activa (cerrando posiciones o no).
+
+Al terminar una misión, Claude te avisa con una notificación; con Remote Control conectado, también en el móvil.
 
 No inicies sesión en exchanges ni redes sociales dentro del navegador de la app: el agente lo usa.
 

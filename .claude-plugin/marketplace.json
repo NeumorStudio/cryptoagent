@@ -1,5 +1,6 @@
 {
   "name": "cryptoagent",
+  "description": "Marketplace de NeumorStudio: agentes autónomos para Claude Code.",
   "owner": {
     "name": "NeumorStudio"
   },

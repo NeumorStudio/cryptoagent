@@ -4,10 +4,7 @@
       "command": "node",
       "args": [
         "${CLAUDE_PLUGIN_ROOT}/dist/cryptosim.mjs"
-      ],
-      "env": {
-        "DATA_DIR": "${CLAUDE_PLUGIN_DATA}"
-      }
+      ]
     }
   }
 }

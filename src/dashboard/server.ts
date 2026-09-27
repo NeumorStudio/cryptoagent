@@ -40,7 +40,7 @@ function state() {
     orders: listOrders("open"),
     snapshots,
     history: missionHistory(),
-    lessons: db.prepare("SELECT id, created_at, mission_id, text FROM lessons ORDER BY id DESC").all(),
+    lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all(),
   };
 }
 

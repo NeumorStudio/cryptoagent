@@ -446,7 +446,11 @@ function renderState() {
   lessons.replaceChildren();
   if (!state.lessons.length) lessons.append(el("p", { class: "empty" }, "Todavía no ha guardado ninguna lección."));
   for (const l of state.lessons) {
-    lessons.append(el("div", { class: "lesson" }, el("div", {}, l.text), el("div", { class: "when" }, `Lección #${l.id}${l.mission_id ? ` · misión #${l.mission_id}` : ""}`)));
+    const meta = [`Lección #${l.id}`, l.mission_id ? `misión #${l.mission_id}` : null, l.confidence ? `confianza ${l.confidence}` : null].filter(Boolean).join(" · ");
+    lessons.append(el("div", { class: "lesson" },
+      el("div", {}, l.text),
+      l.applies_to ? el("div", { class: "when" }, `Aplica a: ${l.applies_to}`) : null,
+      el("div", { class: "when" }, meta)));
   }
 
   renderChart();
@@ -540,7 +544,7 @@ function visible(kind) { return filter === "all" || GROUPS[filter].includes(kind
 
 // Tesis de una operación ("Por qué: …\nPruebas: …\nFuentes: a · b\nPlan: …") o un motivo simple.
 function renderNote(note) {
-  const parts = note.split("\n").map((line) => line.match(/^(Por qué|Pruebas|Fuentes|Plan): ([\s\S]*)$/));
+  const parts = note.split("\n").map((line) => line.match(/^(Por qué|Pruebas|Fuentes|Plan|Lecciones): ([\s\S]*)$/));
   if (!parts.every(Boolean)) return el("p", { class: "thesis plain" }, note);
   const dl = el("dl", { class: "thesis" });
   for (const [, label, value] of parts) {

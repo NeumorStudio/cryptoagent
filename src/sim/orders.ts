@@ -158,8 +158,8 @@ export async function checkOrders(): Promise<string[]> {
       const action = JSON.parse(order.action);
       const result =
         order.venue === "solana"
-          ? await swapSolana({ sessionId: order.session_id, ...(action as SolanaAction), reasoning })
-          : await binanceMarketOrder({ sessionId: order.session_id, ...(action as BinanceAction), reasoning });
+          ? await swapSolana({ sessionId: order.session_id, ...(action as SolanaAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } })
+          : await binanceMarketOrder({ sessionId: order.session_id, ...(action as BinanceAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {

@@ -36897,7 +36897,7 @@ function asset(fileName, devPath) {
 }
 var usable = (dir) => dir && !dir.includes("${") ? path.resolve(dir) : void 0;
 function resolveDataDir() {
-  return usable(process.env.DATA_DIR) ?? usable(process.env.CLAUDE_PLUGIN_DATA) ?? (BUNDLED ? path.join(os.homedir(), ".cryptoagent") : path.join(projectRoot, "data"));
+  return usable(process.env.DATA_DIR) ?? (BUNDLED ? path.join(os.homedir(), ".cryptoagent") : path.join(projectRoot, "data"));
 }
 
 // src/config.ts
@@ -37020,8 +37020,44 @@ db.exec(`
     details TEXT
   );
 `);
-var missionColumns = db.prepare("PRAGMA table_info(missions)").all().map((c) => c.name);
-if (!missionColumns.includes("instructions")) db.exec("ALTER TABLE missions ADD COLUMN instructions TEXT");
+db.exec(`
+  -- Posiciones: cada token comprado en una misi\xF3n, con los datos del token al entrar,
+  -- la investigaci\xF3n hecha antes y el resultado real al salir. Lo calcula el simulador.
+  CREATE TABLE IF NOT EXISTS positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mission_id INTEGER,
+    venue TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    opened_at TEXT NOT NULL,
+    closed_at TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    qty_open REAL NOT NULL,
+    cost_open_usd REAL NOT NULL,
+    realized_cost_usd REAL NOT NULL DEFAULT 0,
+    realized_proceeds_usd REAL NOT NULL DEFAULT 0,
+    entry_features TEXT,
+    research TEXT,
+    thesis TEXT,
+    lessons_applied TEXT,
+    exit_reason TEXT
+  );
+  -- Llamadas a herramientas de investigaci\xF3n, para saber cu\xE1nto investig\xF3 antes de cada operaci\xF3n.
+  CREATE TABLE IF NOT EXISTS research_log (
+    ts TEXT NOT NULL,
+    mission_id INTEGER,
+    tool TEXT NOT NULL,
+    target TEXT
+  );
+`);
+function addColumns(table, columns) {
+  const existing = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  for (const [name, type] of Object.entries(columns)) {
+    if (!existing.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
+}
+addColumns("missions", { instructions: "TEXT", reviewed_at: "TEXT" });
+addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
 function getMeta(key) {
   const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
@@ -37168,6 +37204,176 @@ function fromBaseUnits(base, decimals) {
   return Number(BigInt(base)) / 10 ** decimals;
 }
 
+// src/sim/positions.ts
+var USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+var CASH_MINTS = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT]);
+var CASH_TICKERS = /* @__PURE__ */ new Set(["USDC", "USDT", "FDUSD"]);
+function currentMissionId() {
+  const row = db.prepare("SELECT id FROM missions WHERE status IN ('active', 'closing') ORDER BY id DESC LIMIT 1").get();
+  return row?.id ?? null;
+}
+async function usdPrices(mints) {
+  const need = mints.filter((m) => !CASH_MINTS.has(m));
+  const prices = {};
+  for (const m of mints) if (CASH_MINTS.has(m)) prices[m] = 1;
+  if (need.length) {
+    const data = await fetchJson(`https://lite-api.jup.ag/price/v3?ids=${need.join(",")}`);
+    for (const m of need) if (typeof data[m]?.usdPrice === "number") prices[m] = data[m].usdPrice;
+  }
+  return prices;
+}
+async function entryFeatures(mint) {
+  const [jup, rug] = await Promise.allSettled([
+    fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8e3),
+    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, 8e3)
+  ]);
+  const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : void 0;
+  const risks = rug.status === "fulfilled" ? rug.value.risks ?? [] : void 0;
+  const round = (v, d = 2) => typeof v === "number" ? Number(v.toFixed(d)) : void 0;
+  return {
+    ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 6e4) : void 0,
+    liquidityUsd: round(t?.liquidity, 0),
+    mcapUsd: round(t?.mcap, 0),
+    priceChange5mPct: round(t?.stats5m?.priceChange),
+    priceChange1hPct: round(t?.stats1h?.priceChange),
+    holders: t?.holderCount,
+    topHoldersPct: round(t?.audit?.topHoldersPercentage, 1),
+    netBuyers5m: t?.stats5m?.numNetBuyers,
+    organicScore: round(t?.organicScore, 1),
+    launchpad: t?.launchpad,
+    rugcheckDangerRisks: risks ? risks.filter((r) => r.level === "danger").length : void 0,
+    rugcheckWarnRisks: risks ? risks.filter((r) => r.level === "warn").length : void 0
+  };
+}
+function researchSnapshot(missionId, mint) {
+  if (missionId === null) return {};
+  const mission = db.prepare("SELECT created_at FROM missions WHERE id = ?").get(missionId);
+  const lastTrade = db.prepare("SELECT MAX(COALESCE(closed_at, opened_at)) AS ts FROM positions WHERE mission_id = ?").get(missionId);
+  const since = lastTrade.ts ?? mission.created_at;
+  const count = (from) => db.prepare("SELECT COUNT(*) AS n FROM research_log WHERE mission_id = ? AND ts >= ?").get(missionId, from).n;
+  const reportedThis = db.prepare("SELECT COUNT(*) AS n FROM research_log WHERE mission_id = ? AND tool = 'token_report' AND target = ?").get(missionId, mint);
+  return {
+    researchCallsInMission: count(mission.created_at),
+    researchCallsSinceLastTrade: count(since),
+    tokenReportBeforeBuying: reportedThis.n > 0,
+    minutesIntoMission: Math.round((Date.now() - new Date(mission.created_at).getTime()) / 6e4)
+  };
+}
+async function openOrAdd(args) {
+  const missionId = currentMissionId();
+  const existing = db.prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, args.venue, args.asset);
+  if (existing) {
+    db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ? WHERE id = ?").run(
+      args.qty,
+      args.costUsd,
+      existing.id
+    );
+    return;
+  }
+  const features = args.mint ? await entryFeatures(args.mint).catch(() => ({})) : {};
+  const research = researchSnapshot(missionId, args.mint ?? args.asset);
+  db.prepare(
+    `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    missionId,
+    args.venue,
+    args.asset,
+    args.symbol,
+    now(),
+    args.qty,
+    args.costUsd,
+    JSON.stringify(features),
+    JSON.stringify(research),
+    args.meta?.thesis ?? null,
+    args.meta?.lessonsApplied ?? null
+  );
+}
+function reduce(args) {
+  const missionId = currentMissionId();
+  const p = db.prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, args.venue, args.asset);
+  if (!p) return;
+  const fraction = Math.min(1, args.qty / p.qty_open);
+  const costPart = p.cost_open_usd * fraction;
+  const closed = fraction >= 0.999;
+  db.prepare(
+    `UPDATE positions SET qty_open = ?, cost_open_usd = ?, realized_cost_usd = realized_cost_usd + ?,
+       realized_proceeds_usd = realized_proceeds_usd + ?, status = ?, closed_at = ?, exit_reason = COALESCE(?, exit_reason)
+     WHERE id = ?`
+  ).run(
+    closed ? 0 : p.qty_open - args.qty,
+    closed ? 0 : p.cost_open_usd - costPart,
+    costPart,
+    args.proceedsUsd,
+    closed ? "closed" : "open",
+    closed ? now() : null,
+    args.meta?.exitReason ?? (closed ? "venta del agente" : null),
+    p.id
+  );
+}
+async function recordSolanaSwap(args) {
+  const prices = await usdPrices([args.inputMint, args.outputMint]);
+  const inUsd = (prices[args.inputMint] ?? 0) * args.inAmount;
+  const outUsd = (prices[args.outputMint] ?? 0) * args.outAmount;
+  const valueUsd = CASH_MINTS.has(args.inputMint) ? args.inAmount : CASH_MINTS.has(args.outputMint) ? args.outAmount : inUsd || outUsd;
+  if (!CASH_MINTS.has(args.inputMint)) {
+    reduce({ venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
+  }
+  if (!CASH_MINTS.has(args.outputMint)) {
+    await openOrAdd({
+      venue: "solana",
+      asset: args.outputMint,
+      symbol: args.outputSymbol,
+      qty: args.outAmount,
+      costUsd: valueUsd,
+      meta: args.meta,
+      mint: args.outputMint === SOL_MINT ? void 0 : args.outputMint
+    });
+  }
+}
+async function recordBinanceTrade(args) {
+  const quoteUsd = CASH_TICKERS.has(args.quoteAsset) ? 1 : 0;
+  if (args.side === "BUY") {
+    await openOrAdd({
+      venue: "binance",
+      asset: args.baseAsset,
+      symbol: args.baseAsset,
+      qty: args.baseQty - args.fee,
+      costUsd: args.quoteQty * quoteUsd,
+      meta: args.meta
+    });
+  } else {
+    reduce({ venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
+  }
+}
+function listPositions(missionId) {
+  const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
+  return rows.map((p) => {
+    const pnlUsd = p.status === "closed" ? p.realized_proceeds_usd - p.realized_cost_usd : null;
+    return {
+      id: p.id,
+      missionId: p.mission_id,
+      venue: p.venue,
+      symbol: p.symbol,
+      asset: p.asset,
+      status: p.status,
+      openedAt: p.opened_at,
+      closedAt: p.closed_at,
+      heldMinutes: p.closed_at ? Math.round((new Date(p.closed_at).getTime() - new Date(p.opened_at).getTime()) / 6e4) : null,
+      costUsd: Number((p.realized_cost_usd + p.cost_open_usd).toFixed(2)),
+      pnlUsd: pnlUsd === null ? null : Number(pnlUsd.toFixed(2)),
+      pnlPct: pnlUsd === null || !p.realized_cost_usd ? null : Number((pnlUsd / p.realized_cost_usd * 100).toFixed(1)),
+      exitReason: p.exit_reason,
+      entry: JSON.parse(p.entry_features ?? "{}"),
+      research: JSON.parse(p.research ?? "{}"),
+      lessonsApplied: p.lessons_applied
+    };
+  });
+}
+function logResearch(tool2, target) {
+  db.prepare("INSERT INTO research_log (ts, mission_id, tool, target) VALUES (?, ?, ?, ?)").run(now(), currentMissionId(), tool2, target ?? null);
+}
+
 // src/sim/portfolio.ts
 var TOKEN_ACCOUNT_RENT_SOL = 203928e-8;
 var BINANCE_WITHDRAW_FEES = {
@@ -37223,13 +37429,13 @@ async function liquidateAll(sessionId2, reasoning2) {
   const problems = [];
   const holdings = getHoldings();
   for (const h of holdings.filter((h2) => h2.venue === "solana" && h2.asset !== USDC_MINT && h2.asset !== SOL_MINT)) {
-    await swapSolana({ sessionId: sessionId2, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning: reasoning2 }).catch(
+    await swapSolana({ sessionId: sessionId2, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
       (err) => problems.push(`${h.symbol} (Solana): ${err.message}`)
     );
   }
   const solLeft = balance("solana", SOL_MINT) - config2.solanaTxFeeSol;
   if (solLeft > 1e-6) {
-    await swapSolana({ sessionId: sessionId2, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning: reasoning2 }).catch(
+    await swapSolana({ sessionId: sessionId2, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
       (err) => problems.push(`SOL (Solana): ${err.message}`)
     );
   }
@@ -37237,7 +37443,7 @@ async function liquidateAll(sessionId2, reasoning2) {
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
       try {
-        await binanceMarketOrder({ sessionId: sessionId2, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance("binance", h.asset), reasoning: reasoning2 });
+        await binanceMarketOrder({ sessionId: sessionId2, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance("binance", h.asset), reasoning: reasoning2, meta: { exitReason: reasoning2 } });
         sold = true;
         break;
       } catch {
@@ -37289,6 +37495,15 @@ async function swapSolana(args) {
     reasoning: args.reasoning,
     details: { inputMint, outputMint, ...result }
   });
+  await recordSolanaSwap({
+    inputMint,
+    outputMint,
+    inputSymbol: inInfo.symbol,
+    outputSymbol: outInfo.symbol,
+    inAmount: args.amount,
+    outAmount,
+    meta: args.meta
+  }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
 async function quoteSolana(input2, output2, amount, slippageBps = 50) {
@@ -37350,6 +37565,15 @@ async function binanceMarketOrder(args) {
     reasoning: args.reasoning,
     details: result
   });
+  await recordBinanceTrade({
+    baseAsset: info.baseAsset,
+    quoteAsset: info.quoteAsset,
+    side: args.side,
+    baseQty: fill.baseQty,
+    quoteQty: fill.quoteQty,
+    fee: feePaid,
+    meta: args.meta
+  }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
 async function transfer(args) {
@@ -37533,7 +37757,7 @@ async function checkOrders() {
     const reasoning2 = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
     try {
       const action = JSON.parse(order.action);
-      const result = order.venue === "solana" ? await swapSolana({ sessionId: order.session_id, ...action, reasoning: reasoning2 }) : await binanceMarketOrder({ sessionId: order.session_id, ...action, reasoning: reasoning2 });
+      const result = order.venue === "solana" ? await swapSolana({ sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } }) : await binanceMarketOrder({ sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {
@@ -37871,7 +38095,7 @@ function state() {
     orders: listOrders("open"),
     snapshots,
     history: missionHistory(),
-    lessons: db.prepare("SELECT id, created_at, mission_id, text FROM lessons ORDER BY id DESC").all()
+    lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all()
   };
 }
 function send(res, status, type, body) {
@@ -37929,6 +38153,98 @@ function openInBrowser(url2) {
   spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
 }
 
+// src/sim/memory.ts
+function profile(m) {
+  return {
+    durationMinutes: Math.max(1, Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4)),
+    targetPct: Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
+    directed: !!m.instructions
+  };
+}
+function distance(a, b) {
+  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + Math.abs(a.targetPct - b.targetPct) / 10 + (a.directed === b.directed ? 0 : 0.5);
+}
+var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
+var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
+function finishedMissions() {
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
+}
+function pendingReviews() {
+  return db.prepare(
+    `SELECT m.id FROM missions m
+         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
+         ORDER BY m.id`
+  ).all().map((r) => r.id);
+}
+function markReviewed(missionId) {
+  db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
+}
+function summarize(label, ps) {
+  const closed = ps.filter((p) => p.pnlPct !== null);
+  if (!closed.length) return null;
+  const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+  const avg = closed.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / closed.length;
+  return { group: label, trades: closed.length, winRatePct: Math.round(wins / closed.length * 100), avgPnlPct: Number(avg.toFixed(1)) };
+}
+function tradeStats(ps) {
+  const groups = [
+    ["todas", () => true],
+    ["token con < 30 min de vida al comprar", (p) => (p.entry.ageMinutes ?? Infinity) < 30],
+    ["token con \u2265 30 min de vida al comprar", (p) => (p.entry.ageMinutes ?? -1) >= 30],
+    ["liquidez < 50.000 $", (p) => (p.entry.liquidityUsd ?? Infinity) < 5e4],
+    ["liquidez \u2265 50.000 $", (p) => (p.entry.liquidityUsd ?? -1) >= 5e4],
+    ["comprado tras subir > 20 % en 5 min", (p) => (p.entry.priceChange5mPct ?? -Infinity) > 20],
+    ["comprado sin haber subido > 20 % en 5 min", (p) => (p.entry.priceChange5mPct ?? Infinity) <= 20],
+    ["con token_report antes de comprar", (p) => p.research.tokenReportBeforeBuying === true],
+    ["sin token_report antes de comprar", (p) => p.research.tokenReportBeforeBuying === false],
+    ["con riesgos 'danger' en RugCheck", (p) => (p.entry.rugcheckDangerRisks ?? 0) > 0],
+    ["cerradas por fin de misi\xF3n", (p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")]
+  ];
+  return groups.map(([label, fn]) => summarize(label, ps.filter(fn))).filter(Boolean);
+}
+function recall(limitLessons) {
+  const current = getActiveMission() ?? getLastMission();
+  const curProfile = current ? profile(current) : null;
+  const history = finishedMissions().filter((m) => m.id !== current?.id || m.status !== "active").map((m) => {
+    const p = profile(m);
+    const d = curProfile ? distance(curProfile, p) : 0;
+    return {
+      missionId: m.id,
+      profile: describe3(p),
+      similarity: curProfile ? similarityLabel(d) : void 0,
+      distance: Number(d.toFixed(2)),
+      instructions: m.instructions ?? void 0,
+      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`
+    };
+  }).sort((a, b) => a.distance - b.distance);
+  const distByMission = new Map(history.map((h) => [h.missionId, h.distance]));
+  const lessons = db.prepare("SELECT id, created_at, mission_id, text, applies_to, evidence, confidence FROM lessons ORDER BY id").all().map((l) => ({
+    id: l.id,
+    missionId: l.mission_id,
+    lesson: l.text,
+    appliesTo: l.applies_to ?? "(sin especificar)",
+    evidence: l.evidence ?? void 0,
+    confidence: l.confidence ?? void 0,
+    relevance: l.mission_id && distByMission.has(l.mission_id) ? similarityLabel(distByMission.get(l.mission_id)) : "sin misi\xF3n vinculada",
+    _d: l.mission_id && distByMission.has(l.mission_id) ? distByMission.get(l.mission_id) : 99
+  })).sort((a, b) => a._d - b._d).map(({ _d, ...rest }) => rest);
+  const all = listPositions();
+  const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
+  return {
+    currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
+    pendingReview: pendingReviews(),
+    missionHistory: history,
+    lessons: limitLessons ? lessons.slice(0, limitLessons) : lessons,
+    totalLessons: lessons.length,
+    tradeStats: {
+      note: "Resultados reales de tus operaciones cerradas, calculados por el simulador (no por ti).",
+      allMissions: tradeStats(all),
+      similarMissions: similarIds.size ? tradeStats(all.filter((p) => p.missionId !== null && similarIds.has(p.missionId))) : []
+    }
+  };
+}
+
 // src/sim/session.ts
 function startSession() {
   return Number(db.prepare("INSERT INTO sessions (started_at) VALUES (?)").run(now()).lastInsertRowid);
@@ -37937,9 +38253,7 @@ async function sessionBriefing(sessionId2) {
   const portfolio = await valuation(true);
   const notes = db.prepare("SELECT id, ts, text FROM notes ORDER BY id").all();
   const openOrders = listOrders("open");
-  const history = missionHistory();
-  const lessons = db.prepare("SELECT id, mission_id, text FROM lessons ORDER BY id").all();
-  const unreviewed = history.filter((m) => m.lessonsWritten === 0 && m.outcome !== "cancelada");
+  const mem = recall(8);
   const missionStart = db.prepare("SELECT created_at FROM missions ORDER BY id DESC LIMIT 1").get()?.created_at ?? "1970";
   const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE ts >= ? ORDER BY id DESC LIMIT 15").all(missionStart);
   return [
@@ -37948,10 +38262,20 @@ async function sessionBriefing(sessionId2) {
     "Misi\xF3n:",
     JSON.stringify(await missionStatus(), null, 2),
     "",
-    history.length ? "Historial de misiones terminadas (calculado por el simulador):\n" + JSON.stringify(history, null, 2) : "Es tu primera misi\xF3n: no hay historial.",
-    "",
-    lessons.length ? "Tu memoria (lecciones de misiones anteriores):\n" + lessons.map((l) => `- #${l.id} (misi\xF3n #${l.mission_id ?? "?"}) ${l.text}`).join("\n") : "Todav\xEDa no tienes lecciones guardadas.",
-    ...unreviewed.length ? ["", `Misiones terminadas sin lecciones: ${unreviewed.map((m) => `#${m.missionId}`).join(", ")}. Puedes revisar su diario con journal_history(mission_id) y guardar lo aprendido con write_lesson.`] : [],
+    ...mem.pendingReview.length ? [
+      `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misi\xF3n"} #${mem.pendingReview.join(", #")} (trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.`,
+      ""
+    ] : [],
+    mem.missionHistory.length ? "Tu memoria, ordenada por parecido con esta misi\xF3n (recall_lessons tiene el detalle completo):\n" + JSON.stringify(
+      {
+        missionHistory: mem.missionHistory.slice(0, 6),
+        lessons: mem.lessons,
+        totalLessons: mem.totalLessons,
+        tradeStats: mem.tradeStats
+      },
+      null,
+      2
+    ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
     "",
     "Cartera:",
     JSON.stringify(portfolio, null, 2),
@@ -38162,12 +38486,25 @@ var thesis = external_exports.object({
   why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
   evidence: external_exports.string().min(1).describe("Qu\xE9 has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
   sources: external_exports.array(external_exports.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
-  exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)")
+  exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)"),
+  lessons_applied: external_exports.string().min(1).describe("Qu\xE9 lecciones de tu memoria aplicas aqu\xED (por su id) y c\xF3mo, o por qu\xE9 ninguna aplica a esta situaci\xF3n")
 }).describe("Tesis de la operaci\xF3n. Queda en el diario y el usuario la ve en el panel.");
 var formatThesis = (t) => `Por qu\xE9: ${t.why}
 Pruebas: ${t.evidence}
 Fuentes: ${t.sources.join(" \xB7 ")}
-Plan: ${t.exit_plan}`;
+Plan: ${t.exit_plan}
+Lecciones: ${t.lessons_applied}`;
+var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
+var RESEARCH_TOOLS = /* @__PURE__ */ new Set([
+  "scan_market",
+  "token_report",
+  "http_get",
+  "field_guide",
+  "quote_solana_swap",
+  "recall_lessons",
+  "trade_history",
+  "journal_history"
+]);
 var SIM_TOOLS = [
   tool({
     name: "scan_market",
@@ -38269,7 +38606,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         output: i.output,
         amount: i.amount,
         slippageBps: i.slippage_bps,
-        reasoning: formatThesis(i.thesis)
+        reasoning: formatThesis(i.thesis),
+        meta: tradeMeta(i.thesis)
       })
     )
   }),
@@ -38277,7 +38615,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "simulate_binance_market_order",
     description: "Ejecuta en simulaci\xF3n una orden de mercado en Binance spot contra el order book real (precio medio y slippage reales, comisi\xF3n taker incluida). BUY: amount = cantidad del activo quote a gastar. SELL: amount = cantidad del activo base a vender. symbol: par de Binance, p. ej. BTCUSDC.",
     schema: external_exports.object({ symbol: external_exports.string(), side: external_exports.enum(["BUY", "SELL"]), amount: external_exports.number().positive(), thesis }),
-    run: async (i, ctx) => json2(await binanceMarketOrder({ sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis) }))
+    run: async (i, ctx) => json2(await binanceMarketOrder({ sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis), meta: tradeMeta(i.thesis) }))
   }),
   tool({
     name: "simulate_transfer",
@@ -38389,20 +38727,40 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   // ─── Memoria a largo plazo: lecciones entre misiones ──────────────────────
   tool({
     name: "recall_lessons",
-    description: "Tu memoria entre misiones: el historial objetivo de misiones terminadas (par\xE1metros y resultado, calculados por el simulador) y las lecciones que has escrito, cada una vinculada a la misi\xF3n de la que sali\xF3.",
+    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual (plazo, objetivo y enfoque): historial de misiones con su resultado, tus lecciones con su contexto y estad\xEDsticas reales de tus operaciones cerradas agrupadas por caracter\xEDsticas (antig\xFCedad y liquidez del token, si sub\xEDa mucho al comprar, si investigaste antes\u2026), en todas las misiones y en las parecidas.",
     schema: external_exports.object({}),
-    run: async () => json2({
-      missionHistory: missionHistory(),
-      lessons: db.prepare("SELECT id, created_at, mission_id, text FROM lessons ORDER BY id").all()
-    })
+    run: async () => json2(recall())
+  }),
+  tool({
+    name: "trade_history",
+    description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos) y cu\xE1nto hab\xEDas investigado antes. Lo registra el simulador.",
+    schema: external_exports.object({ mission_id: external_exports.number().int().optional(), limit: external_exports.number().int().min(1).max(200).default(50) }),
+    run: async ({ mission_id, limit }) => json2(listPositions(mission_id).slice(0, limit))
+  }),
+  tool({
+    name: "mark_mission_reviewed",
+    description: "Da por revisada una misi\xF3n terminada cuando, tras analizarla, no aporta ninguna lecci\xF3n nueva. Si aprendiste algo, usa write_lesson.",
+    schema: external_exports.object({ mission_id: external_exports.number().int(), note: external_exports.string().min(1).describe("Por qu\xE9 no hay lecciones nuevas") }),
+    run: async ({ mission_id, note }, ctx) => {
+      markReviewed(mission_id);
+      logJournal({ sessionId: ctx.sessionId, kind: "mission", summary: `Misi\xF3n #${mission_id} revisada sin lecciones nuevas: ${note}` });
+      return `Misi\xF3n #${mission_id} marcada como revisada.`;
+    }
   }),
   tool({
     name: "write_lesson",
-    description: "Guarda una lecci\xF3n en tu memoria a largo plazo: qu\xE9 hiciste, qu\xE9 resultado dio y qu\xE9 har\xEDas distinto. Se conserva entre misiones. Por defecto se vincula a la misi\xF3n actual (o a la \xFAltima si no hay ninguna activa); indica mission_id para otra.",
-    schema: external_exports.object({ lesson: external_exports.string(), mission_id: external_exports.number().int().optional() }),
-    run: async ({ lesson, mission_id }) => {
+    description: "Guarda una lecci\xF3n en tu memoria a largo plazo. Se conserva entre misiones y marca la misi\xF3n como revisada. Por defecto se vincula a la misi\xF3n actual (o a la \xFAltima si no hay ninguna activa); indica mission_id para otra.",
+    schema: external_exports.object({
+      lesson: external_exports.string().min(1).describe("Qu\xE9 aprendiste: qu\xE9 hiciste, qu\xE9 pas\xF3 y qu\xE9 har\xEDas distinto"),
+      applies_to: external_exports.string().min(1).describe("A qu\xE9 tipo de misi\xF3n o situaci\xF3n se aplica (plazo, objetivo, enfoque, tipo de token\u2026)"),
+      evidence: external_exports.string().min(1).describe("En qu\xE9 te basas: misiones y operaciones concretas, con sus cifras"),
+      confidence: external_exports.enum(["baja", "media", "alta"]).describe("Cu\xE1nto conf\xEDas en ella seg\xFAn la cantidad de pruebas"),
+      mission_id: external_exports.number().int().optional()
+    }),
+    run: async ({ lesson, applies_to, evidence, confidence, mission_id }) => {
       const missionId = mission_id ?? getActiveMission()?.id ?? getLastMission()?.id ?? null;
-      const id = db.prepare("INSERT INTO lessons (created_at, mission_id, text) VALUES (?, ?, ?)").run(now(), missionId, lesson).lastInsertRowid;
+      const id = db.prepare("INSERT INTO lessons (created_at, mission_id, text, applies_to, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)").run(now(), missionId, lesson, applies_to, evidence, confidence).lastInsertRowid;
+      if (missionId) markReviewed(missionId);
       return `Lecci\xF3n #${id} guardada${missionId ? ` (misi\xF3n #${missionId})` : ""}.`;
     }
   }),
@@ -38442,6 +38800,17 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   if (!parsed.success) return { content: `Entrada no v\xE1lida: ${parsed.error.message}`, isError: true };
   if (isTradingTool(name) && !getActiveMission()) {
     return { content: `Error: no hay ninguna misi\xF3n activa. ${(await missionStatus()).message ?? ""}`, isError: true };
+  }
+  const unreviewed = isTradingTool(name) ? pendingReviews() : [];
+  if (unreviewed.length) {
+    return {
+      content: `Error: antes de operar tienes que revisar ${unreviewed.length > 1 ? "las misiones" : "la misi\xF3n"} #${unreviewed.join(", #")}. Analiza qu\xE9 pas\xF3 (trade_history y journal_history con su mission_id) y guarda lo aprendido con write_lesson, o usa mark_mission_reviewed si no aporta nada nuevo.`,
+      isError: true
+    };
+  }
+  if (RESEARCH_TOOLS.has(name)) {
+    const input2 = parsed.data;
+    logResearch(name, String(input2.mint ?? input2.url ?? input2.output ?? "") || void 0);
   }
   try {
     const content = await def.run(parsed.data, ctx);

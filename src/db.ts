@@ -102,9 +102,46 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  -- Posiciones: cada token comprado en una misión, con los datos del token al entrar,
+  -- la investigación hecha antes y el resultado real al salir. Lo calcula el simulador.
+  CREATE TABLE IF NOT EXISTS positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mission_id INTEGER,
+    venue TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    opened_at TEXT NOT NULL,
+    closed_at TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    qty_open REAL NOT NULL,
+    cost_open_usd REAL NOT NULL,
+    realized_cost_usd REAL NOT NULL DEFAULT 0,
+    realized_proceeds_usd REAL NOT NULL DEFAULT 0,
+    entry_features TEXT,
+    research TEXT,
+    thesis TEXT,
+    lessons_applied TEXT,
+    exit_reason TEXT
+  );
+  -- Llamadas a herramientas de investigación, para saber cuánto investigó antes de cada operación.
+  CREATE TABLE IF NOT EXISTS research_log (
+    ts TEXT NOT NULL,
+    mission_id INTEGER,
+    tool TEXT NOT NULL,
+    target TEXT
+  );
+`);
+
 // Migraciones de columnas añadidas después de crear la tabla.
-const missionColumns = (db.prepare("PRAGMA table_info(missions)").all() as Array<{ name: string }>).map((c) => c.name);
-if (!missionColumns.includes("instructions")) db.exec("ALTER TABLE missions ADD COLUMN instructions TEXT");
+function addColumns(table: string, columns: Record<string, string>) {
+  const existing = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name);
+  for (const [name, type] of Object.entries(columns)) {
+    if (!existing.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
+}
+addColumns("missions", { instructions: "TEXT", reviewed_at: "TEXT" });
+addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
 
 export const now = () => new Date().toISOString();
 

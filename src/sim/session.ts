@@ -1,5 +1,6 @@
 import { db, now } from "../db.js";
-import { missionHistory, missionStatus } from "./mission.js";
+import { recall } from "./memory.js";
+import { missionStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
 
@@ -12,9 +13,7 @@ export async function sessionBriefing(sessionId: number): Promise<string> {
   const portfolio = await valuation(true);
   const notes = db.prepare("SELECT id, ts, text FROM notes ORDER BY id").all() as Array<{ id: number; ts: string; text: string }>;
   const openOrders = listOrders("open");
-  const history = missionHistory();
-  const lessons = db.prepare("SELECT id, mission_id, text FROM lessons ORDER BY id").all() as Array<{ id: number; mission_id: number | null; text: string }>;
-  const unreviewed = history.filter((m) => m.lessonsWritten === 0 && m.outcome !== "cancelada");
+  const mem = recall(8);
   const missionStart = (db.prepare("SELECT created_at FROM missions ORDER BY id DESC LIMIT 1").get() as { created_at: string } | undefined)?.created_at ?? "1970";
   const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE ts >= ? ORDER BY id DESC LIMIT 15").all(missionStart) as Array<{ ts: string; kind: string; summary: string }>;
 
@@ -24,16 +23,26 @@ export async function sessionBriefing(sessionId: number): Promise<string> {
     "Misión:",
     JSON.stringify(await missionStatus(), null, 2),
     "",
-    history.length
-      ? "Historial de misiones terminadas (calculado por el simulador):\n" + JSON.stringify(history, null, 2)
-      : "Es tu primera misión: no hay historial.",
-    "",
-    lessons.length
-      ? "Tu memoria (lecciones de misiones anteriores):\n" + lessons.map((l) => `- #${l.id} (misión #${l.mission_id ?? "?"}) ${l.text}`).join("\n")
-      : "Todavía no tienes lecciones guardadas.",
-    ...(unreviewed.length
-      ? ["", `Misiones terminadas sin lecciones: ${unreviewed.map((m) => `#${m.missionId}`).join(", ")}. Puedes revisar su diario con journal_history(mission_id) y guardar lo aprendido con write_lesson.`]
+    ...(mem.pendingReview.length
+      ? [
+          `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misión"} #${mem.pendingReview.join(", #")} ` +
+            "(trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.",
+          "",
+        ]
       : []),
+    mem.missionHistory.length
+      ? "Tu memoria, ordenada por parecido con esta misión (recall_lessons tiene el detalle completo):\n" +
+        JSON.stringify(
+          {
+            missionHistory: mem.missionHistory.slice(0, 6),
+            lessons: mem.lessons,
+            totalLessons: mem.totalLessons,
+            tradeStats: mem.tradeStats,
+          },
+          null,
+          2,
+        )
+      : "Es tu primera misión: todavía no tienes memoria.",
     "",
     "Cartera:",
     JSON.stringify(portfolio, null, 2),

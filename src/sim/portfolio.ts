@@ -5,6 +5,7 @@ import { db, getMeta, logJournal, now, setMeta } from "../db.js";
 import * as binance from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, USDC_MINT, fromBaseUnits, getQuote, getTokenInfo, resolveMint, toBaseUnits } from "../market/jupiter.js";
+import { recordBinanceTrade, recordSolanaSwap, type TradeMeta } from "./positions.js";
 
 // Renta de una cuenta de token (ATA) en Solana: se paga al recibir un token nuevo
 // y se recupera al cerrar la cuenta cuando el saldo vuelve a cero.
@@ -89,14 +90,14 @@ export async function liquidateAll(sessionId: number | null, reasoning: string):
   const holdings = getHoldings();
 
   for (const h of holdings.filter((h) => h.venue === "solana" && h.asset !== USDC_MINT && h.asset !== SOL_MINT)) {
-    await swapSolana({ sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning }).catch((err) =>
+    await swapSolana({ sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning, meta: { exitReason: reasoning } }).catch((err) =>
       problems.push(`${h.symbol} (Solana): ${(err as Error).message}`),
     );
   }
   // El SOL se vende al final, dejando lo necesario para la fee de esa última transacción.
   const solLeft = balance("solana", SOL_MINT) - config.solanaTxFeeSol;
   if (solLeft > 0.000001) {
-    await swapSolana({ sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning }).catch(
+    await swapSolana({ sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning, meta: { exitReason: reasoning } }).catch(
       (err) => problems.push(`SOL (Solana): ${(err as Error).message}`),
     );
   }
@@ -105,7 +106,7 @@ export async function liquidateAll(sessionId: number | null, reasoning: string):
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
       try {
-        await binanceMarketOrder({ sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance("binance", h.asset), reasoning });
+        await binanceMarketOrder({ sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance("binance", h.asset), reasoning, meta: { exitReason: reasoning } });
         sold = true;
         break;
       } catch {
@@ -126,6 +127,7 @@ export async function swapSolana(args: {
   amount: number;
   slippageBps: number;
   reasoning: string;
+  meta?: TradeMeta;
 }) {
   const inputMint = resolveMint(args.input);
   const outputMint = resolveMint(args.output);
@@ -178,6 +180,15 @@ export async function swapSolana(args: {
     reasoning: args.reasoning,
     details: { inputMint, outputMint, ...result },
   });
+  await recordSolanaSwap({
+    inputMint,
+    outputMint,
+    inputSymbol: inInfo.symbol,
+    outputSymbol: outInfo.symbol,
+    inAmount: args.amount,
+    outAmount,
+    meta: args.meta,
+  }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
   return result;
 }
 
@@ -203,6 +214,7 @@ export async function binanceMarketOrder(args: {
   side: "BUY" | "SELL";
   amount: number; // BUY: cantidad de quote a gastar. SELL: cantidad base a vender.
   reasoning: string;
+  meta?: TradeMeta;
 }) {
   const info = await binance.getSymbolInfo(args.symbol);
   const book = await binance.getOrderBook(info.symbol);
@@ -253,6 +265,15 @@ export async function binanceMarketOrder(args: {
     reasoning: args.reasoning,
     details: result,
   });
+  await recordBinanceTrade({
+    baseAsset: info.baseAsset,
+    quoteAsset: info.quoteAsset,
+    side: args.side,
+    baseQty: fill.baseQty,
+    quoteQty: fill.quoteQty,
+    fee: feePaid,
+    meta: args.meta,
+  }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
   return result;
 }
 

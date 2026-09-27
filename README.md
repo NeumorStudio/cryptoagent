@@ -69,7 +69,9 @@ Copia el simulador a `~/.cryptoagent/opencode`, añade el servidor MCP `cryptosi
 `/cryptoagent-trading` (p. ej. `/cryptoagent-trading 20 40 5`), `/cryptoagent-estado`, `/cryptoagent-parar`,
 `/cryptoagent-peticiones` y `/cryptoagent-panel`. Después, reinicia OpenCode.
 
-La base de datos es la misma que en Claude Code: misiones y memoria se comparten. Diferencias: en OpenCode los agentes
+OpenCode tiene su propia base de datos (`~/.cryptoagent/opencode-data`) y su propio panel (http://localhost:4322):
+sus misiones y su memoria no se mezclan con las de Claude Code, así que puedes comparar cómo aprende con cada modelo.
+Otras diferencias: en OpenCode los agentes
 van uno detrás de otro (el revisor prepara, el trader trabaja y el revisor hace la retrospectiva al final, sin revisar a
 mitad), no hay navegador ni aviso al terminar, y el panel no muestra la transcripción del agente (sí todo lo demás).
 Tras actualizar el código, vuelve a ejecutar `npm run install:opencode`.

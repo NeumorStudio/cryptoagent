@@ -3,7 +3,7 @@
 // - Añade el servidor MCP `cryptosim` al opencode.json global, sin tocar el resto de la configuración.
 // - Genera los agentes `trader` y `reviewer` a partir de los mismos prompts del plugin de Claude Code, y los
 //   comandos /cryptoagent-*. No fija ningún modelo: usan el que tengas seleccionado en OpenCode.
-// Comparte la base de datos (~/.cryptoagent/sim.db) con Claude Code: misiones y memoria son las mismas.
+// Usa su propia base de datos (~/.cryptoagent/opencode-data) y su propio panel (puerto 4322), separados de Claude Code.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,7 +33,15 @@ if (existsSync(path.join(configDir, "opencode.jsonc"))) {
 }
 const configFile = path.join(configDir, "opencode.json");
 const config = existsSync(configFile) ? (JSON.parse(readFileSync(configFile, "utf8")) as Record<string, any>) : { $schema: "https://opencode.ai/config.json" };
-config.mcp = { ...(config.mcp ?? {}), [MCP]: { type: "local", command: [process.execPath, serverFile], enabled: true } };
+// Base de datos y panel propios: las misiones y la memoria de OpenCode no se mezclan con las de Claude Code
+// (así se puede comparar cómo aprende con cada modelo), y el panel no choca con el de Claude Code (4321).
+const dataDir = path.join(home, ".cryptoagent", "opencode-data");
+const DASHBOARD_PORT = "4322";
+const server = { type: "local", command: [process.execPath, serverFile], environment: { DATA_DIR: dataDir, DASHBOARD_PORT } };
+// OpenCode 2 entiende los dos formatos: el clásico (mcp.<nombre> con enabled) y el nuevo (mcp.servers.<nombre> con
+// disabled). Se respeta el que ya tenga el archivo.
+if (config.mcp?.servers) config.mcp.servers = { ...config.mcp.servers, [MCP]: { ...server, disabled: false } };
+else config.mcp = { ...(config.mcp ?? {}), [MCP]: { ...server, enabled: true } };
 writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n");
 
 // ── 3. Agentes ──────────────────────────────────────────────────────────────
@@ -137,6 +145,7 @@ for (const [name, content] of Object.entries(commands)) writeFileSync(path.join(
 
 console.log(`Simulador:   ${serverFile}`);
 console.log(`Servidor MCP "${MCP}" en ${configFile}`);
+console.log(`Datos:       ${dataDir} (separados de Claude Code) · panel en http://localhost:${DASHBOARD_PORT}`);
 console.log(`Agentes:     ${path.join(agentsDir, "trader.md")}, reviewer.md`);
 console.log(`Comandos:    /${Object.keys(commands).join(", /")}`);
 console.log("Abre (o reinicia) OpenCode y escribe /cryptoagent-trading.");

@@ -1,7 +1,7 @@
 {
   "name": "cryptoagent",
   "version": "0.12.1",
-  "description": "Agente autónomo de trading cripto en simulación: dinero ficticio, precios, liquidez y comisiones reales (Solana vía Jupiter, incluido pump.fun, y Binance). Misiones con capital, objetivo y plazo, memoria entre misiones y panel en directo.",
+  "description": "Agente autónomo de trading cripto en simulación: dinero ficticio, precios, liquidez y comisiones reales en Solana (Jupiter, pump.fun), Base y BNB Chain (monedero tipo MetaMask) y Binance, con transferencias y puentes. Un agente revisor escribe su memoria entre misiones. Panel en directo.",
   "author": {
     "name": "NeumorStudio"
   },
@@ -12,7 +12,10 @@
     "solana",
     "pump.fun",
     "agent",
-    "paper-trading"
+    "paper-trading",
+    "base",
+    "bnb-chain",
+    "evm"
   ],
   "homepage": "https://github.com/NeumorStudio/cryptoagent",
   "repository": "https://github.com/NeumorStudio/cryptoagent"

@@ -1,12 +1,13 @@
 // Cartera virtual. Todas las operaciones se calculan con datos de mercado reales
 // en el momento de la llamada; nunca se firma ni se envía nada a una red real.
+import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { db, logJournal, now } from "../db.js";
 import * as market from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
 import { movePosition, recordTrade } from "./positions.js";
-import type { ChainId, Holding, TradeMeta, VenueId } from "./types.js";
+import { VENUES, type Allocation, type ChainId, type Holding, type TradeMeta, type VenueId } from "./types.js";
 import { fillMarketOrder } from "./venues/binance.js";
 import { allChains, binance, getChain, getVenue, type CostLine, type Delta } from "./venues/index.js";
 
@@ -69,17 +70,48 @@ export async function solUsdPrice(): Promise<number> {
   return price;
 }
 
+/** Comprueba un reparto: sitios conocidos, porcentajes no negativos que suman 100. */
+export function validateAllocation(allocation: Allocation): Allocation {
+  const clean: Allocation = {};
+  for (const [venue, pct] of Object.entries(allocation)) {
+    if (!VENUES.includes(venue as VenueId)) throw new Error(`Reparto: "${venue}" no existe. Disponibles: ${VENUES.join(", ")}`);
+    if (!(typeof pct === "number" && pct >= 0)) throw new Error(`Reparto: el porcentaje de ${venue} debe ser un número positivo`);
+    if (pct > 0) clean[venue as VenueId] = pct;
+  }
+  const total = Object.values(clean).reduce((t, x) => t + x, 0);
+  if (Math.abs(total - 100) > 0.5) throw new Error(`Reparto: los porcentajes suman ${total} y deben sumar 100`);
+  return clean;
+}
+
 /**
- * Deja la cartera de la misión con su capital inicial (casi todo en USDC y un poco de SOL para la red).
- * Recibe el precio de SOL para que varias misiones creadas a la vez partan exactamente igual.
+ * Cartera inicial según el reparto. En cada cadena, casi todo en su stablecoin y una parte en el
+ * token nativo para pagar la red (un 3 % de lo asignado, entre el mínimo y el máximo de esa cadena,
+ * y nunca más de la mitad). En Binance, todo en USDT. Puro: recibe los precios de los nativos.
  */
-export function resetPortfolio(missionId: number, initialUsd: number, solPrice: number) {
-  const solUsd = config.initialSol * solPrice;
-  if (solUsd >= initialUsd) throw new Error("INITIAL_SOL vale más que el capital inicial");
+export function planPortfolio(initialUsd: number, allocation: Allocation, nativePrices: Partial<Record<ChainId, number>>): Holding[] {
+  const holdings: Holding[] = [];
+  for (const [venue, pct] of Object.entries(validateAllocation(allocation)) as Array<[VenueId, number]>) {
+    const shareUsd = (initialUsd * pct) / 100;
+    const v = getVenue(venue);
+    if (v.kind === "cex") {
+      holdings.push({ venue, asset: "USDT", symbol: "USDT", decimals: 8, amount: shareUsd });
+      continue;
+    }
+    const price = nativePrices[v.id];
+    if (!price) throw new Error(`Falta el precio de ${v.native.symbol} para preparar la cartera`);
+    const gasUsd = Math.min(Math.max(shareUsd * 0.03, v.gasBudgetUsd.min), v.gasBudgetUsd.max, shareUsd * 0.5);
+    const nativeAmount = Number((gasUsd / price).toFixed(9));
+    holdings.push({ venue, asset: v.cash.address, symbol: v.cash.symbol, decimals: v.cash.decimals, amount: shareUsd - nativeAmount * price });
+    holdings.push({ venue, asset: v.native.address, symbol: v.native.symbol, decimals: v.native.decimals, amount: nativeAmount });
+  }
+  return holdings;
+}
+
+/** Deja la cartera de la misión con los saldos indicados (los de planPortfolio). */
+export function resetPortfolio(missionId: number, holdings: Holding[]) {
   applyAtomically(() => {
     db.prepare("DELETE FROM holdings WHERE mission_id = ?").run(missionId);
-    adjust(missionId, "solana", USDC_MINT, "USDC", 6, initialUsd - solUsd);
-    adjust(missionId, "solana", SOL_MINT, "SOL", 9, config.initialSol);
+    for (const h of holdings) adjust(missionId, h.venue, h.asset, h.symbol, h.decimals, h.amount);
   });
 }
 
@@ -162,7 +194,14 @@ export async function swap(args: {
   if (amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${input.symbol} y quieres vender ${amount}`);
 
   const quote = await chain.quote({ input, output, amountIn: amount, slippageBps: args.slippageBps });
-  const settled = chain.settle(quote, { balance: (asset) => balance(m, chain.id, asset) });
+  const settled = chain.settle(quote, {
+    balance: (asset) => balance(m, chain.id, asset),
+    approved: (asset) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset)),
+  });
+  // Un approve enviado queda hecho aunque el swap después revierta.
+  for (const token of settled.approvals ?? []) {
+    db.prepare("INSERT OR IGNORE INTO evm_approvals (mission_id, chain, token, approved_at) VALUES (?, ?, ?, ?)").run(m, chain.id, token, now());
+  }
   if (!settled.ok) {
     // Una transacción que falla en la cadena puede costar igualmente (gas quemado).
     if (settled.deltas.length) {
@@ -189,7 +228,6 @@ export async function swap(args: {
     route: quote.route,
     costs: describeCosts(settled.costs),
     ...settled.info,
-    ...quote.extra,
     ...(quote.warnings.length ? { warnings: quote.warnings } : {}),
   };
   logJournal({
@@ -364,20 +402,39 @@ export async function transfer(args: {
   return result;
 }
 
+/**
+ * Dirección del monedero EVM de la misión (la misma en Base y BNB Chain, como en MetaMask).
+ * Es ficticia: se deriva del id de la misión y no corresponde a ninguna clave real.
+ */
+export const evmAddress = (missionId: number) => `0x${createHash("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
+
 // ─── Valoración a precio de mercado ─────────────────────────────────────────
 
 export async function valuation(missionId: number, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
   const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
-  const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId) as
-    | { created_at: string; initial_usd: number; benchmark_sol_price: number | null }
+  const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price, benchmark FROM missions WHERE id = ?").get(missionId) as
+    | { created_at: string; initial_usd: number; benchmark_sol_price: number | null; benchmark: string | null }
     | undefined;
   const initialUsd = mission?.initial_usd ?? config.initialUsd;
-  const benchSolPrice = mission?.benchmark_sol_price ?? 0;
-  // La referencia (haber mantenido SOL) es informativa: si no hay precio, no debe romper la valoración.
-  const solNow = benchSolPrice ? await solUsdPrice().catch(() => null) : null;
-  const benchmarkUsd = benchSolPrice && solNow ? (initialUsd / benchSolPrice) * solNow : initialUsd;
+  // Referencia informativa: si falta un precio, no debe romper la valoración.
+  let benchmarkUsd = initialUsd;
+  let benchmarkLabel = "capital inicial";
+  if (mission?.benchmark) {
+    // La cartera inicial sin tocar, valorada ahora.
+    const start = JSON.parse(mission.benchmark) as Holding[];
+    const values = await Promise.all(start.map((h) => getVenue(h.venue).liquidationValue(h).catch(() => ({ usd: h.amount }))));
+    benchmarkUsd = values.reduce((t, x) => t + x.usd, 0);
+    benchmarkLabel = "sin operar (la cartera inicial, a precios de ahora)";
+  } else if (mission?.benchmark_sol_price) {
+    // Misiones antiguas: haber mantenido SOL.
+    const solNow = await solUsdPrice().catch(() => null);
+    if (solNow) {
+      benchmarkUsd = (initialUsd / mission.benchmark_sol_price) * solNow;
+      benchmarkLabel = "mantener SOL";
+    }
+  }
 
   if (recordSnapshot) {
     db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
@@ -397,7 +454,9 @@ export async function valuation(missionId: number, recordSnapshot = false) {
     reliable: lines.every((l) => l.reliable),
     pnlUsd: totalUsd - initialUsd,
     pnlPct: ((totalUsd - initialUsd) / initialUsd) * 100,
-    benchmarkHoldSolUsd: benchmarkUsd,
+    benchmarkUsd,
+    benchmarkLabel,
+    evmWallet: evmAddress(missionId),
     holdings: lines.map((l) => ({
       venue: l.venue,
       symbol: l.symbol,

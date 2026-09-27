@@ -24,7 +24,7 @@ const v = await valuation(m.id);
 console.log("\n══ CARTERA ══");
 console.log(`Inicio:        ${v.startedAt ?? "(sin inicializar)"}`);
 console.log(`Capital:       ${usd(v.initialUsd)} → ${usd(v.totalUsd)}  (${v.pnlPct >= 0 ? "+" : ""}${v.pnlPct.toFixed(2)} %)`);
-console.log(`Holdear SOL:   ${usd(v.benchmarkHoldSolUsd)}`);
+console.log(`Referencia:    ${usd(v.benchmarkUsd)}  (${v.benchmarkLabel})`);
 console.table(v.holdings.map((h) => ({ venue: h.venue, symbol: h.symbol, cantidad: h.amount, usd: h.usd, valorado: h.valuedBy })));
 
 const sessions = db

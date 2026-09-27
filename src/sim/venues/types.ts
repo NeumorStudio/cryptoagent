@@ -60,12 +60,14 @@ export interface SwapQuote {
 
 export interface WalletView {
   balance(asset: string): number;
+  /** Cadenas EVM: si el monedero ya aprobó al router para gastar este token. */
+  approved?(asset: string): boolean;
 }
 
 export type Settlement =
-  | { ok: true; deltas: Delta[]; costs: CostLine[]; info: Record<string, unknown> }
+  | { ok: true; deltas: Delta[]; costs: CostLine[]; info: Record<string, unknown>; approvals?: string[] }
   /** La transacción falla. `deltas` recoge lo que se pierde igualmente (p. ej. gas quemado). */
-  | { ok: false; error: string; deltas: Delta[]; costs: CostLine[] };
+  | { ok: false; error: string; deltas: Delta[]; costs: CostLine[]; approvals?: string[] };
 
 export interface Valued {
   usd: number;
@@ -94,6 +96,8 @@ export interface ChainAdapter extends VenueBase {
   cash: TokenRef;
   /** Nativo que se deja sin vender al liquidar, para pagar esa última transacción. */
   liquidationReserve: number;
+  /** Cuánto del capital de la cadena se entrega en nativo para el gas al empezar una misión (USD). */
+  gasBudgetUsd: { min: number; max: number };
   /** Resuelve una dirección o un alias (SOL, USDC…) a un token. */
   resolveToken(ref: string): Promise<TokenRef>;
   /** Precio en USD de varios tokens (los que no tengan precio no aparecen). */

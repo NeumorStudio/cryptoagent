@@ -40,6 +40,16 @@ const order = await step("orden condicional (stop loss)", () =>
 );
 if (order) await step("cancelar la orden", async () => orders.cancelOrder(m, order.id, null));
 await step("vender todo el JUP", () => sim.swap({ ...base, missionId: m, chain: "solana", input: JUP, output: "USDC", sellAll: true, slippageBps: 100 }));
+// Base y BNB Chain: BRETT y CAKE, tokens líquidos con ruta estable.
+const BRETT = "0x532f27101965dd16442E59d40670FaF5eBB142E4";
+const CAKE = "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82";
+const { getChain } = await import("../src/sim/venues/index.js");
+await step("escanear Base", async () => console.log("   ", ((await getChain("base").research.scan(5)) as { sourcesStatus: string[] }).sourcesStatus.join(" · ")));
+await step("ficha de BRETT", async () => console.log("   ", JSON.stringify((await getChain("base").research.report(BRETT)) as object).slice(0, 300)));
+await step("cotizar USDC → BRETT (Base)", async () => console.log("   ", JSON.stringify(await sim.quoteSwap("base", "USDC", BRETT, 20))));
+await step("comprar BRETT (Base)", async () => console.log("   ", JSON.stringify(await sim.swap({ ...base, missionId: m, chain: "base", input: "USDC", output: BRETT, amount: 20, slippageBps: 100 }))));
+await step("vender todo el BRETT (Base)", async () => console.log("   ", JSON.stringify(await sim.swap({ ...base, missionId: m, chain: "base", input: BRETT, output: "USDC", sellAll: true, slippageBps: 100 }))));
+await step("comprar CAKE (BNB Chain)", () => sim.swap({ ...base, missionId: m, chain: "bsc", input: "USDT", output: CAKE, amount: 20, slippageBps: 100 }));
 await step("transferir 20 USDC a Binance", () => sim.transfer({ ...base, missionId: m, asset: "USDC", from: "solana", to: "binance", amount: 20 }));
 await step("comprar SOL en Binance", () => sim.binanceMarketOrder({ ...base, missionId: m, symbol: "SOLUSDC", side: "BUY", amount: 15 }));
 const v = await step("valorar la cartera", () => sim.valuation(m));

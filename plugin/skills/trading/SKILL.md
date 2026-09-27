@@ -33,12 +33,20 @@ Haz una sola llamada a AskUserQuestion con estas cuatro preguntas:
 
 El usuario puede escribir otro valor con "Other". Interpreta respuestas libres ("500", "2.500 $", "llegar a 1.300", "+20 %", "90 minutos", "2 días"). Un objetivo en porcentaje se aplica sobre el capital; una cifra absoluta es el valor final que debe alcanzar la cartera. Si algo no tiene sentido (cantidades no positivas, objetivo igual o menor que el capital), vuelve a preguntar solo eso.
 
-Después, en otra llamada a AskUserQuestion, pregunta por las **instrucciones para el agente** (header "Enfoque"):
-- "Modo libre (Recommended)": sin instrucciones, el agente decide todo.
-- "Memecoins de pump.fun": instrucciones = "Dedica parte del tiempo a investigar memecoins de pump.fun y apuesta por las que veas con más opciones."
-- Con "Other" el usuario puede escribir sus propias instrucciones: pásalas tal cual, sin reescribirlas.
+Después, en otra llamada a AskUserQuestion, haz dos preguntas:
 
-Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes` e `instructions` si las hay; en modo libre no lo envíes).
+1. **Instrucciones para el agente** (header "Enfoque"):
+   - "Modo libre (Recommended)": sin instrucciones, el agente decide todo.
+   - "Memecoins de pump.fun": instrucciones = "Dedica parte del tiempo a investigar memecoins de pump.fun y apuesta por las que veas con más opciones."
+   - Con "Other" el usuario puede escribir sus propias instrucciones: pásalas tal cual, sin reescribirlas.
+2. **Dónde empieza el dinero** (header "Reparto"). Explica en la pregunta que en cada cadena una parte llega en su token nativo para pagar la red:
+   - "Repartido": Solana 30 %, Base 25 %, BNB Chain 25 %, Binance 20 % (`{"solana":30,"base":25,"bsc":25,"binance":20}`).
+   - "Todo en Solana" (`{"solana":100}`).
+   - "Solo cadenas, sin Binance": Solana 40 %, Base 30 %, BNB Chain 30 % (`{"solana":40,"base":30,"bsc":30}`).
+   - Con "Other" el usuario puede dar su propio reparto ("mitad Base, mitad Solana"): conviértelo a porcentajes que sumen 100.
+   Marca como recomendada "Repartido" si el capital es de 100 $ o más, y "Todo en Solana" si es menor: repartido quedarían saldos de pocos dólares por sitio, y Binance exige unos 5 $ por orden.
+
+Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes`, `allocation` con el reparto elegido e `instructions` si las hay; en modo libre no lo envíes).
 
 ## 4. Panel
 
@@ -59,7 +67,7 @@ No añadas nada más a los prompts: ni ideas, ni estrategias, ni contexto de est
 
 ## 6. Avisar al usuario
 
-Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
+Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
 
 ## 7. Mientras dura la misión
 

@@ -67,7 +67,7 @@ test("migración: las lecciones pasan a creencias con el mismo id y las tesis la
 });
 
 // Posiciones cerradas sintéticas para medir la evidencia.
-const mission = await createMission(100, 200, 60);
+const mission = await createMission(100, 200, 60, undefined, { solana: 100 });
 let n = 0;
 function closedPosition(entry: Record<string, unknown>, pnlPct: number, beliefs: number[] = []) {
   const cost = 10;

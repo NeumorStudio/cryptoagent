@@ -18,12 +18,13 @@ const bal = (missionId: number, venue: string, asset: string) =>
   getHoldings(missionId).find((h) => h.venue === venue && h.asset === asset)?.amount ?? 0;
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≠ ${b}`);
 
-const mission = await createMission(1000, 5000, 60);
+const mission = await createMission(1000, 5000, 60, undefined, { solana: 100 });
 const m = mission.id;
 
 test("la misión empieza con USDC y un poco de SOL en Solana", () => {
-  close(bal(m, "solana", SOL_MINT), config.initialSol);
-  close(bal(m, "solana", USDC_MINT), 1000 - config.initialSol * 150);
+  // Gas: 3 % de lo asignado, con un máximo de 7,5 $ en Solana (0,05 SOL a 150 $).
+  close(bal(m, "solana", SOL_MINT), 0.05);
+  close(bal(m, "solana", USDC_MINT), 1000 - 7.5);
 });
 
 test("comprar un token: saldos, costes de red y posición abierta", async () => {
@@ -96,7 +97,7 @@ test("sell_all y cadena desconocida", async () => {
   await swap({ missionId: m, sessionId: null, chain: "solana", input: MEME, output: "USDC", sellAll: true, slippageBps: 50, reasoning: "test" });
   assert.equal(bal(m, "solana", MEME), 0);
   await assert.rejects(
-    swap({ missionId: m, sessionId: null, chain: "base" as never, input: "USDC", output: "ETH", amount: 1, slippageBps: 50, reasoning: "test" }),
+    swap({ missionId: m, sessionId: null, chain: "tron" as never, input: "USDC", output: "TRX", amount: 1, slippageBps: 50, reasoning: "test" }),
     /No existe la cadena/,
   );
 });

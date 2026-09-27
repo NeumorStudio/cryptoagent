@@ -21,7 +21,44 @@ export const POOL_FEE = 0.003;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
-function handle(url: URL): Response {
+// ─── Base y BNB Chain ───────────────────────────────────────────────────────
+
+type EvmChain = "base" | "bsc";
+export const NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+export const BASE_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+export const BSC_USDT = "0x55d398326f99059ff775485246999027b3197955";
+/** Token con impuesto del 5 % al comprar y al vender. */
+export const TAXED = "0x1111111111111111111111111111111111111111";
+/** Honeypot: se puede comprar, pero no vender. */
+export const HONEY = "0x2222222222222222222222222222222222222222";
+export const CAKE = "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82";
+
+interface EvmToken extends Token {
+  buyTax?: string;
+  sellTax?: string;
+  honeypot?: boolean;
+}
+
+export const evmTokens: Record<EvmChain, Record<string, EvmToken>> = {
+  base: {
+    [NATIVE]: { symbol: "ETH", decimals: 18, price: 3000 },
+    [BASE_USDC]: { symbol: "USDC", decimals: 6, price: 1 },
+    [TAXED]: { symbol: "TAX", decimals: 18, price: 0.5, buyTax: "0.05", sellTax: "0.05" },
+    [HONEY]: { symbol: "HONEY", decimals: 18, price: 1, buyTax: "0", sellTax: "0", honeypot: true },
+  },
+  bsc: {
+    [NATIVE]: { symbol: "BNB", decimals: 18, price: 600 },
+    [BSC_USDT]: { symbol: "USDT", decimals: 18, price: 1 },
+    [CAKE]: { symbol: "CAKE", decimals: 18, price: 2, buyTax: "0", sellTax: "0" },
+  },
+};
+
+const EVM_HOSTS: Record<EvmChain, string> = { base: "mainnet.base.org", bsc: "bsc-dataseed.binance.org" };
+/** Gas de un swap y precio del gas (wei): 0,01 gwei en Base y 0,05 gwei en BNB Chain. */
+export const EVM_GAS = 200_000;
+export const EVM_GAS_PRICE: Record<EvmChain, number> = { base: 10_000_000, bsc: 50_000_000 };
+
+function handle(url: URL, body?: unknown): Response {
   if (url.host === "lite-api.jup.ag") {
     if (url.pathname === "/tokens/v2/search") {
       const t = tokens[url.searchParams.get("query")!];
@@ -47,10 +84,49 @@ function handle(url: URL): Response {
       });
     }
   }
+  const evmChain = (Object.keys(EVM_HOSTS) as EvmChain[]).find((c) => EVM_HOSTS[c] === url.host);
+  if (evmChain) return rpc(evmChain, JSON.parse(String(body)));
+  if (url.host === "aggregator-api.kyberswap.com") {
+    const chain = url.pathname.split("/")[1] as EvmChain;
+    const a = evmTokens[chain][url.searchParams.get("tokenIn")!.toLowerCase()];
+    const b = evmTokens[chain][url.searchParams.get("tokenOut")!.toLowerCase()];
+    if (!a || !b) return json({ code: 4008, message: "route not found" }, 400);
+    const amountIn = Number(url.searchParams.get("amountIn")) / 10 ** a.decimals;
+    const out = ((amountIn * a.price) / b.price) * (1 - POOL_FEE);
+    const gasNative = (EVM_GAS * EVM_GAS_PRICE[chain]) / 1e18;
+    return json({
+      code: 0,
+      message: "successfully",
+      data: {
+        routeSummary: {
+          amountOut: BigInt(Math.floor(out * 10 ** b.decimals)).toString(),
+          gas: String(EVM_GAS),
+          gasPrice: String(EVM_GAS_PRICE[chain]),
+          gasUsd: String(gasNative * evmTokens[chain][NATIVE]!.price),
+          l1FeeUsd: chain === "base" ? "0.001" : "0",
+          route: [[{ exchange: "fake-dex" }]],
+        },
+      },
+    });
+  }
+  if (url.host === "api.gopluslabs.io") {
+    const chain: EvmChain = url.pathname.endsWith("/8453") ? "base" : "bsc";
+    const addr = url.searchParams.get("contract_addresses")!.toLowerCase();
+    const t = evmTokens[chain][addr];
+    return json({ code: 1, message: "OK", result: t ? { [addr]: { buy_tax: t.buyTax ?? "", sell_tax: t.sellTax ?? "", is_honeypot: t.honeypot ? "1" : "0" } } : {} });
+  }
+  if (url.host === "api.dexscreener.com" && url.pathname.startsWith("/tokens/v1/")) {
+    const [, , , chain, list] = url.pathname.split("/") as [string, string, string, EvmChain, string];
+    const pairs = list.split(",").flatMap((addr) => {
+      const t = evmTokens[chain]?.[addr.toLowerCase()];
+      return t ? [{ pairAddress: "0xpair", dexId: "fake-dex", url: "", baseToken: { address: addr, symbol: t.symbol, name: t.symbol }, quoteToken: { address: NATIVE, symbol: "WETH" }, priceUsd: String(t.price), liquidity: { usd: 100_000 } }] : [];
+    });
+    return json(pairs);
+  }
   if (url.host === "api.binance.com") {
     const symbol = url.searchParams.get("symbol") ?? "";
     const base = symbol.replace(/(USDT|USDC)$/, "");
-    const price = base === "SOL" ? tokens[SOL_MINT]!.price : undefined;
+    const price = base === "SOL" ? tokens[SOL_MINT]!.price : base === "ETH" ? evmTokens.base[NATIVE]!.price : base === "BNB" ? evmTokens.bsc[NATIVE]!.price : undefined;
     if (price === undefined) return json({ code: -1121, msg: "Invalid symbol." }, 400);
     if (url.pathname === "/api/v3/exchangeInfo") {
       return json({
@@ -78,9 +154,24 @@ function handle(url: URL): Response {
   return json({ error: "not found" }, 404);
 }
 
+/** Nodo RPC: precio del gas y decimales y símbolo de los tokens (eth_call a decimals() y symbol()). */
+function rpc(chain: EvmChain, calls: Array<{ id: number; method: string; params: any[] }>) {
+  const word = (n: bigint) => n.toString(16).padStart(64, "0");
+  return json(
+    calls.map((c) => {
+      if (c.method === "eth_gasPrice") return { jsonrpc: "2.0", id: c.id, result: `0x${EVM_GAS_PRICE[chain].toString(16)}` };
+      const t = evmTokens[chain][String(c.params[0].to).toLowerCase()];
+      if (!t) return { jsonrpc: "2.0", id: c.id, result: "0x" };
+      if (c.params[0].data === "0x313ce567") return { jsonrpc: "2.0", id: c.id, result: `0x${word(BigInt(t.decimals))}` };
+      const hex = Buffer.from(t.symbol, "utf8").toString("hex");
+      return { jsonrpc: "2.0", id: c.id, result: `0x${word(32n)}${word(BigInt(t.symbol.length))}${hex.padEnd(64, "0")}` };
+    }),
+  );
+}
+
 /** Instala el mercado falso (y vacía la caché HTTP, para que se vean los precios nuevos). */
 export function installFakeMarket() {
-  setFetchImpl((async (input: string | URL | Request) => handle(new URL(String(input)))) as typeof fetch);
+  setFetchImpl((async (input: string | URL | Request, init?: RequestInit) => handle(new URL(String(input)), init?.body)) as typeof fetch);
 }
 
 export function setPrice(mint: string, price: number) {

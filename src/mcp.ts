@@ -10,6 +10,7 @@ import { checkMission, createMission, getActiveMission, getLastMission, stopMiss
 import { config } from "./config.js";
 import { supersededBy } from "./db.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
+import { DEFAULT_ALLOCATION, VENUES } from "./sim/types.js";
 import { statusReport } from "./sim/status.js";
 import { SIM_TOOLS, runTool } from "./tools/index.js";
 
@@ -91,9 +92,13 @@ server.registerTool(
       duration_minutes: z.number().positive(),
       replace: z.boolean().default(false).describe("Cancelar la misión activa si la hay"),
       instructions: z.string().optional().describe("Instrucciones del usuario para esta misión. Vacío = modo libre"),
+      allocation: z
+        .object(Object.fromEntries(VENUES.map((v) => [v, z.number().min(0).max(100).optional()])))
+        .optional()
+        .describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`),
     },
   },
-  async ({ capital_usd, target_usd, duration_minutes, replace, instructions }) => {
+  async ({ capital_usd, target_usd, duration_minutes, replace, instructions, allocation }) => {
     const active = getActiveMission();
     if (active && !replace) {
       return {
@@ -102,7 +107,7 @@ server.registerTool(
       };
     }
     try {
-      const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions);
+      const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
       return text(JSON.stringify(mission, null, 2));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };

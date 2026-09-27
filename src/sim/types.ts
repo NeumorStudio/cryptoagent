@@ -1,13 +1,18 @@
 // Tipos compartidos del simulador.
 
 /** Cadenas con monedero propio (swaps en DEX). */
-export type ChainId = "solana";
+export type ChainId = "solana" | "base" | "bsc";
 /** Exchanges centralizados (órdenes contra el libro). */
 export type CexId = "binance";
 /** Dónde está un saldo: una cadena (monedero propio) o un exchange. */
 export type VenueId = ChainId | CexId;
 
-export const CHAINS: readonly ChainId[] = ["solana"];
+export const CHAINS: readonly ChainId[] = ["solana", "base", "bsc"];
+
+/** Reparto del capital inicial por cadena o exchange, en porcentaje (suma 100). */
+export type Allocation = Partial<Record<VenueId, number>>;
+
+export const DEFAULT_ALLOCATION: Allocation = { solana: 30, base: 25, bsc: 25, binance: 20 };
 export const VENUES: readonly VenueId[] = [...CHAINS, "binance"];
 
 export interface Holding {

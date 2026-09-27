@@ -2,7 +2,9 @@
 // llega al objetivo o se acaba el tiempo; entonces se cierran todas las posiciones a mercado.
 // Cada misión tiene su propia cartera, órdenes, diario y posiciones.
 import { db, logJournal, now } from "../db.js";
-import { liquidateAll, resetPortfolio, solUsdPrice, valuation } from "./portfolio.js";
+import { liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
+import { DEFAULT_ALLOCATION, type Allocation, type ChainId, type Holding } from "./types.js";
+import { getVenue } from "./venues/index.js";
 
 export interface Mission {
   id: number;
@@ -16,6 +18,10 @@ export interface Mission {
   instructions: string | null;
   reviewed_at: string | null;
   benchmark_sol_price: number | null;
+  /** Reparto inicial por cadena o exchange (JSON de porcentajes). */
+  allocation: string | null;
+  /** Cartera inicial (JSON de saldos): la referencia "sin operar". */
+  benchmark: string | null;
 }
 
 export function getMission(id: number): Mission | undefined {
@@ -69,17 +75,17 @@ function insertMission(args: {
   targetUsd: number;
   durationMinutes: number;
   instructions?: string;
-  solPrice: number;
+  allocation: Allocation;
+  holdings: Holding[];
 }): number {
   const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
   const id = Number(
     db
-      .prepare(
-        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price) VALUES (?, ?, ?, ?, ?, ?)",
-      )
-      .run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, args.solPrice).lastInsertRowid,
+      .prepare("INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, JSON.stringify(args.allocation), JSON.stringify(args.holdings))
+      .lastInsertRowid,
   );
-  resetPortfolio(id, args.initialUsd, args.solPrice);
+  resetPortfolio(id, args.holdings);
   logJournal({
     missionId: id,
     sessionId: null,
@@ -97,9 +103,25 @@ function validate(initialUsd: number, targetUsd: number, durationMinutes: number
 }
 
 /** Crea una misión (cancela la anterior si seguía activa). */
-export async function createMission(initialUsd: number, targetUsd: number, durationMinutes: number, instructions?: string): Promise<Mission> {
+export async function createMission(
+  initialUsd: number,
+  targetUsd: number,
+  durationMinutes: number,
+  instructions?: string,
+  allocation: Allocation = DEFAULT_ALLOCATION,
+): Promise<Mission> {
   validate(initialUsd, targetUsd, durationMinutes);
-  const solPrice = await solUsdPrice();
+  const plan = validateAllocation(allocation);
+  // Precio de los nativos de las cadenas con capital, para entregar la parte de gas.
+  const prices: Partial<Record<ChainId, number>> = {};
+  for (const venue of Object.keys(plan)) {
+    const v = getVenue(venue);
+    if (v.kind !== "chain") continue;
+    const price = (await v.priceUsd([v.native.address]))[v.native.address];
+    if (!price) throw new Error(`No se pudo obtener el precio de ${v.native.symbol}`);
+    prices[v.id] = price;
+  }
+  const holdings = planPortfolio(initialUsd, plan, prices);
   const previous = getActiveMission();
   if (previous) {
     db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
@@ -107,7 +129,7 @@ export async function createMission(initialUsd: number, targetUsd: number, durat
     logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misión #${previous.id} cancelada por el usuario al crear una nueva` });
   }
   // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
-  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, solPrice }))!;
+  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings }))!;
 }
 
 function remaining(deadline: string) {

@@ -1,10 +1,11 @@
 // Registro de cadenas y exchanges disponibles en el simulador.
 import { CHAINS, type ChainId, type VenueId } from "../types.js";
 import { binance } from "./binance.js";
+import { base, bsc } from "./evm.js";
 import { solana } from "./solana.js";
 import type { ChainAdapter, Venue } from "./types.js";
 
-const chains: Record<ChainId, ChainAdapter> = { solana };
+const chains: Record<ChainId, ChainAdapter> = { solana, base, bsc };
 const venues: Record<VenueId, Venue> = { ...chains, binance };
 
 export function getVenue(id: string): Venue {
@@ -21,5 +22,5 @@ export function getChain(id: string): ChainAdapter {
 
 export const allChains = (): ChainAdapter[] => CHAINS.map((id) => chains[id]);
 
-export { binance, solana };
+export { base, binance, bsc, solana };
 export type * from "./types.js";

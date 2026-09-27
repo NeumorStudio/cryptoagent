@@ -44,7 +44,7 @@ const conditionSchema = z
   .describe('Todas las cláusulas deben cumplirse. Ejemplo: {"all":[{"f":"ageMinutes","op":"<","v":30},{"f":"organicScore","op":">=","v":50}]}');
 
 // Alias de tokens que entiende cada cadena, para las descripciones.
-const TOKEN_ALIASES = "en Solana: SOL y USDC";
+const TOKEN_ALIASES = "en Solana: SOL y USDC; en Base: ETH, WETH y USDC; en BNB Chain (bsc): BNB, WBNB, USDT y USDC";
 
 // Tesis obligatoria en cada operación de trading: obliga a argumentar con pruebas y fuentes.
 const thesis = z
@@ -172,7 +172,7 @@ export const SIM_TOOLS = [
     deliversNews: true,
     description:
       "Muestra tu cartera simulada y su valor en USD a precio de liquidación real ahora mismo, " +
-      "el PnL desde el inicio y lo que valdría el capital inicial si se hubiera mantenido en SOL.",
+      "el PnL desde el inicio, la dirección de tu monedero EVM y una referencia: lo que valdría tu cartera inicial si no hubieras operado.",
     schema: z.object({}),
     run: async (_i, ctx) => json(await sim.valuation(mid(ctx))),
   }),
@@ -495,7 +495,7 @@ export const SIM_TOOLS = [
     journaled: true,
     description:
       "Guarda conocimiento procedimental: cómo se hace algo en el simulador o en el mercado, qué falla y cómo evitarlo. " +
-      "scope: la cadena o exchange (solana, binance) o 'any'. Con fixes_error_ids lo vinculas a los errores que resuelve. " +
+      "scope: la cadena o exchange (solana, base, bsc, binance) o 'any'. Con fixes_error_ids lo vinculas a los errores que resuelve. " +
       "Si ya hay uno casi igual, se rechaza: actualízalo con update_howto.",
     schema: z.object({
       scope: z.string().min(1),

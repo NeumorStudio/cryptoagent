@@ -515,17 +515,17 @@ var require_codegen = __commonJS({
         this.nodes = nodes;
       }
       render(opts) {
-        return this.nodes.reduce((code, n2) => code + n2.render(opts), "");
+        return this.nodes.reduce((code, n3) => code + n3.render(opts), "");
       }
       optimizeNodes() {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
-          const n2 = nodes[i].optimizeNodes();
-          if (Array.isArray(n2))
-            nodes.splice(i, 1, ...n2);
-          else if (n2)
-            nodes[i] = n2;
+          const n3 = nodes[i].optimizeNodes();
+          if (Array.isArray(n3))
+            nodes.splice(i, 1, ...n3);
+          else if (n3)
+            nodes[i] = n3;
           else
             nodes.splice(i, 1);
         }
@@ -535,16 +535,16 @@ var require_codegen = __commonJS({
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
-          const n2 = nodes[i];
-          if (n2.optimizeNames(names, constants))
+          const n3 = nodes[i];
+          if (n3.optimizeNames(names, constants))
             continue;
-          subtractNames(names, n2.names);
+          subtractNames(names, n3.names);
           nodes.splice(i, 1);
         }
         return nodes.length > 0 ? this : void 0;
       }
       get names() {
-        return this.nodes.reduce((names, n2) => addNames(names, n2.names), {});
+        return this.nodes.reduce((names, n3) => addNames(names, n3.names), {});
       }
     };
     var BlockNode = class extends ParentNode {
@@ -955,8 +955,8 @@ var require_codegen = __commonJS({
       endFunc() {
         return this._endBlockNode(Func);
       }
-      optimize(n2 = 1) {
-        while (n2-- > 0) {
+      optimize(n3 = 1) {
+        while (n3-- > 0) {
           this._root.optimizeNodes();
           this._root.optimizeNames(this._root.names, this._constants);
         }
@@ -970,19 +970,19 @@ var require_codegen = __commonJS({
         this._nodes.push(node2);
       }
       _endBlockNode(N1, N2) {
-        const n2 = this._currNode;
-        if (n2 instanceof N1 || N2 && n2 instanceof N2) {
+        const n3 = this._currNode;
+        if (n3 instanceof N1 || N2 && n3 instanceof N2) {
           this._nodes.pop();
           return this;
         }
         throw new Error(`CodeGen: not in block "${N2 ? `${N1.kind}/${N2.kind}` : N1.kind}"`);
       }
       _elseNode(node2) {
-        const n2 = this._currNode;
-        if (!(n2 instanceof If)) {
+        const n3 = this._currNode;
+        if (!(n3 instanceof If)) {
           throw new Error('CodeGen: "else" without "if"');
         }
-        this._currNode = n2.else = node2;
+        this._currNode = n3.else = node2;
         return this;
       }
       get _root() {
@@ -999,8 +999,8 @@ var require_codegen = __commonJS({
     };
     exports.CodeGen = CodeGen;
     function addNames(names, from) {
-      for (const n2 in from)
-        names[n2] = (names[n2] || 0) + (from[n2] || 0);
+      for (const n3 in from)
+        names[n3] = (names[n3] || 0) + (from[n3] || 0);
       return names;
     }
     function addExprNames(names, from) {
@@ -1020,11 +1020,11 @@ var require_codegen = __commonJS({
           items.push(c);
         return items;
       }, []));
-      function replaceName(n2) {
-        const c = constants[n2.str];
-        if (c === void 0 || names[n2.str] !== 1)
-          return n2;
-        delete names[n2.str];
+      function replaceName(n3) {
+        const c = constants[n3.str];
+        if (c === void 0 || names[n3.str] !== 1)
+          return n3;
+        delete names[n3.str];
         return c;
       }
       function canOptimize(e) {
@@ -1032,8 +1032,8 @@ var require_codegen = __commonJS({
       }
     }
     function subtractNames(names, from) {
-      for (const n2 in from)
-        names[n2] = (names[n2] || 0) - (from[n2] || 0);
+      for (const n3 in from)
+        names[n3] = (names[n3] || 0) - (from[n3] || 0);
     }
     function not(x) {
       return typeof x == "boolean" || typeof x == "number" || x === null ? !x : (0, code_1._)`!${par(x)}`;
@@ -3261,10 +3261,10 @@ var require_utils = __commonJS({
         isIPV6: true
       };
     }
-    function findToken(str, token) {
+    function findToken(str, token2) {
       let ind = 0;
       for (let i = 0; i < str.length; i++) {
-        if (str[i] === token) ind++;
+        if (str[i] === token2) ind++;
       }
       return ind;
     }
@@ -3880,10 +3880,10 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative, options, skipNormalization) {
+    function resolveComponent(base2, relative, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse3(serialize(base, options), options);
+        base2 = parse3(serialize(base2, options), options);
         relative = parse3(serialize(relative, options), options);
       }
       options = options || {};
@@ -3903,32 +3903,32 @@ var require_fast_uri = __commonJS({
           target.query = relative.query;
         } else {
           if (!relative.path) {
-            target.path = base.path;
+            target.path = base2.path;
             if (relative.query !== void 0) {
               target.query = relative.query;
             } else {
-              target.query = base.query;
+              target.query = base2.query;
             }
           } else {
             if (relative.path[0] === "/") {
               target.path = removeDotSegments(relative.path);
             } else {
-              if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
+              if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) {
                 target.path = "/" + relative.path;
-              } else if (!base.path) {
+              } else if (!base2.path) {
                 target.path = relative.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
+                target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative.path;
               }
               target.path = removeDotSegments(target.path);
             }
             target.query = relative.query;
           }
-          target.userinfo = base.userinfo;
-          target.host = base.host;
-          target.port = base.port;
+          target.userinfo = base2.userinfo;
+          target.host = base2.host;
+          target.port = base2.port;
         }
-        target.scheme = base.scheme;
+        target.scheme = base2.scheme;
       }
       target.fragment = relative.fragment;
       return target;
@@ -7222,8 +7222,8 @@ var require_dist2 = __commonJS({
       function X(e = process.env) {
         let o = {};
         for (let t of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
-          let n2 = e[`DOTENV_${t}`] != null ? e[`DOTENV_${t}`] : e[`DOTENV_CONFIG_${t}`];
-          n2 != null && (o[t.toLowerCase()] = t === "ENCODING" || t === "PATH" ? n2 : G(n2));
+          let n3 = e[`DOTENV_${t}`] != null ? e[`DOTENV_${t}`] : e[`DOTENV_CONFIG_${t}`];
+          n3 != null && (o[t.toLowerCase()] = t === "ENCODING" || t === "PATH" ? n3 : G(n3));
         }
         return o;
       }
@@ -7241,9 +7241,9 @@ var require_dist2 = __commonJS({
         let o = {}, t = e.toString();
         t = t.replace(/\r\n?/mg, `
 `);
-        let n2;
-        for (; (n2 = te.exec(t)) != null; ) {
-          let r = n2[1], s = n2[2] || "";
+        let n3;
+        for (; (n3 = te.exec(t)) != null; ) {
+          let r = n3[1], s = n3[2] || "";
           s = s.trim();
           let i = s[0];
           s = s.replace(/^(['"`])([\s\S]*)\1$/mg, "$2"), i === '"' && (s = s.replace(/\\n/g, `
@@ -7261,67 +7261,67 @@ var require_dist2 = __commonJS({
         let o = {}, t = typeof e == "string" ? e : e.toString();
         t.indexOf("\r") !== -1 && (t = t.replace(/\r\n?/g, `
 `));
-        let n2 = t.length, r = 0;
-        for (; r < n2; ) {
+        let n3 = t.length, r = 0;
+        for (; r < n3; ) {
           let s = t.charCodeAt(r);
-          for (; r < n2 && w(s); ) r++, s = t.charCodeAt(r);
-          if (r >= n2) break;
+          for (; r < n3 && w(s); ) r++, s = t.charCodeAt(r);
+          if (r >= n3) break;
           if (s === 35) {
-            for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
+            for (; r < n3 && !O(t.charCodeAt(r)); ) r++;
             continue;
           }
           let i = -1;
-          if (s === 101 && r + 6 < n2 && t.charCodeAt(r + 1) === 120 && t.charCodeAt(r + 2) === 112 && t.charCodeAt(r + 3) === 111 && t.charCodeAt(r + 4) === 114 && t.charCodeAt(r + 5) === 116) {
+          if (s === 101 && r + 6 < n3 && t.charCodeAt(r + 1) === 120 && t.charCodeAt(r + 2) === 112 && t.charCodeAt(r + 3) === 111 && t.charCodeAt(r + 4) === 114 && t.charCodeAt(r + 5) === 116) {
             let C = t.charCodeAt(r + 6);
             if (w(C)) {
               let d = r + 7;
-              for (; d < n2 && w(t.charCodeAt(d)); ) d++;
+              for (; d < n3 && w(t.charCodeAt(d)); ) d++;
               b[t.charCodeAt(d)] && (i = r + 6, r = d);
             } else s = t.charCodeAt(r);
           }
           let l = r, u = 0;
-          for (; r < n2 && (u = t.charCodeAt(r), b[u]); ) r++;
+          for (; r < n3 && (u = t.charCodeAt(r), b[u]); ) r++;
           if (r === l) {
-            for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
+            for (; r < n3 && !O(t.charCodeAt(r)); ) r++;
             continue;
           }
           let p = t.slice(l, r), f = r;
-          if (r >= n2 && (u = 0), w(u)) do
-            r++, u = r < n2 ? t.charCodeAt(r) : 0;
+          if (r >= n3 && (u = 0), w(u)) do
+            r++, u = r < n3 ? t.charCodeAt(r) : 0;
           while (w(u));
           if (u === 61) r++;
-          else if (u === 58 && r === f && r + 1 < n2 && w(t.charCodeAt(r + 1))) r += 2;
+          else if (u === 58 && r === f && r + 1 < n3 && w(t.charCodeAt(r + 1))) r += 2;
           else {
-            for (r = i === -1 ? f : i; r < n2 && !O(t.charCodeAt(r)); ) r++;
+            for (r = i === -1 ? f : i; r < n3 && !O(t.charCodeAt(r)); ) r++;
             continue;
           }
           let c = r, a = r;
-          for (; a < n2 && w(t.charCodeAt(a)); ) a++;
+          for (; a < n3 && w(t.charCodeAt(a)); ) a++;
           let g = t.charCodeAt(a), h, y = false;
           if (g === 39 || g === 34 || g === 96) {
             let C = t[a], d = t.indexOf(C, a + 1), m = -1, v = -1;
             for (; d !== -1; ) {
               let q = t.charCodeAt(d - 1) === 92, A = d + 1;
-              for (; A < n2 && !O(t.charCodeAt(A)) && w(t.charCodeAt(A)); ) A++;
-              if ((A === n2 || O(t.charCodeAt(A)) || t.charCodeAt(A) === 35) && (m = d, v = A), !q) break;
+              for (; A < n3 && !O(t.charCodeAt(A)) && w(t.charCodeAt(A)); ) A++;
+              if ((A === n3 || O(t.charCodeAt(A)) || t.charCodeAt(A) === 35) && (m = d, v = A), !q) break;
               d = t.indexOf(C, d + 1);
             }
             if (m !== -1) {
-              if (h = t.slice(a + 1, m), r = v, t.charCodeAt(r) === 35) for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
+              if (h = t.slice(a + 1, m), r = v, t.charCodeAt(r) === 35) for (; r < n3 && !O(t.charCodeAt(r)); ) r++;
               y = true;
             }
           }
           if (!y) {
             let C = t.indexOf(`
 `, c);
-            C === -1 && (C = n2);
+            C === -1 && (C = n3);
             let d = t.indexOf("#", c);
             (d === -1 || d > C) && (d = C);
             let m = c, v = d;
             for (; m < v && w(t.charCodeAt(m)); ) m++;
             for (; v > m && w(t.charCodeAt(v - 1)); ) v--;
             let q = t.charCodeAt(m);
-            if (v - m >= 2 && (q === 39 || q === 34 || q === 96) && t.charCodeAt(v - 1) === q ? h = t.slice(m + 1, v - 1) : h = t.slice(m, v), r = d, d < C) for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
+            if (v - m >= 2 && (q === 39 || q === 34 || q === 96) && t.charCodeAt(v - 1) === q ? h = t.slice(m + 1, v - 1) : h = t.slice(m, v), r = d, d < C) for (; r < n3 && !O(t.charCodeAt(r)); ) r++;
           }
           g === 34 && (y || a < r) && h.indexOf("\\") !== -1 && (h = h.replace(/\\n/g, `
 `).replace(/\\r/g, "\r")), o[p] = h;
@@ -7345,8 +7345,8 @@ var require_dist2 = __commonJS({
       }
       function ce(e) {
         e = ie(e);
-        let o = j.resolve(process.cwd(), ".env"), t = "utf8", n2 = process.env;
-        e && e.processEnv != null && (n2 = e.processEnv);
+        let o = j.resolve(process.cwd(), ".env"), t = "utf8", n3 = process.env;
+        e && e.processEnv != null && (n3 = e.processEnv);
         let r = k(e && e.debug);
         e && e.encoding ? t = e.encoding : r && T("no encoding is specified (UTF-8 is used by default)");
         let s = [o];
@@ -7362,7 +7362,7 @@ var require_dist2 = __commonJS({
         } catch (a) {
           r && T(`failed to load ${c} ${a.message}`), i = a;
         }
-        let p = E.populate(n2, l, e), f = k(Object.prototype.hasOwnProperty.call(e, "quiet") ? e.quiet : B(n2).quiet);
+        let p = E.populate(n3, l, e), f = k(Object.prototype.hasOwnProperty.call(e, "quiet") ? e.quiet : B(n3).quiet);
         if (r || !f) {
           let c = Object.keys(p).length, a = [];
           for (let g of s) try {
@@ -7379,12 +7379,12 @@ var require_dist2 = __commonJS({
         return E.configDotenv(e);
       }
       function le(e, o, t = {}) {
-        let n2 = !!(t && t.debug), r = !!(t && t.override), s = {};
+        let n3 = !!(t && t.debug), r = !!(t && t.override), s = {};
         if (e === null || typeof e != "object" || o === null || typeof o != "object") {
           let i = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
           throw i.code = "OBJECT_REQUIRED", i;
         }
-        for (let i of Object.keys(o)) Object.prototype.hasOwnProperty.call(e, i) ? (r === true && (e[i] = o[i], s[i] = o[i]), n2 && T(r === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = o[i], s[i] = o[i]);
+        for (let i of Object.keys(o)) Object.prototype.hasOwnProperty.call(e, i) ? (r === true && (e[i] = o[i], s[i] = o[i]), n3 && T(r === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = o[i], s[i] = o[i]);
         return s;
       }
       var E = { configDotenv: ce, config: ae, parse: ne, populate: le };
@@ -7398,32 +7398,32 @@ var require_dist2 = __commonJS({
       var _ = __require("child_process"), fe = __require("fs"), L = __require("path");
       function ue(e) {
         let o = ['"'], t = 0;
-        for (let n2 of e) {
-          if (n2 === "\\") {
+        for (let n3 of e) {
+          if (n3 === "\\") {
             t++;
             continue;
           }
-          n2 === '"' ? o.push("\\".repeat(t * 2 + 1), '"') : o.push("\\".repeat(t), n2), t = 0;
+          n3 === '"' ? o.push("\\".repeat(t * 2 + 1), '"') : o.push("\\".repeat(t), n3), t = 0;
         }
         return o.push("\\".repeat(t * 2), '"'), o.join("");
       }
       function H(e, o = 1) {
         for (let t = 0; t < o; t++) {
-          let n2 = [];
+          let n3 = [];
           for (let r of e) {
             let s = r.charCodeAt(0), i = s >= 48 && s <= 57 || s >= 65 && s <= 90 || s >= 97 && s <= 122, l = "\\/:._-".includes(r);
-            !i && !l && s < 128 && n2.push("^"), n2.push(r);
+            !i && !l && s < 128 && n3.push("^"), n3.push(r);
           }
-          e = n2.join("");
+          e = n3.join("");
         }
         return e;
       }
       function P(e, o) {
-        let t = Object.keys(e).reverse().find((n2) => n2.toUpperCase() === o);
+        let t = Object.keys(e).reverse().find((n3) => n3.toUpperCase() === o);
         return t === void 0 ? void 0 : e[t];
       }
       function de(e, o, t) {
-        let n2 = (P(o, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n2.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n2] : [...n2, ""], i = /[\\/]/.test(e) ? [t] : [t, ...(P(o, "PATH") || "").split(";")];
+        let n3 = (P(o, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n3.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n3] : [...n3, ""], i = /[\\/]/.test(e) ? [t] : [t, ...(P(o, "PATH") || "").split(";")];
         for (let l of i) for (let u of s) {
           let p = L.resolve(t, l.replace(/^"|"$/g, ""), e + u);
           try {
@@ -7434,12 +7434,12 @@ var require_dist2 = __commonJS({
       }
       function pe(e, o, t) {
         if (process.platform !== "win32") return _.spawn(e, o, t);
-        let n2 = t.env || process.env, r = de(e, n2, t.cwd || process.cwd());
+        let n3 = t.env || process.env, r = de(e, n3, t.cwd || process.cwd());
         if (r && /\.(?:exe|com)$/i.test(r)) return _.spawn(r, o, t);
         let s = /\.(?:bat|cmd)$/i.test(r || e), i = [H(L.normalize(r || e))];
         for (let u of o) i.push(H(ue(u), s ? 2 : 1));
         let l = i.join(" ");
-        return _.spawn(P(n2, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t, windowsVerbatimArguments: true });
+        return _.spawn(P(n3, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t, windowsVerbatimArguments: true });
       }
       W.exports = pe;
     });
@@ -7450,7 +7450,7 @@ var require_dist2 = __commonJS({
 `));
       }
       function we(e) {
-        let o = [], t = false, n2, r, s, i, l = -1;
+        let o = [], t = false, n3, r, s, i, l = -1;
         for (let p = 0; p < e.length; p++) {
           let f = e[p];
           if (f === "--") {
@@ -7459,7 +7459,7 @@ var require_dist2 = __commonJS({
           }
           if (f === "--help" || f === "-h") return { help: true };
           if (f === "--quiet" || f === "-q") {
-            n2 = true;
+            n3 = true;
             continue;
           }
           if (f === "--debug") {
@@ -7487,7 +7487,7 @@ var require_dist2 = __commonJS({
           break;
         }
         let u = l === -1 ? [] : e.slice(l);
-        return { paths: o, pathSet: t, quiet: n2, debug: r, override: s, fast: i, command: u };
+        return { paths: o, pathSet: t, quiet: n3, debug: r, override: s, fast: i, command: u };
       }
       function Ee(e) {
         return e[0] === "~" ? Q.join(ge.homedir(), e.slice(1)) : e;
@@ -7497,17 +7497,17 @@ var require_dist2 = __commonJS({
         return o.path != null && (t.paths = [o.path], t.defaultPath = false), e.pathSet && (t.paths = e.paths, t.defaultPath = false), e.quiet != null && (t.quiet = e.quiet), e.debug != null && (t.debug = e.debug), e.override != null && (t.override = e.override), e.fast != null && (t.fast = e.fast), t;
       }
       function be(e) {
-        let o = {}, t = [], n2 = { override: e.override, debug: e.debug };
+        let o = {}, t = [], n3 = { override: e.override, debug: e.debug };
         for (let s of e.paths) {
           let i = Q.resolve(process.cwd(), Ee(s));
           try {
             let l = R.parse(he.readFileSync(i, { encoding: e.encoding }), { fast: e.fast });
-            R.populate(o, l, n2), t.push(s);
+            R.populate(o, l, n3), t.push(s);
           } catch (l) {
             if (e.debug && console.log(`\u2506 failed to load ${s} ${l.message}`), !(e.defaultPath && l.code === "ENOENT")) throw l;
           }
         }
-        return { injected: R.populate(process.env, o, n2), loadedPaths: t };
+        return { injected: R.populate(process.env, o, n3), loadedPaths: t };
       }
       function J(e) {
         let o = e[0];
@@ -7532,10 +7532,10 @@ var require_dist2 = __commonJS({
           $(), process.exitCode = 1;
           return;
         }
-        let n2 = Ae(t);
+        let n3 = Ae(t);
         try {
-          let c = be(n2);
-          if (!n2.quiet) {
+          let c = be(n3);
+          if (!n3.quiet) {
             let a = `\u25C7 injected env (${Object.keys(c.injected).length})`;
             c.loadedPaths.length > 0 && (a += ` from ${c.loadedPaths.join(", ")}`), console.error(a);
           }
@@ -11142,23 +11142,23 @@ var ZodEffects = class extends ZodType {
     }
     if (effect.type === "transform") {
       if (ctx.common.async === false) {
-        const base = this._def.schema._parseSync({
+        const base2 = this._def.schema._parseSync({
           data: ctx.data,
           path: ctx.path,
           parent: ctx
         });
-        if (!isValid(base))
+        if (!isValid(base2))
           return INVALID;
-        const result = effect.transform(base.value, checkCtx);
+        const result = effect.transform(base2.value, checkCtx);
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
         }
         return { status: status.value, value: result };
       } else {
-        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
-          if (!isValid(base))
+        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base2) => {
+          if (!isValid(base2))
             return INVALID;
-          return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
+          return Promise.resolve(effect.transform(base2.value, checkCtx)).then((result) => ({
             status: status.value,
             value: result
           }));
@@ -14343,9 +14343,9 @@ var $ZodIBAN = /* @__PURE__ */ $constructor("$ZodIBAN", (inst, def) => {
     });
   };
 });
-function isValidJWT2(token, algorithm = null) {
+function isValidJWT2(token2, algorithm = null) {
   try {
-    const tokensParts = token.split(".");
+    const tokensParts = token2.split(".");
     if (tokensParts.length !== 3)
       return false;
     const [header] = tokensParts;
@@ -16417,14 +16417,14 @@ var memo = {
     var _a3;
     (_a3 = inst._zod).deferred ?? (_a3.deferred = []);
     inst._zod.deferred.push(() => {
-      const base = inst._zod.parse;
+      const base2 = inst._zod.parse;
       const wrapped = (payload, ctx) => {
         if (ctx.direction !== "backward" && isBackEdge(ctx, payload.value))
           throw new $ZodCyclicError();
-        return base(payload, ctx);
+        return base2(payload, ctx);
       };
       inst._zod.parse = wrapped;
-      if (inst._zod.run === base)
+      if (inst._zod.run === base2)
         inst._zod.run = wrapped;
     });
   },
@@ -16436,15 +16436,15 @@ var memo = {
     let lastBucket;
     (_a3 = inst._zod).deferred ?? (_a3.deferred = []);
     inst._zod.deferred.push(() => {
-      const base = inst._zod.parse;
+      const base2 = inst._zod.parse;
       const wrapped = (payload, ctx) => {
         if (isRecursiveInst === void 0) {
           const walked = isRecursive(inst, /* @__PURE__ */ new Set(), false);
           if (walked === NONE) {
-            inst._zod.parse = base;
+            inst._zod.parse = base2;
             if (inst._zod.run === wrapped)
-              inst._zod.run = base;
-            return base(payload, ctx);
+              inst._zod.run = base2;
+            return base2(payload, ctx);
           }
           if (walked === PROVEN || rechecked)
             isRecursiveInst = true;
@@ -16453,7 +16453,7 @@ var memo = {
         }
         const input2 = payload.value;
         if (!isRef(input2))
-          return base(payload, ctx);
+          return base2(payload, ctx);
         let state2 = ctx[STATE];
         if (!state2) {
           state2 = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
@@ -16482,7 +16482,7 @@ var memo = {
         }
         handoff = bucket;
         const depth = open.length;
-        const result = base(payload, ctx);
+        const result = base2(payload, ctx);
         handoff = void 0;
         const entry = open.length > depth ? open.pop() : void 0;
         if (result instanceof Promise) {
@@ -16497,7 +16497,7 @@ var memo = {
         return result;
       };
       inst._zod.parse = wrapped;
-      if (inst._zod.run === base)
+      if (inst._zod.run === base2)
         inst._zod.run = wrapped;
     });
   }
@@ -29856,17 +29856,17 @@ var ZodArray2 = /* @__PURE__ */ $constructor("ZodArray", (inst, def) => {
   inst._zod.processJSONSchema = (ctx, json3, params) => arrayProcessor(inst, ctx, json3, params);
   inst.element = def.element;
 }, {
-  min(n2, params) {
-    return this.check(_minLength(n2, params));
+  min(n3, params) {
+    return this.check(_minLength(n3, params));
   },
   nonempty(params) {
     return this.check(_minLength(1, params));
   },
-  max(n2, params) {
-    return this.check(_maxLength(n2, params));
+  max(n3, params) {
+    return this.check(_maxLength(n3, params));
   },
-  length(n2, params) {
-    return this.check(_length(n2, params));
+  length(n3, params) {
+    return this.check(_length(n3, params));
   },
   unwrap() {
     return this.element;
@@ -30823,8 +30823,8 @@ function containsRef(value) {
     return Object.values(sub).some(containsRef);
   });
 }
-function plural(n2) {
-  return n2 === 1 ? "element" : "elements";
+function plural(n3) {
+  return n3 === 1 ? "element" : "elements";
 }
 function checkArrayGuards(arraySchema, guards) {
   const guard = z.transform((value) => value).check((payload) => {
@@ -33766,19 +33766,19 @@ function parseNullableDef(def, refs) {
     };
   }
   if (refs.target === "openApi3") {
-    const base2 = parseDef(def.innerType._def, {
+    const base3 = parseDef(def.innerType._def, {
       ...refs,
       currentPath: [...refs.currentPath]
     });
-    if (base2 && "$ref" in base2)
-      return { allOf: [base2], nullable: true };
-    return base2 && { ...base2, nullable: true };
+    if (base3 && "$ref" in base3)
+      return { allOf: [base3], nullable: true };
+    return base3 && { ...base3, nullable: true };
   }
-  const base = parseDef(def.innerType._def, {
+  const base2 = parseDef(def.innerType._def, {
     ...refs,
     currentPath: [...refs.currentPath, "anyOf", "0"]
   });
-  return base && { anyOf: [base, { type: "null" }] };
+  return base2 && { anyOf: [base2, { type: "null" }] };
 }
 
 // node_modules/zod-to-json-schema/dist/esm/parsers/number.js
@@ -35182,8 +35182,8 @@ var Protocol = class {
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function mergeCapabilities(base, additional) {
-  const result = { ...base };
+function mergeCapabilities(base2, additional) {
+  const result = { ...base2 };
   for (const key in additional) {
     const k = key;
     const addValue = additional[k];
@@ -36913,7 +36913,6 @@ var config2 = {
   model: process.env.MODEL || "claude-opus-5",
   effort: process.env.EFFORT || "high",
   initialUsd: num("INITIAL_USD", 1e3),
-  initialSol: num("INITIAL_SOL", 0.05),
   solanaTxFeeSol: num("SOLANA_TX_FEE_SOL", 1e-4),
   binanceTakerFee: num("BINANCE_TAKER_FEE", 1e-3),
   // Comisión real de Binance por retirar USDC por la red Solana (septiembre de 2026).
@@ -36950,7 +36949,7 @@ var DUPLICATE_THRESHOLD = 0.6;
 function lessonRefs(text2) {
   const ids = /* @__PURE__ */ new Set();
   for (const m of text2.matchAll(/lecci[oó]n(?:es)?\s*#?\s*(\d+(?:\s*(?:,|y|e|\/)\s*#?\d+)*)/gi)) {
-    for (const n2 of m[1].matchAll(/\d+/g)) ids.add(Number(n2[0]));
+    for (const n3 of m[1].matchAll(/\d+/g)) ids.add(Number(n3[0]));
   }
   return [...ids];
 }
@@ -36966,6 +36965,19 @@ var MIGRATIONS = [
     version: 2,
     description: "Memoria de tres tipos (howtos, creencias, retrospectivas) escrita por el agente revisor",
     up: memoryV2
+  },
+  {
+    version: 3,
+    description: "Cadenas EVM (Base, BNB Chain): datos de tokens, approvals, y reparto y referencia de cada misi\xF3n",
+    up: (db2) => db2.exec(`
+        -- S\xEDmbolo y decimales de los tokens EVM (no cambian: se leen una vez por RPC).
+        CREATE TABLE token_meta (chain TEXT NOT NULL, address TEXT NOT NULL, symbol TEXT NOT NULL, decimals INTEGER NOT NULL, PRIMARY KEY (chain, address));
+        -- Tokens que el monedero EVM de cada misi\xF3n ya ha aprobado para vender (la primera venta cuesta un approve).
+        CREATE TABLE evm_approvals (mission_id INTEGER NOT NULL, chain TEXT NOT NULL, token TEXT NOT NULL, approved_at TEXT NOT NULL, PRIMARY KEY (mission_id, chain, token));
+        -- Reparto inicial del capital por cadena o exchange (JSON de porcentajes) y cartera inicial para la referencia "sin operar".
+        ALTER TABLE missions ADD COLUMN allocation TEXT;
+        ALTER TABLE missions ADD COLUMN benchmark TEXT;
+      `)
   }
 ];
 function memoryV2(db2) {
@@ -37325,8 +37337,8 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.9.0";
-var semver = (v) => v.split(".").map((n2) => Number.parseInt(n2, 10) || 0);
+var CODE_VERSION = "0.10.0";
+var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
   for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
@@ -37549,6 +37561,9 @@ function roundDownToStep(qty, step) {
   return Number((Math.floor(qty / step + 1e-9) * step).toFixed(decimals));
 }
 
+// src/sim/portfolio.ts
+import { createHash } from "node:crypto";
+
 // src/market/jupiter.ts
 var BASE2 = "https://lite-api.jup.ag";
 var SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -37576,20 +37591,21 @@ async function getTokenInfo(mint) {
 }
 async function getQuote(inputMint, outputMint, amountBase, slippageBps, ttlMs = 2e3) {
   const url2 = `${BASE2}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
-  const quote = await fetchJson(url2, 15e3, ttlMs);
-  if (quote.error) throw new Error(`Jupiter: ${quote.error}`);
-  return quote;
+  const quote2 = await fetchJson(url2, 15e3, ttlMs);
+  if (quote2.error) throw new Error(`Jupiter: ${quote2.error}`);
+  return quote2;
 }
 function toBaseUnits(amount, decimals) {
   const [int2, frac = ""] = amount.toFixed(decimals).split(".");
   return BigInt(int2 + frac.padEnd(decimals, "0"));
 }
-function fromBaseUnits(base, decimals) {
-  return Number(BigInt(base)) / 10 ** decimals;
+function fromBaseUnits(base2, decimals) {
+  return Number(BigInt(base2)) / 10 ** decimals;
 }
 
 // src/sim/types.ts
-var CHAINS = ["solana"];
+var CHAINS = ["solana", "base", "bsc"];
+var DEFAULT_ALLOCATION = { solana: 30, base: 25, bsc: 25, binance: 20 };
 var VENUES = [...CHAINS, "binance"];
 
 // src/sim/venues/binance.ts
@@ -37644,9 +37660,469 @@ var binance = {
   }
 };
 
+// src/market/evm.ts
+var NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+var EVM_CHAINS = {
+  base: { chainId: 8453, rpc: "https://mainnet.base.org", kyber: "base", dexscreener: "base", gecko: "base" },
+  bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
+};
+var isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
+async function rpcBatch(chain, calls) {
+  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const res = await fetchJson(EVM_CHAINS[chain].rpc, {
+    method: "POST",
+    body,
+    ttlMs: 1e4
+  });
+  const byId = new Map(res.map((r) => [r.id, r]));
+  return body.map((b) => {
+    const r = byId.get(b.id);
+    if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
+    return r.result;
+  });
+}
+function decodeString(hex3) {
+  const data = hex3.replace(/^0x/, "");
+  if (data.length >= 128) {
+    const len = parseInt(data.slice(64, 128), 16);
+    return Buffer.from(data.slice(128, 128 + len * 2), "hex").toString("utf8");
+  }
+  return Buffer.from(data, "hex").toString("utf8").replace(/\0+$/, "");
+}
+async function tokenMeta(chain, address) {
+  const addr = address.toLowerCase();
+  const cached3 = db.prepare("SELECT symbol, decimals FROM token_meta WHERE chain = ? AND address = ?").get(chain, addr);
+  if (cached3) return { address: addr, ...cached3 };
+  let decimalsHex;
+  let symbolHex;
+  try {
+    [decimalsHex, symbolHex] = await rpcBatch(chain, [
+      { method: "eth_call", params: [{ to: addr, data: "0x313ce567" }, "latest"] },
+      { method: "eth_call", params: [{ to: addr, data: "0x95d89b41" }, "latest"] }
+    ]);
+  } catch {
+    throw new Error(`No existe un token en ${addr} en ${chain} (o no responde como un ERC-20)`);
+  }
+  if (!decimalsHex || decimalsHex === "0x") throw new Error(`No existe un token en ${addr} en ${chain}`);
+  const decimals = Number(BigInt(decimalsHex));
+  const symbol2 = decodeString(symbolHex).trim() || "?";
+  db.prepare("INSERT OR REPLACE INTO token_meta (chain, address, symbol, decimals) VALUES (?, ?, ?, ?)").run(chain, addr, symbol2, decimals);
+  return { address: addr, symbol: symbol2, decimals };
+}
+async function gasPriceWei(chain) {
+  const [hex3] = await rpcBatch(chain, [{ method: "eth_gasPrice", params: [] }]);
+  return BigInt(hex3);
+}
+async function kyberQuote(chain, tokenIn, tokenOut, amountIn) {
+  const url2 = `https://aggregator-api.kyberswap.com/${EVM_CHAINS[chain].kyber}/api/v1/routes?tokenIn=${tokenIn}&tokenOut=${tokenOut}&amountIn=${amountIn}&gasInclude=true`;
+  const res = await fetchJson(url2, {
+    ttlMs: 2e3,
+    headers: { "x-client-id": "cryptoagent" }
+  });
+  const r = res.data?.routeSummary;
+  if (res.code !== 0 || !r) throw new Error(`KyberSwap: ${res.message}`);
+  return {
+    amountOut: BigInt(r.amountOut),
+    gas: BigInt(r.gas),
+    gasPriceWei: BigInt(r.gasPrice),
+    gasUsd: Number(r.gasUsd),
+    l1FeeUsd: Number(r.l1FeeUsd ?? 0),
+    amountInUsd: Number(r.amountInUsd),
+    amountOutUsd: Number(r.amountOutUsd),
+    route: r.route.flat().map((s) => s.exchange),
+    source: "KyberSwap"
+  };
+}
+async function paraswapQuote(chain, tokenIn, tokenOut, amountIn) {
+  const url2 = `https://api.paraswap.io/prices?srcToken=${tokenIn.address}&destToken=${tokenOut.address}&amount=${amountIn}&srcDecimals=${tokenIn.decimals}&destDecimals=${tokenOut.decimals}&side=SELL&network=${EVM_CHAINS[chain].chainId}&version=6.2`;
+  const res = await fetchJson(url2, { ttlMs: 2e3 });
+  const r = res.priceRoute;
+  if (!r) throw new Error(`ParaSwap: ${res.error ?? "sin ruta"}`);
+  const gas = BigInt(r.gasCost);
+  const gasPrice = await gasPriceWei(chain);
+  return {
+    amountOut: BigInt(r.destAmount),
+    gas,
+    gasPriceWei: gasPrice,
+    gasUsd: Number(r.gasCostUSD),
+    l1FeeUsd: 0,
+    amountInUsd: Number(r.srcUSD),
+    amountOutUsd: Number(r.destUSD),
+    route: (r.bestRoute ?? []).flatMap((x) => x.swaps.flatMap((s) => s.swapExchanges.map((e) => e.exchange))),
+    source: "ParaSwap"
+  };
+}
+async function quote(chain, tokenIn, tokenOut, amountIn) {
+  try {
+    return await kyberQuote(chain, tokenIn.address, tokenOut.address, amountIn);
+  } catch (kyberErr) {
+    try {
+      return await paraswapQuote(chain, tokenIn, tokenOut, amountIn);
+    } catch (paraErr) {
+      throw new Error(`Sin ruta de swap en ${chain}: ${kyberErr.message}; ${paraErr.message}`);
+    }
+  }
+}
+var pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
+var flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
+async function tokenSecurity(chain, address) {
+  const res = await fetchJson(
+    `https://api.gopluslabs.io/api/v1/token_security/${EVM_CHAINS[chain].chainId}?contract_addresses=${address}`,
+    { ttlMs: 10 * 6e4 }
+  );
+  const r = res.result?.[address.toLowerCase()];
+  if (!r) return {};
+  const holders = r.holders ?? [];
+  return {
+    buyTaxPct: pctOrUndefined(r.buy_tax),
+    sellTaxPct: pctOrUndefined(r.sell_tax),
+    honeypot: flag(r.is_honeypot),
+    mintable: flag(r.is_mintable),
+    cannotSellAll: flag(r.cannot_sell_all),
+    holders: r.holder_count ? Number(r.holder_count) : void 0,
+    topHoldersPct: holders.length ? Number((holders.slice(0, 10).reduce((s, h) => s + Number(h.percent), 0) * 100).toFixed(1)) : void 0,
+    ownerCanChangeBalance: flag(r.owner_change_balance),
+    raw: r
+  };
+}
+async function dexPairs(chain, addresses) {
+  const out = /* @__PURE__ */ new Map();
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  for (let i = 0; i < unique.length; i += 30) {
+    const pairs = await fetchJson(`https://api.dexscreener.com/tokens/v1/${EVM_CHAINS[chain].dexscreener}/${unique.slice(i, i + 30).join(",")}`, {
+      ttlMs: 15e3
+    });
+    for (const p of pairs) {
+      const key = p.baseToken.address.toLowerCase();
+      out.set(key, [...out.get(key) ?? [], p]);
+    }
+  }
+  for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+  return out;
+}
+
+// src/sim/venues/evm.ts
+var DUST2 = 1e-12;
+var APPROVE_GAS = 46000n;
+function settleEvmSwap(q, w) {
+  const x = q.extra;
+  const native = q.chain === "base" ? "ETH" : "BNB";
+  const inBalance = w.balance(q.input.address);
+  if (q.amountIn > inBalance + DUST2) {
+    return { ok: false, error: `Saldo insuficiente: tienes ${inBalance} ${q.input.symbol} y quieres vender ${q.amountIn}`, deltas: [], costs: [] };
+  }
+  const isNativeIn = q.input.address === NATIVE;
+  const needsApproval = !isNativeIn && !w.approved?.(q.input.address);
+  const costs = [{ kind: "network_fee", asset: NATIVE, symbol: native, amount: x.gasNative }];
+  if (x.l1Native > 0) costs.push({ kind: "l1_fee", asset: NATIVE, symbol: native, amount: x.l1Native });
+  if (needsApproval) costs.push({ kind: "approval", asset: NATIVE, symbol: native, amount: x.approvalGasNative });
+  const gasCost = costs.reduce((s, c) => s + c.amount, 0);
+  const nativeBalance = w.balance(NATIVE);
+  const needed = gasCost + (isNativeIn ? q.amountIn : 0);
+  if (nativeBalance + DUST2 < needed) {
+    return {
+      ok: false,
+      error: `insufficient funds for gas * price + value: necesitas ${needed.toPrecision(4)} ${native} (${gasCost.toPrecision(3)} de gas${isNativeIn ? " m\xE1s lo que env\xEDas" : ""}) y tienes ${nativeBalance.toPrecision(4)} ${native}. En esta cadena el gas se paga en ${native}.`,
+      deltas: [],
+      costs: []
+    };
+  }
+  const gasDelta = { asset: NATIVE, symbol: native, decimals: 18, amount: -gasCost };
+  const approvals = needsApproval ? [q.input.address] : [];
+  const revert = (error62) => ({ ok: false, error: error62, deltas: [gasDelta], costs, approvals });
+  if (x.honeypotSell) return revert(`El swap revierte: ${q.input.symbol} es un honeypot (no se puede vender). Has pagado el gas igualmente.`);
+  const taxLoss = q.grossOut > 0 ? 1 - q.amountOut / q.grossOut : 0;
+  if (taxLoss * 1e4 > q.slippageBps + 1e-6) {
+    return revert(
+      `El swap revierte: los impuestos del token (${(taxLoss * 100).toFixed(1)} %) superan tu slippage (${q.slippageBps / 100} %). Has pagado el gas igualmente. Con un token con impuestos, el slippage tiene que cubrirlos.`
+    );
+  }
+  if (x.sellTaxPct) costs.push({ kind: "tax_sell", asset: q.input.address, symbol: q.input.symbol, amount: q.amountIn * (x.sellTaxPct / 100) });
+  if (x.buyTaxPct) {
+    costs.push({ kind: "tax_buy", asset: q.output.address, symbol: q.output.symbol, amount: q.grossOut * (1 - (x.sellTaxPct ?? 0) / 100) * (x.buyTaxPct / 100) });
+  }
+  return {
+    ok: true,
+    deltas: [
+      { asset: q.input.address, symbol: q.input.symbol, decimals: q.input.decimals, amount: -q.amountIn },
+      { asset: q.output.address, symbol: q.output.symbol, decimals: q.output.decimals, amount: q.amountOut },
+      gasDelta
+    ],
+    costs,
+    approvals,
+    info: { gasCost: `${gasCost.toPrecision(3)} ${native}`, approvalSent: needsApproval, quotedBy: x.source }
+  };
+}
+var ageMinutes = (ms) => ms ? Math.round((Date.now() - ms) / 6e4) : void 0;
+var n = (v, d = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(d)) : void 0;
+function evmAdapter(cfg) {
+  const cash = new Set(cfg.stables.map((t) => t.address));
+  const isCash = (a) => cash.has(a.toLowerCase());
+  async function nativeUsd() {
+    const data = await fetchJson(`https://api.binance.com/api/v3/ticker/price?symbol=${cfg.nativeBook}`, { ttlMs: 1e4 });
+    return Number(data.price);
+  }
+  async function resolveToken(ref) {
+    const r = ref.trim();
+    const alias = cfg.aliases[r.toUpperCase()];
+    if (alias) return alias;
+    if (!isAddress(r)) {
+      throw new Error(`En ${cfg.label} indica la direcci\xF3n del token (0x\u2026) o un alias: ${Object.keys(cfg.aliases).join(", ")}`);
+    }
+    if (r.toLowerCase() === NATIVE) return cfg.native;
+    return tokenMeta(cfg.id, r);
+  }
+  async function priceUsd2(assets) {
+    const prices = {};
+    const rest = [];
+    for (const a of assets.map((x) => x.toLowerCase())) {
+      if (isCash(a)) prices[a] = 1;
+      else if (a === NATIVE) prices[a] = await nativeUsd();
+      else rest.push(a);
+    }
+    if (rest.length) {
+      const pairs = await dexPairs(cfg.id, rest);
+      for (const a of rest) {
+        const p = Number(pairs.get(a)?.[0]?.priceUsd);
+        if (Number.isFinite(p) && p > 0) prices[a] = p;
+      }
+    }
+    return prices;
+  }
+  const security = (a) => a === NATIVE || isCash(a) ? Promise.resolve({}) : tokenSecurity(cfg.id, a).catch(() => ({}));
+  const adapter = {
+    kind: "chain",
+    id: cfg.id,
+    label: cfg.label,
+    native: cfg.native,
+    cash: cfg.cash,
+    liquidationReserve: cfg.liquidationReserve,
+    gasBudgetUsd: cfg.gasBudgetUsd,
+    isCash,
+    resolveToken,
+    priceUsd: priceUsd2,
+    async triggerPrice(asset2) {
+      const price = (await priceUsd2([asset2]))[asset2.toLowerCase()];
+      if (typeof price !== "number") throw new Error(`Sin precio para ${asset2} en ${cfg.label}`);
+      return price;
+    },
+    async quote({ input: input2, output: output2, amountIn, slippageBps }) {
+      if (input2.address === output2.address) throw new Error("El token de entrada y salida son el mismo");
+      const [q, secIn, secOut] = await Promise.all([
+        quote(cfg.id, input2, output2, toBaseUnits(amountIn, input2.decimals)),
+        security(input2.address),
+        security(output2.address)
+      ]);
+      const grossOut = fromBaseUnits(q.amountOut, output2.decimals);
+      const gasNative = Number(q.gas * q.gasPriceWei) / 1e18;
+      const nativePrice = gasNative > 0 && q.gasUsd > 0 ? q.gasUsd / gasNative : await nativeUsd();
+      const warnings = [];
+      const taxable = (t) => t.address !== NATIVE && !isCash(t.address);
+      if (taxable(input2) && secIn.sellTaxPct === void 0) warnings.push(`No se conoce el impuesto de venta de ${input2.symbol}: podr\xEDa tenerlo.`);
+      if (taxable(output2) && secOut.buyTaxPct === void 0) warnings.push(`No se conoce el impuesto de compra de ${output2.symbol}: podr\xEDa tenerlo.`);
+      if (secIn.sellTaxPct) warnings.push(`${input2.symbol} cobra un ${secIn.sellTaxPct} % al venderlo.`);
+      if (secOut.buyTaxPct) warnings.push(`${output2.symbol} cobra un ${secOut.buyTaxPct} % al comprarlo.`);
+      if (secOut.sellTaxPct) warnings.push(`${output2.symbol} cobra un ${secOut.sellTaxPct} % al venderlo.`);
+      if (secOut.honeypot) warnings.push(`GoPlus marca ${output2.symbol} como honeypot: podr\xEDas no poder venderlo.`);
+      if (secOut.cannotSellAll) warnings.push(`${output2.symbol} no deja vender todo el saldo de una vez.`);
+      const extra = {
+        source: q.source,
+        gasNative,
+        l1Native: q.l1FeeUsd / nativePrice,
+        approvalGasNative: Number(APPROVE_GAS * q.gasPriceWei) / 1e18,
+        sellTaxPct: secIn.sellTaxPct,
+        buyTaxPct: secOut.buyTaxPct,
+        honeypotSell: secIn.honeypot === true
+      };
+      return {
+        chain: cfg.id,
+        input: input2,
+        output: output2,
+        amountIn,
+        grossOut,
+        amountOut: grossOut * (1 - (secIn.sellTaxPct ?? 0) / 100) * (1 - (secOut.buyTaxPct ?? 0) / 100),
+        route: [`${q.source}: ${[...new Set(q.route)].join(", ")}`],
+        slippageBps,
+        extra,
+        warnings
+      };
+    },
+    settle: settleEvmSwap,
+    async liquidationValue(h) {
+      const asset2 = h.asset.toLowerCase();
+      if (isCash(asset2)) return { usd: h.amount, method: "stable", reliable: true };
+      if (asset2 === NATIVE) {
+        try {
+          const fill = walkBook((await getOrderBook(cfg.nativeBook)).bids, "SELL", h.amount);
+          return { usd: fill.quoteQty, method: `libro Binance ${cfg.nativeBook}`, reliable: true };
+        } catch {
+        }
+      }
+      try {
+        const sec = await security(asset2);
+        if (sec.honeypot) return { usd: 0, method: "honeypot: no se puede vender", reliable: true };
+        const token2 = asset2 === NATIVE ? cfg.native : await tokenMeta(cfg.id, asset2);
+        const q = await quote(cfg.id, token2, cfg.cash, toBaseUnits(h.amount, h.decimals));
+        const usd2 = fromBaseUnits(q.amountOut, cfg.cash.decimals) * (1 - (sec.sellTaxPct ?? 0) / 100);
+        return { usd: usd2, method: `liquidaci\xF3n ${q.source}${sec.sellTaxPct ? ` (con ${sec.sellTaxPct} % de impuesto)` : ""}`, reliable: true };
+      } catch {
+        const p = (await priceUsd2([asset2]).catch(() => ({})))[asset2];
+        return { usd: (p ?? 0) * h.amount, method: "precio spot (sin cotizaci\xF3n de venta)", reliable: false };
+      }
+    },
+    async entryFeatures(asset2) {
+      const [pairs, sec] = await Promise.all([dexPairs(cfg.id, [asset2]).catch(() => /* @__PURE__ */ new Map()), security(asset2.toLowerCase())]);
+      const top = pairs.get(asset2.toLowerCase())?.[0];
+      const m5 = top?.txns?.m5;
+      return {
+        venue: cfg.id,
+        ageMinutes: ageMinutes(top?.pairCreatedAt),
+        liquidityUsd: n(top?.liquidity?.usd, 0),
+        mcapUsd: n(top?.marketCap ?? top?.fdv, 0),
+        priceChange5mPct: n(top?.priceChange?.m5),
+        priceChange1hPct: n(top?.priceChange?.h1),
+        holders: sec.holders,
+        topHoldersPct: sec.topHoldersPct,
+        netBuyers5m: m5 ? m5.buys - m5.sells : void 0,
+        launchpad: top?.dexId,
+        buyTaxPct: sec.buyTaxPct,
+        sellTaxPct: sec.sellTaxPct,
+        honeypot: sec.honeypot,
+        mintable: sec.mintable
+      };
+    },
+    research: {
+      async scan(limit) {
+        const merged = /* @__PURE__ */ new Map();
+        const add = (address, source, data) => {
+          if (!address) return;
+          const key = address.toLowerCase();
+          const c = merged.get(key) ?? { token: key, sources: [] };
+          if (!c.sources.includes(source)) c.sources.push(source);
+          for (const [k, v] of Object.entries(data)) if (v !== void 0 && c[k] === void 0) c[k] = v;
+          merged.set(key, c);
+        };
+        const gecko = async (kind) => {
+          const res = await fetchJson(`https://api.geckoterminal.com/api/v2/networks/${EVM_CHAINS[cfg.id].gecko}/${kind}`);
+          for (const p of res.data) {
+            const a = p.attributes ?? {};
+            const tx = a.transactions?.m5;
+            add(String(p.relationships?.base_token?.data?.id ?? "").replace(/^[a-z_]+?_(0x)/, "$1"), `geckoterminal_${kind}`, {
+              name: a.name,
+              liquidityUsd: n(Number(a.reserve_in_usd), 0),
+              priceChange5mPct: n(Number(a.price_change_percentage?.m5)),
+              priceChange1hPct: n(Number(a.price_change_percentage?.h1)),
+              netBuyers5m: tx ? tx.buyers - tx.sellers : void 0,
+              volume1hUsd: n(Number(a.volume_usd?.h1), 0),
+              ageMinutes: a.pool_created_at ? ageMinutes(new Date(a.pool_created_at).getTime()) : void 0
+            });
+          }
+          return res.data.length;
+        };
+        const boosts = async () => {
+          const list = await fetchJson("https://api.dexscreener.com/token-boosts/latest/v1");
+          const mine = list.filter((b) => b.chainId === EVM_CHAINS[cfg.id].dexscreener);
+          for (const b of mine) add(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
+          return mine.length;
+        };
+        const sources = ["geckoterminal_trending_pools", "geckoterminal_new_pools", "dexscreener_boosted"];
+        const status = await Promise.all(
+          [() => gecko("trending_pools"), () => gecko("new_pools"), boosts].map((fn, i) => fn().then((c) => `${sources[i]}: ${c}`, (e) => `${sources[i]}: ${e.message.slice(0, 120)}`))
+        );
+        const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
+        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+        return {
+          chain: cfg.id,
+          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
+          sourcesStatus: status,
+          totalUnique: merged.size,
+          candidates
+        };
+      },
+      async report(token2) {
+        const t = await resolveToken(token2);
+        const [pairs, sec] = await Promise.all([
+          dexPairs(cfg.id, [t.address]).then(
+            (m) => m.get(t.address) ?? [],
+            (e) => ({ error: e.message })
+          ),
+          t.address === NATIVE || isCash(t.address) ? Promise.resolve(null) : tokenSecurity(cfg.id, t.address).catch((e) => ({ error: e.message }))
+        ]);
+        const summarize = (p) => ({
+          dex: p.dexId,
+          quote: p.quoteToken.symbol,
+          priceUsd: p.priceUsd,
+          liquidityUsd: n(p.liquidity?.usd, 0),
+          mcapUsd: n(p.marketCap ?? p.fdv, 0),
+          pairAgeMinutes: ageMinutes(p.pairCreatedAt),
+          txns: p.txns,
+          volumeUsd: p.volume,
+          priceChangePct: p.priceChange,
+          url: p.url
+        });
+        const top = Array.isArray(pairs) ? pairs[0] : void 0;
+        const s = sec && !("error" in sec) ? sec : void 0;
+        return {
+          chain: cfg.id,
+          token: t,
+          pairs: Array.isArray(pairs) ? { count: pairs.length, top: pairs.slice(0, 3).map(summarize) } : pairs,
+          websites: top?.info?.websites?.map((w) => w.url),
+          socials: top?.info?.socials?.map((x) => `${x.type}: ${x.url}`),
+          security: s ? {
+            buyTaxPct: s.buyTaxPct ?? "desconocido",
+            sellTaxPct: s.sellTaxPct ?? "desconocido",
+            honeypot: s.honeypot,
+            cannotSellAll: s.cannotSellAll,
+            mintable: s.mintable,
+            ownerCanChangeBalance: s.ownerCanChangeBalance,
+            holders: s.holders,
+            top10HoldersPct: s.topHoldersPct,
+            openSource: s.raw?.is_open_source,
+            proxy: s.raw?.is_proxy,
+            creatorPercent: s.raw?.creator_percent,
+            lpHolders: s.raw?.lp_holders?.slice(0, 3)
+          } : sec ?? void 0
+        };
+      }
+    }
+  };
+  return adapter;
+}
+var token = (address, symbol2, decimals) => ({ address: address.toLowerCase(), symbol: symbol2, decimals });
+var ETH = token(NATIVE, "ETH", 18);
+var BASE_USDC = token("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", 6);
+var BASE_USDBC = token("0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", "USDbC", 6);
+var BASE_WETH = token("0x4200000000000000000000000000000000000006", "WETH", 18);
+var BNB = token(NATIVE, "BNB", 18);
+var BSC_USDT = token("0x55d398326f99059fF775485246999027B3197955", "USDT", 18);
+var BSC_USDC = token("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", "USDC", 18);
+var BSC_WBNB = token("0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "WBNB", 18);
+var base = evmAdapter({
+  id: "base",
+  label: "Base",
+  native: ETH,
+  nativeBook: "ETHUSDT",
+  cash: BASE_USDC,
+  stables: [BASE_USDC, BASE_USDBC],
+  aliases: { ETH, WETH: BASE_WETH, USDC: BASE_USDC },
+  liquidationReserve: 3e-5,
+  gasBudgetUsd: { min: 0.3, max: 3 }
+});
+var bsc = evmAdapter({
+  id: "bsc",
+  label: "BNB Chain",
+  native: BNB,
+  nativeBook: "BNBUSDT",
+  cash: BSC_USDT,
+  stables: [BSC_USDT, BSC_USDC],
+  aliases: { BNB, WBNB: BSC_WBNB, USDT: BSC_USDT, USDC: BSC_USDC },
+  liquidationReserve: 2e-4,
+  gasBudgetUsd: { min: 0.3, max: 3 }
+});
+
 // src/market/research.ts
-var n = (v, digits = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : void 0;
-var ageMinutes = (iso) => iso === void 0 ? void 0 : Math.round((Date.now() - new Date(iso).getTime()) / 6e4);
+var n2 = (v, digits = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : void 0;
+var ageMinutes2 = (iso) => iso === void 0 ? void 0 : Math.round((Date.now() - new Date(iso).getTime()) / 6e4);
 async function attempt(label, fn) {
   try {
     return await fn();
@@ -37669,13 +38145,13 @@ async function scanMarket(limit = 25) {
       add(t.id, `jupiter_trending_${interval}`, {
         symbol: t.symbol,
         name: t.name,
-        mcapUsd: n(t.mcap, 0),
-        liquidityUsd: n(t.liquidity, 0),
-        priceChange5mPct: n(t.stats5m?.priceChange),
-        priceChange1hPct: n(t.stats1h?.priceChange),
+        mcapUsd: n2(t.mcap, 0),
+        liquidityUsd: n2(t.liquidity, 0),
+        priceChange5mPct: n2(t.stats5m?.priceChange),
+        priceChange1hPct: n2(t.stats1h?.priceChange),
         netBuyers5m: t.stats5m?.numNetBuyers,
         traders5m: t.stats5m?.numTraders,
-        ageMinutes: ageMinutes(t.createdAt)
+        ageMinutes: ageMinutes2(t.createdAt)
       });
     }
     return list.length;
@@ -37686,10 +38162,10 @@ async function scanMarket(limit = 25) {
       add(c.mint, "pumpfun_live", {
         symbol: c.symbol,
         name: c.name,
-        mcapUsd: n(c.usd_market_cap, 0),
+        mcapUsd: n2(c.usd_market_cap, 0),
         pumpfunGraduated: c.complete,
         pumpfunReplies: c.reply_count,
-        ageMinutes: ageMinutes(c.created_timestamp)
+        ageMinutes: ageMinutes2(c.created_timestamp)
       });
     }
     return list.length;
@@ -37707,10 +38183,10 @@ async function scanMarket(limit = 25) {
       const a = p.attributes ?? {};
       add(mint, "geckoterminal_trending", {
         name: a.name,
-        liquidityUsd: n(Number(a.reserve_in_usd), 0),
-        priceChange5mPct: n(Number(a.price_change_percentage?.m5)),
-        priceChange1hPct: n(Number(a.price_change_percentage?.h1)),
-        ageMinutes: ageMinutes(a.pool_created_at)
+        liquidityUsd: n2(Number(a.reserve_in_usd), 0),
+        priceChange5mPct: n2(Number(a.price_change_percentage?.m5)),
+        priceChange1hPct: n2(Number(a.price_change_percentage?.h1)),
+        ageMinutes: ageMinutes2(a.pool_created_at)
       });
     }
     return res.data.length;
@@ -37739,9 +38215,9 @@ async function tokenReport(mint) {
       const t = list.find((x) => x.id === mint);
       if (!t) return { error: "no encontrado en Jupiter" };
       const stats = (s) => s && {
-        priceChangePct: n(s.priceChange),
-        buyVolumeUsd: n(s.buyVolume, 0),
-        sellVolumeUsd: n(s.sellVolume, 0),
+        priceChangePct: n2(s.priceChange),
+        buyVolumeUsd: n2(s.buyVolume, 0),
+        sellVolumeUsd: n2(s.sellVolume, 0),
         buys: s.numBuys,
         sells: s.numSells,
         traders: s.numTraders,
@@ -37752,13 +38228,13 @@ async function tokenReport(mint) {
         symbol: t.symbol,
         name: t.name,
         priceUsd: t.usdPrice,
-        mcapUsd: n(t.mcap, 0),
-        liquidityUsd: n(t.liquidity, 0),
+        mcapUsd: n2(t.mcap, 0),
+        liquidityUsd: n2(t.liquidity, 0),
         holders: t.holderCount,
-        ageMinutes: ageMinutes(t.createdAt),
+        ageMinutes: ageMinutes2(t.createdAt),
         launchpad: t.launchpad,
         graduatedAt: t.graduatedAt,
-        organicScore: n(t.organicScore, 1),
+        organicScore: n2(t.organicScore, 1),
         verified: t.isVerified,
         website: t.website,
         audit: t.audit,
@@ -37774,8 +38250,8 @@ async function tokenReport(mint) {
       return {
         pairs: pairs.length,
         mainDex: top.dexId,
-        pairAgeMinutes: ageMinutes(top.pairCreatedAt),
-        liquidityUsd: n(top.liquidity?.usd, 0),
+        pairAgeMinutes: ageMinutes2(top.pairCreatedAt),
+        liquidityUsd: n2(top.liquidity?.usd, 0),
         volumeUsd: top.volume,
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
         priceChangePct: top.priceChange,
@@ -37802,10 +38278,10 @@ async function tokenReport(mint) {
         replies: c.reply_count,
         participants: c.num_participants,
         graduated: c.complete,
-        mcapUsd: n(c.usd_market_cap, 0),
-        athMcapUsd: n(c.ath_market_cap, 0),
+        mcapUsd: n2(c.usd_market_cap, 0),
+        athMcapUsd: n2(c.ath_market_cap, 0),
         securityVerdict: c.security_verdict,
-        createdMinutesAgo: ageMinutes(c.created_timestamp),
+        createdMinutesAgo: ageMinutes2(c.created_timestamp),
         url: `https://pump.fun/coin/${mint}`
       };
     }) : Promise.resolve(void 0)
@@ -37817,24 +38293,24 @@ async function tokenReport(mint) {
 var TOKEN_ACCOUNT_RENT_SOL = 203928e-8;
 var USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 var CASH2 = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT]);
-var DUST2 = 1e-12;
+var DUST3 = 1e-12;
 var SOL = { address: SOL_MINT, symbol: "SOL", decimals: 9 };
 var USDC = { address: USDC_MINT, symbol: "USDC", decimals: 6 };
 function settleSolanaSwap(q, w) {
   const input2 = q.input.address;
   const output2 = q.output.address;
   const inBalance = w.balance(input2);
-  if (q.amountIn > inBalance + DUST2) {
+  if (q.amountIn > inBalance + DUST3) {
     return { ok: false, error: `Saldo insuficiente: tienes ${inBalance} ${q.input.symbol} y quieres vender ${q.amountIn}`, deltas: [], costs: [] };
   }
-  const opensAccount = output2 !== SOL_MINT && w.balance(output2) <= DUST2;
-  const closesAccount = input2 !== SOL_MINT && inBalance - q.amountIn <= DUST2;
+  const opensAccount = output2 !== SOL_MINT && w.balance(output2) <= DUST3;
+  const closesAccount = input2 !== SOL_MINT && inBalance - q.amountIn <= DUST3;
   const costs = [{ kind: "network_fee", asset: SOL_MINT, symbol: "SOL", amount: config2.solanaTxFeeSol }];
   if (opensAccount) costs.push({ kind: "rent", asset: SOL_MINT, symbol: "SOL", amount: TOKEN_ACCOUNT_RENT_SOL });
   if (closesAccount) costs.push({ kind: "rent_refund", asset: SOL_MINT, symbol: "SOL", amount: -TOKEN_ACCOUNT_RENT_SOL });
   const solCost = costs.reduce((s, c) => s + c.amount, 0);
   const solAfter = w.balance(SOL_MINT) - solCost - (input2 === SOL_MINT ? q.amountIn : 0) + (output2 === SOL_MINT ? q.amountOut : 0);
-  if (solAfter < -DUST2) {
+  if (solAfter < -DUST3) {
     return {
       ok: false,
       error: `SOL insuficiente para pagar la red (${solCost.toFixed(6)} SOL de fees/renta). En Solana necesitas SOL para operar.`,
@@ -37894,6 +38370,8 @@ var solana = {
   native: SOL,
   cash: USDC,
   liquidationReserve: config2.solanaTxFeeSol,
+  // Entre ~0,01 SOL (unas cuantas cuentas de token) y ~0,05 SOL.
+  gasBudgetUsd: { min: 1.5, max: 7.5 },
   isCash: (asset2) => CASH2.has(asset2),
   async resolveToken(ref) {
     const mint = resolveMint(ref.trim());
@@ -37945,12 +38423,12 @@ var solana = {
   entryFeatures,
   research: {
     scan: (limit) => scanMarket(limit),
-    report: (token) => tokenReport(resolveMint(token.trim()))
+    report: (token2) => tokenReport(resolveMint(token2.trim()))
   }
 };
 
 // src/sim/venues/index.ts
-var chains = { solana };
+var chains = { solana, base, bsc };
 var venues = { ...chains, binance };
 function getVenue(id) {
   const v = venues[id];
@@ -38114,9 +38592,9 @@ var BINANCE_WITHDRAW_FEES = {
   USDC: config2.binanceUsdcWithdrawFee,
   SOL: 1e-3
 };
-var DUST3 = 1e-12;
+var DUST4 = 1e-12;
 function getHoldings(missionId) {
-  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST3);
+  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST4);
 }
 function balance(missionId, venue, asset2) {
   const row = db.prepare("SELECT amount FROM holdings WHERE mission_id = ? AND venue = ? AND asset = ?").get(missionId, venue, asset2);
@@ -38124,7 +38602,7 @@ function balance(missionId, venue, asset2) {
 }
 function adjust(missionId, venue, asset2, symbol2, decimals, delta) {
   const next = balance(missionId, venue, asset2) + delta;
-  if (next < -DUST3) throw new Error(`Saldo insuficiente de ${symbol2} en ${venue}`);
+  if (next < -DUST4) throw new Error(`Saldo insuficiente de ${symbol2} en ${venue}`);
   db.prepare(
     `INSERT INTO holdings (mission_id, venue, asset, symbol, decimals, amount) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(mission_id, venue, asset) DO UPDATE SET amount = excluded.amount`
@@ -38152,13 +38630,39 @@ async function solUsdPrice() {
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;
 }
-function resetPortfolio(missionId, initialUsd, solPrice) {
-  const solUsd = config2.initialSol * solPrice;
-  if (solUsd >= initialUsd) throw new Error("INITIAL_SOL vale m\xE1s que el capital inicial");
+function validateAllocation(allocation) {
+  const clean = {};
+  for (const [venue, pct2] of Object.entries(allocation)) {
+    if (!VENUES.includes(venue)) throw new Error(`Reparto: "${venue}" no existe. Disponibles: ${VENUES.join(", ")}`);
+    if (!(typeof pct2 === "number" && pct2 >= 0)) throw new Error(`Reparto: el porcentaje de ${venue} debe ser un n\xFAmero positivo`);
+    if (pct2 > 0) clean[venue] = pct2;
+  }
+  const total = Object.values(clean).reduce((t, x) => t + x, 0);
+  if (Math.abs(total - 100) > 0.5) throw new Error(`Reparto: los porcentajes suman ${total} y deben sumar 100`);
+  return clean;
+}
+function planPortfolio(initialUsd, allocation, nativePrices) {
+  const holdings = [];
+  for (const [venue, pct2] of Object.entries(validateAllocation(allocation))) {
+    const shareUsd = initialUsd * pct2 / 100;
+    const v = getVenue(venue);
+    if (v.kind === "cex") {
+      holdings.push({ venue, asset: "USDT", symbol: "USDT", decimals: 8, amount: shareUsd });
+      continue;
+    }
+    const price = nativePrices[v.id];
+    if (!price) throw new Error(`Falta el precio de ${v.native.symbol} para preparar la cartera`);
+    const gasUsd = Math.min(Math.max(shareUsd * 0.03, v.gasBudgetUsd.min), v.gasBudgetUsd.max, shareUsd * 0.5);
+    const nativeAmount = Number((gasUsd / price).toFixed(9));
+    holdings.push({ venue, asset: v.cash.address, symbol: v.cash.symbol, decimals: v.cash.decimals, amount: shareUsd - nativeAmount * price });
+    holdings.push({ venue, asset: v.native.address, symbol: v.native.symbol, decimals: v.native.decimals, amount: nativeAmount });
+  }
+  return holdings;
+}
+function resetPortfolio(missionId, holdings) {
   applyAtomically(() => {
     db.prepare("DELETE FROM holdings WHERE mission_id = ?").run(missionId);
-    adjust(missionId, "solana", USDC_MINT, "USDC", 6, initialUsd - solUsd);
-    adjust(missionId, "solana", SOL_MINT, "SOL", 9, config2.initialSol);
+    for (const h of holdings) adjust(missionId, h.venue, h.asset, h.symbol, h.decimals, h.amount);
   });
 }
 async function liquidateAll(missionId, sessionId, reasoning2) {
@@ -38182,8 +38686,8 @@ async function liquidateAll(missionId, sessionId, reasoning2) {
   }
   for (const h of holdings.filter((h2) => h2.venue === "binance" && !binance.isCash(h2.asset))) {
     let sold = false;
-    for (const quote of ["USDC", "USDT"]) {
-      const symbol2 = `${h.asset}${quote}`;
+    for (const quote2 of ["USDC", "USDT"]) {
+      const symbol2 = `${h.asset}${quote2}`;
       const info = await getSymbolInfo(symbol2).catch(() => null);
       if (!info) continue;
       if (balance(missionId, "binance", h.asset) < info.stepSize) {
@@ -38210,9 +38714,15 @@ async function swap(args) {
   const have = balance(m, chain.id, input2.address);
   const amount = args.sellAll ? have : args.amount ?? 0;
   if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input2.symbol} en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
-  if (amount > have + DUST3) throw new Error(`Saldo insuficiente: tienes ${have} ${input2.symbol} y quieres vender ${amount}`);
-  const quote = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps: args.slippageBps });
-  const settled = chain.settle(quote, { balance: (asset2) => balance(m, chain.id, asset2) });
+  if (amount > have + DUST4) throw new Error(`Saldo insuficiente: tienes ${have} ${input2.symbol} y quieres vender ${amount}`);
+  const quote2 = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps: args.slippageBps });
+  const settled = chain.settle(quote2, {
+    balance: (asset2) => balance(m, chain.id, asset2),
+    approved: (asset2) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset2))
+  });
+  for (const token2 of settled.approvals ?? []) {
+    db.prepare("INSERT OR IGNORE INTO evm_approvals (mission_id, chain, token, approved_at) VALUES (?, ?, ?, ?)").run(m, chain.id, token2, now());
+  }
   if (!settled.ok) {
     if (settled.deltas.length) {
       applyDeltas(m, chain.id, settled.deltas);
@@ -38231,14 +38741,13 @@ async function swap(args) {
   const result = {
     chain: chain.id,
     sold: `${amount} ${input2.symbol}`,
-    received: `${quote.amountOut} ${output2.symbol}`,
-    effectivePrice: `1 ${output2.symbol} = ${(amount / quote.amountOut).toPrecision(6)} ${input2.symbol}`,
-    priceImpactPct: quote.priceImpactPct,
-    route: quote.route,
+    received: `${quote2.amountOut} ${output2.symbol}`,
+    effectivePrice: `1 ${output2.symbol} = ${(amount / quote2.amountOut).toPrecision(6)} ${input2.symbol}`,
+    priceImpactPct: quote2.priceImpactPct,
+    route: quote2.route,
     costs: describeCosts(settled.costs),
     ...settled.info,
-    ...quote.extra,
-    ...quote.warnings.length ? { warnings: quote.warnings } : {}
+    ...quote2.warnings.length ? { warnings: quote2.warnings } : {}
   };
   logJournal({
     missionId: m,
@@ -38248,16 +38757,16 @@ async function swap(args) {
     reasoning: args.reasoning,
     details: { inputMint: input2.address, outputMint: output2.address, ...result }
   });
-  let valueUsd = chain.isCash(input2.address) ? amount : chain.isCash(output2.address) ? quote.amountOut : 0;
+  let valueUsd = chain.isCash(input2.address) ? amount : chain.isCash(output2.address) ? quote2.amountOut : 0;
   if (!valueUsd) {
     const prices = await chain.priceUsd([input2.address, output2.address]).catch(() => ({}));
-    valueUsd = (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote.amountOut;
+    valueUsd = (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote2.amountOut;
   }
   await recordTrade({
     missionId: m,
     venue: chain.id,
     sold: { asset: input2.address, qty: amount },
-    bought: { asset: output2.address, symbol: output2.symbol, qty: quote.amountOut },
+    bought: { asset: output2.address, symbol: output2.symbol, qty: quote2.amountOut },
     valueUsd,
     meta: args.meta
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
@@ -38368,15 +38877,27 @@ async function transfer(args) {
   }).catch((err) => console.error(`No se pudo mover la posici\xF3n: ${err.message}`));
   return result;
 }
+var evmAddress = (missionId) => `0x${createHash("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
 async function valuation(missionId, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h) })));
   const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
-  const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId);
+  const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price, benchmark FROM missions WHERE id = ?").get(missionId);
   const initialUsd = mission?.initial_usd ?? config2.initialUsd;
-  const benchSolPrice = mission?.benchmark_sol_price ?? 0;
-  const solNow = benchSolPrice ? await solUsdPrice().catch(() => null) : null;
-  const benchmarkUsd = benchSolPrice && solNow ? initialUsd / benchSolPrice * solNow : initialUsd;
+  let benchmarkUsd = initialUsd;
+  let benchmarkLabel = "capital inicial";
+  if (mission?.benchmark) {
+    const start = JSON.parse(mission.benchmark);
+    const values = await Promise.all(start.map((h) => getVenue(h.venue).liquidationValue(h).catch(() => ({ usd: h.amount }))));
+    benchmarkUsd = values.reduce((t, x) => t + x.usd, 0);
+    benchmarkLabel = "sin operar (la cartera inicial, a precios de ahora)";
+  } else if (mission?.benchmark_sol_price) {
+    const solNow = await solUsdPrice().catch(() => null);
+    if (solNow) {
+      benchmarkUsd = initialUsd / mission.benchmark_sol_price * solNow;
+      benchmarkLabel = "mantener SOL";
+    }
+  }
   if (recordSnapshot) {
     db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
       now(),
@@ -38395,7 +38916,9 @@ async function valuation(missionId, recordSnapshot = false) {
     reliable: lines.every((l) => l.reliable),
     pnlUsd: totalUsd - initialUsd,
     pnlPct: (totalUsd - initialUsd) / initialUsd * 100,
-    benchmarkHoldSolUsd: benchmarkUsd,
+    benchmarkUsd,
+    benchmarkLabel,
+    evmWallet: evmAddress(missionId),
     holdings: lines.map((l) => ({
       venue: l.venue,
       symbol: l.symbol,
@@ -38492,13 +39015,13 @@ async function checkOrders() {
     const reasoning2 = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
     try {
       const action = JSON.parse(order.action);
-      const base = {
+      const base2 = {
         missionId: order.mission_id,
         sessionId: order.session_id,
         reasoning: reasoning2,
         meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
       };
-      const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base, chain: order.venue, ...action }) : await binanceMarketOrder({ ...base, ...action });
+      const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action }) : await binanceMarketOrder({ ...base2, ...action });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {
@@ -38553,11 +39076,9 @@ function missionHistory() {
 function insertMission(args) {
   const deadline = new Date(Date.now() + args.durationMinutes * 6e4).toISOString();
   const id = Number(
-    db.prepare(
-      "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, args.solPrice).lastInsertRowid
+    db.prepare("INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark) VALUES (?, ?, ?, ?, ?, ?, ?)").run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, JSON.stringify(args.allocation), JSON.stringify(args.holdings)).lastInsertRowid
   );
-  resetPortfolio(id, args.initialUsd, args.solPrice);
+  resetPortfolio(id, args.holdings);
   logJournal({
     missionId: id,
     sessionId: null,
@@ -38570,16 +39091,25 @@ function validate2(initialUsd, targetUsd, durationMinutes) {
   if (!(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
   if (!(durationMinutes > 0)) throw new Error("La duraci\xF3n debe ser positiva");
 }
-async function createMission(initialUsd, targetUsd, durationMinutes, instructions) {
+async function createMission(initialUsd, targetUsd, durationMinutes, instructions, allocation = DEFAULT_ALLOCATION) {
   validate2(initialUsd, targetUsd, durationMinutes);
-  const solPrice = await solUsdPrice();
+  const plan = validateAllocation(allocation);
+  const prices = {};
+  for (const venue of Object.keys(plan)) {
+    const v = getVenue(venue);
+    if (v.kind !== "chain") continue;
+    const price = (await v.priceUsd([v.native.address]))[v.native.address];
+    if (!price) throw new Error(`No se pudo obtener el precio de ${v.native.symbol}`);
+    prices[v.id] = price;
+  }
+  const holdings = planPortfolio(initialUsd, plan, prices);
   const previous = getActiveMission();
   if (previous) {
     db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
     db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), previous.id);
     logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misi\xF3n #${previous.id} cancelada por el usuario al crear una nueva` });
   }
-  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, solPrice }));
+  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings }));
 }
 function remaining(deadline) {
   const ms = new Date(deadline).getTime() - Date.now();
@@ -38822,8 +39352,8 @@ function recall(missionId, limit) {
   const distByMission = new Map(history.map((h) => [h.missionId, h.distance]));
   const beliefs = db.prepare("SELECT * FROM beliefs WHERE status = 'active' ORDER BY id").all().map((b) => {
     const view = beliefView(b, closed);
-    const n2 = view.evidence.matchingTrades?.trades ?? view.evidence.appliedIn.trades;
-    const score = (b.source_mission_id && distByMission.has(b.source_mission_id) ? distByMission.get(b.source_mission_id) : 3) - Math.min(n2, 10) * 0.1;
+    const n3 = view.evidence.matchingTrades?.trades ?? view.evidence.appliedIn.trades;
+    const score = (b.source_mission_id && distByMission.has(b.source_mission_id) ? distByMission.get(b.source_mission_id) : 3) - Math.min(n3, 10) * 0.1;
     return { ...view, relevance: b.source_mission_id && distByMission.has(b.source_mission_id) ? similarityLabel(distByMission.get(b.source_mission_id)) : "general", _s: score };
   }).sort((a, b) => a._s - b._s).map(({ _s, ...rest }) => rest);
   const howtos = db.prepare("SELECT id, scope, topic, title, steps, updated_at FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all();
@@ -39197,7 +39727,7 @@ var conditionSchema = external_exports.object({
     })
   ).min(1)
 }).describe('Todas las cl\xE1usulas deben cumplirse. Ejemplo: {"all":[{"f":"ageMinutes","op":"<","v":30},{"f":"organicScore","op":">=","v":50}]}');
-var TOKEN_ALIASES = "en Solana: SOL y USDC";
+var TOKEN_ALIASES = "en Solana: SOL y USDC; en Base: ETH, WETH y USDC; en BNB Chain (bsc): BNB, WBNB, USDT y USDC";
 var thesis = external_exports.object({
   why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
   evidence: external_exports.string().min(1).describe("Qu\xE9 has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
@@ -39227,7 +39757,7 @@ var SIM_TOOLS = [
     researchTarget: (i) => i.token,
     description: "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico.",
     schema: external_exports.object({ chain: chainParam, token: external_exports.string().describe("Direcci\xF3n del token (en Solana, su mint)") }),
-    run: async ({ chain, token }) => json2(await getChain(chain).research.report(token.trim()))
+    run: async ({ chain, token: token2 }) => json2(await getChain(chain).research.report(token2.trim()))
   }),
   tool({
     name: "field_guide",
@@ -39298,7 +39828,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "portfolio",
     kind: "misc",
     deliversNews: true,
-    description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n real ahora mismo, el PnL desde el inicio y lo que valdr\xEDa el capital inicial si se hubiera mantenido en SOL.",
+    description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n real ahora mismo, el PnL desde el inicio, la direcci\xF3n de tu monedero EVM y una referencia: lo que valdr\xEDa tu cartera inicial si no hubieras operado.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await valuation(mid(ctx)))
   }),
@@ -39568,7 +40098,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "memory",
     role: "reviewer",
     journaled: true,
-    description: "Guarda conocimiento procedimental: c\xF3mo se hace algo en el simulador o en el mercado, qu\xE9 falla y c\xF3mo evitarlo. scope: la cadena o exchange (solana, binance) o 'any'. Con fixes_error_ids lo vinculas a los errores que resuelve. Si ya hay uno casi igual, se rechaza: actual\xEDzalo con update_howto.",
+    description: "Guarda conocimiento procedimental: c\xF3mo se hace algo en el simulador o en el mercado, qu\xE9 falla y c\xF3mo evitarlo. scope: la cadena o exchange (solana, base, bsc, binance) o 'any'. Con fixes_error_ids lo vinculas a los errores que resuelve. Si ya hay uno casi igual, se rechaza: actual\xEDzalo con update_howto.",
     schema: external_exports.object({
       scope: external_exports.string().min(1),
       topic: external_exports.string().min(1).describe("Tema corto: '\xF3rdenes condicionales', 'transferencias', 'comisiones'\u2026"),
@@ -39818,9 +40348,9 @@ function resultText(content) {
   }
   return "";
 }
-var short = (s, n2 = 140) => {
+var short = (s, n3 = 140) => {
   const str = typeof s === "string" ? s : JSON.stringify(s ?? "");
-  return str.length > n2 ? str.slice(0, n2) + "\u2026" : str;
+  return str.length > n3 ? str.slice(0, n3) + "\u2026" : str;
 };
 function describeToolUse(rawName, input2) {
   const name = normalizeTool(rawName);
@@ -39963,8 +40493,8 @@ function dbEvents(missionId) {
   for (const h of db.prepare("SELECT id, created_at, title, steps FROM howtos WHERE source_mission_id = ?").all(missionId)) {
     events.push({ id: `h${h.id}`, ts: h.created_at, kind: "lesson", title: h.title, body: `Howto #${h.id}: ${h.steps}` });
   }
-  for (const n2 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
-    events.push({ id: `n${n2.id}`, ts: n2.ts, kind: "note", title: n2.text });
+  for (const n3 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
+    events.push({ id: `n${n3.id}`, ts: n3.ts, kind: "note", title: n3.text });
   }
   return events;
 }
@@ -40096,7 +40626,7 @@ async function sessionBriefing(sessionId, missionId) {
       markBriefingSeen(missionId);
     }
     const mem = recall(missionId, 6);
-    const clip = (t, n2 = 300) => t.length > n2 ? t.slice(0, n2) + "\u2026" : t;
+    const clip = (t, n3 = 300) => t.length > n3 ? t.slice(0, n3) + "\u2026" : t;
     memoryLines.push(
       mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length ? "Tu memoria, resumida y ordenada por parecido con esta misi\xF3n (recall_memory tiene el detalle completo):\n" + JSON.stringify(
         {
@@ -40121,7 +40651,7 @@ async function sessionBriefing(sessionId, missionId) {
     "Cartera:",
     JSON.stringify(portfolio, null, 2),
     "",
-    notes.length ? "Tus notas:\n" + notes.map((n2) => `- (id ${n2.id}, ${n2.ts}) ${n2.text}`).join("\n") : "No tienes notas guardadas.",
+    notes.length ? "Tus notas:\n" + notes.map((n3) => `- (id ${n3.id}, ${n3.ts}) ${n3.text}`).join("\n") : "No tienes notas guardadas.",
     "",
     openOrders.length ? "\xD3rdenes condicionales abiertas:\n" + JSON.stringify(openOrders, null, 2) : "No tienes \xF3rdenes condicionales abiertas.",
     "",
@@ -40141,8 +40671,8 @@ async function endSession(sessionId, missionId, finalText, tokens) {
 }
 
 // src/sim/status.ts
-var usd = (n2) => `${n2.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
-var pct = (n2) => `${n2 >= 0 ? "+" : "\u2212"}${Math.abs(n2).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
+var usd = (n3) => `${n3.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
+var pct = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
 var hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
@@ -40193,7 +40723,7 @@ async function statusReport(missionId) {
   const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2").all(m.id);
   if (notes.length) {
     lines.push("", "\xDAltima nota del agente:");
-    for (const n2 of notes) lines.push(`- ${hhmm(n2.ts)} ${n2.title.slice(0, 220)}`);
+    for (const n3 of notes) lines.push(`- ${hhmm(n3.ts)} ${n3.title.slice(0, 220)}`);
   }
   const review = db.prepare("SELECT ts, title, body FROM activity WHERE kind = 'review' AND mission_id = ? ORDER BY id DESC LIMIT 1").get(m.id);
   if (review) lines.push("", `Revisor (${hhmm(review.ts)}): ${review.title}${review.body ? ` \xB7 ${review.body.slice(0, 200)}` : ""}`);
@@ -40266,10 +40796,11 @@ server.registerTool(
       target_usd: external_exports.number().positive(),
       duration_minutes: external_exports.number().positive(),
       replace: external_exports.boolean().default(false).describe("Cancelar la misi\xF3n activa si la hay"),
-      instructions: external_exports.string().optional().describe("Instrucciones del usuario para esta misi\xF3n. Vac\xEDo = modo libre")
+      instructions: external_exports.string().optional().describe("Instrucciones del usuario para esta misi\xF3n. Vac\xEDo = modo libre"),
+      allocation: external_exports.object(Object.fromEntries(VENUES.map((v) => [v, external_exports.number().min(0).max(100).optional()]))).optional().describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`)
     }
   },
-  async ({ capital_usd, target_usd, duration_minutes, replace, instructions }) => {
+  async ({ capital_usd, target_usd, duration_minutes, replace, instructions, allocation }) => {
     const active2 = getActiveMission();
     if (active2 && !replace) {
       return {
@@ -40278,7 +40809,7 @@ server.registerTool(
       };
     }
     try {
-      const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions);
+      const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
       return text(JSON.stringify(mission, null, 2));
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };

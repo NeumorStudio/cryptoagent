@@ -17,7 +17,6 @@ export const config = {
   model: process.env.MODEL || "claude-opus-5",
   effort: (process.env.EFFORT || "high") as "low" | "medium" | "high" | "xhigh" | "max",
   initialUsd: num("INITIAL_USD", 1000),
-  initialSol: num("INITIAL_SOL", 0.05),
   solanaTxFeeSol: num("SOLANA_TX_FEE_SOL", 0.0001),
   binanceTakerFee: num("BINANCE_TAKER_FEE", 0.001),
   // Comisión real de Binance por retirar USDC por la red Solana (septiembre de 2026).

@@ -28,6 +28,20 @@ export const MIGRATIONS: Migration[] = [
     description: "Memoria de tres tipos (howtos, creencias, retrospectivas) escrita por el agente revisor",
     up: memoryV2,
   },
+  {
+    version: 3,
+    description: "Cadenas EVM (Base, BNB Chain): datos de tokens, approvals, y reparto y referencia de cada misión",
+    up: (db) =>
+      db.exec(`
+        -- Símbolo y decimales de los tokens EVM (no cambian: se leen una vez por RPC).
+        CREATE TABLE token_meta (chain TEXT NOT NULL, address TEXT NOT NULL, symbol TEXT NOT NULL, decimals INTEGER NOT NULL, PRIMARY KEY (chain, address));
+        -- Tokens que el monedero EVM de cada misión ya ha aprobado para vender (la primera venta cuesta un approve).
+        CREATE TABLE evm_approvals (mission_id INTEGER NOT NULL, chain TEXT NOT NULL, token TEXT NOT NULL, approved_at TEXT NOT NULL, PRIMARY KEY (mission_id, chain, token));
+        -- Reparto inicial del capital por cadena o exchange (JSON de porcentajes) y cartera inicial para la referencia "sin operar".
+        ALTER TABLE missions ADD COLUMN allocation TEXT;
+        ALTER TABLE missions ADD COLUMN benchmark TEXT;
+      `),
+  },
 ];
 
 /**

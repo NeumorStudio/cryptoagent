@@ -2,7 +2,7 @@
 
 Plugin de Claude Code: un agente autónomo que opera criptomonedas **en simulación**.
 El dinero es ficticio, pero los precios, la liquidez y las comisiones son reales y del momento:
-Solana a través de Jupiter (incluidos los tokens de pump.fun) y Binance spot. Nunca se firma ni se envía nada real.
+Solana a través de Jupiter (incluidos los tokens de pump.fun), Base y BNB Chain con un monedero tipo MetaMask (KyberSwap y ParaSwap) y Binance spot. Nunca se firma ni se envía nada real.
 
 - **Misiones**: capital inicial, objetivo y plazo real. La misión termina sola al alcanzar el objetivo
   o al acabarse el tiempo, y entonces se venden todas las posiciones a mercado.
@@ -68,6 +68,7 @@ O activa la actualización automática de este marketplace en el gestor de plugi
 | Acción | Cálculo |
 |---|---|
 | Swap en Solana | Cotización real de Jupiter + fee de red en SOL + renta de la cuenta del token |
+| Swap en Base o BNB Chain | Cotización real de KyberSwap (o ParaSwap) + gas real en ETH o BNB + approve la primera vez que se vende un token + impuestos del token (GoPlus): si superan el slippage, revierte y se pierde el gas |
 | Orden de mercado en Binance | Se recorre el order book real + comisión taker + tamaño mínimo |
 | Transferencia Solana ↔ Binance | Fee de red o comisión de retirada |
 | Orden condicional | Se dispara cuando el precio real cruza el umbral (comprobado cada ~60 s) |

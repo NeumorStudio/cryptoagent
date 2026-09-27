@@ -125,7 +125,7 @@ export async function runSession(opts: { role?: AgentRole; missionId?: number | 
   log(
     "■",
     `Sesión #${sessionId} terminada. ` +
-      (end ? `Cartera: ${end.totalUsd.toFixed(2)} USD (${end.pnlPct.toFixed(2)} %), holdear SOL: ${end.benchmarkHoldSolUsd.toFixed(2)} USD. ` : "") +
+      (end ? `Cartera: ${end.totalUsd.toFixed(2)} USD (${end.pnlPct.toFixed(2)} %), referencia (${end.benchmarkLabel}): ${end.benchmarkUsd.toFixed(2)} USD. ` : "") +
       `Tokens: ${inputTokens} entrada / ${outputTokens} salida`,
   );
 }

@@ -97,6 +97,8 @@ export const solana: ChainAdapter = {
   native: SOL,
   cash: USDC,
   liquidationReserve: config.solanaTxFeeSol,
+  // Entre ~0,01 SOL (unas cuantas cuentas de token) y ~0,05 SOL.
+  gasBudgetUsd: { min: 1.5, max: 7.5 },
   isCash: (asset) => CASH.has(asset),
 
   async resolveToken(ref) {

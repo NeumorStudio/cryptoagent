@@ -1,0 +1,13 @@
+{
+  "name": "cryptoagent",
+  "owner": {
+    "name": "NeumorStudio"
+  },
+  "plugins": [
+    {
+      "name": "cryptoagent",
+      "source": "./plugin",
+      "description": "Agente de trading cripto en simulación con precios reales, misiones, memoria y panel en directo."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+// Borra la simulación (cartera, diario, notas, sesiones) para empezar de cero.
+// El perfil del navegador se conserva.
+import { db } from "./db.js";
+
+for (const table of ["meta", "holdings", "sessions", "journal", "notes", "snapshots", "orders", "missions", "activity", "lessons"]) {
+  db.exec(`DELETE FROM ${table}`);
+}
+db.exec("DELETE FROM sqlite_sequence");
+console.log("Simulación reiniciada. La próxima ejecución empezará con el capital inicial.");

@@ -1,0 +1,17 @@
+{
+  "name": "cryptoagent",
+  "version": "0.1.0",
+  "description": "Agente autónomo de trading cripto en simulación: dinero ficticio, precios, liquidez y comisiones reales (Solana vía Jupiter, incluido pump.fun, y Binance). Misiones con capital, objetivo y plazo, memoria entre misiones y panel en directo.",
+  "author": {
+    "name": "NeumorStudio"
+  },
+  "keywords": [
+    "crypto",
+    "trading",
+    "simulation",
+    "solana",
+    "pump.fun",
+    "agent",
+    "paper-trading"
+  ]
+}

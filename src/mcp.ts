@@ -1,0 +1,138 @@
+// Servidor MCP del simulador para usar el agente desde Claude Code (con la suscripción).
+// Expone la cartera simulada, el diario y las notas. La navegación la hace Claude Code
+// con su propio navegador. stdout es el canal del protocolo: no usar console.log.
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { checkOrders } from "./sim/orders.js";
+import { openInBrowser, startDashboard } from "./dashboard/server.js";
+import { checkMission, createMission, getActiveMission, stopMission } from "./sim/mission.js";
+import { config } from "./config.js";
+import { endSession, sessionBriefing, startSession } from "./sim/session.js";
+import { SIM_TOOLS, runTool } from "./tools/index.js";
+
+const server = new McpServer({ name: "cryptosim", version: "0.1.0" });
+let sessionId: number | null = null;
+
+const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+
+server.registerTool(
+  "start_session",
+  {
+    description:
+      "Empieza una sesión de trabajo. Llámala antes que cualquier otra herramienta: devuelve la hora, tu cartera, tus notas y el diario reciente.",
+    inputSchema: {},
+  },
+  async () => {
+    await checkOrders().catch(() => []);
+    await checkMission().catch(() => []);
+    sessionId = startSession();
+    return text(await sessionBriefing(sessionId));
+  },
+);
+
+server.registerTool(
+  "end_session",
+  {
+    description: "Cierra la sesión con un resumen de lo que hiciste. Devuelve el estado final de la cartera.",
+    inputSchema: { summary: z.string() },
+  },
+  async ({ summary }) => {
+    if (sessionId === null) return { ...text("No hay ninguna sesión abierta."), isError: true };
+    const end = await endSession(sessionId, summary);
+    sessionId = null;
+    return text(JSON.stringify(end, null, 2));
+  },
+);
+
+// ─── Herramientas de configuración: las usa la sesión del usuario (comando /trading), ─────
+// no el agente. El subagente `trader` las tiene prohibidas en .claude/agents/trader.md.
+
+server.registerTool(
+  "create_mission",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] Crea una misión nueva: reinicia la cartera simulada con el capital " +
+      "indicado y fija el objetivo y el plazo en tiempo real. Si ya hay una misión activa, falla salvo que replace = true.",
+    inputSchema: {
+      capital_usd: z.number().positive(),
+      target_usd: z.number().positive(),
+      duration_minutes: z.number().positive(),
+      replace: z.boolean().default(false).describe("Cancelar la misión activa si la hay"),
+      instructions: z.string().optional().describe("Instrucciones del usuario para esta misión. Vacío = modo libre"),
+    },
+  },
+  async ({ capital_usd, target_usd, duration_minutes, replace, instructions }) => {
+    const active = getActiveMission();
+    if (active && !replace) {
+      return {
+        ...text(`Ya hay una misión activa (#${active.id}, objetivo ${active.target_usd} USD, plazo ${active.deadline}). Pregunta al usuario si quiere reemplazarla.`),
+        isError: true,
+      };
+    }
+    try {
+      const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions);
+      return text(JSON.stringify(mission, null, 2));
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "stop_mission",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] Detiene la misión activa antes de tiempo y cancela sus órdenes. " +
+      "Con close_positions = true vende todas las posiciones a mercado; si no, la cartera queda como está.",
+    inputSchema: { close_positions: z.boolean() },
+  },
+  async ({ close_positions }) => {
+    try {
+      const r = await stopMission(close_positions);
+      return text(
+        `Misión #${r.missionId} detenida. Valor final: ${r.finalUsd.toFixed(2)} USD.` +
+          (r.problems.length ? `
+No se pudo vender: ${r.problems.join("; ")}` : ""),
+      );
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "start_dashboard",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] Arranca en local (127.0.0.1) el panel web que muestra la misión y lo que hace " +
+      "el agente en directo, y devuelve su URL. Con open_in_system_browser = true, además lo abre en el navegador por defecto.",
+    inputSchema: { open_in_system_browser: z.boolean().default(false) },
+  },
+  async ({ open_in_system_browser }) => {
+    try {
+      const { url, alreadyRunning } = await startDashboard({ log: (m) => console.error(m) });
+      if (open_in_system_browser) openInBrowser(url);
+      return text(`${alreadyRunning ? "El panel ya estaba en marcha" : "Panel arrancado"} en ${url}${open_in_system_browser ? " (abierto en el navegador)" : ""}`);
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+for (const tool of SIM_TOOLS) {
+  server.registerTool(tool.name, { description: tool.description, inputSchema: tool.schema.shape }, async (input: unknown) => {
+    sessionId ??= startSession();
+    const { content, isError } = await runTool(tool.name, input, { sessionId });
+    return { ...text(typeof content === "string" ? content : JSON.stringify(content)), isError };
+  });
+}
+
+await server.connect(new StdioServerTransport());
+
+// Mientras Claude Code está abierto, este proceso también vigila las órdenes condicionales
+// y la misión (el reclamo atómico evita ejecutar dos veces si además corre `npm run watcher`).
+setInterval(async () => {
+  await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
+  await checkMission().catch((err) => console.error(`Error revisando la misión: ${(err as Error).message}`));
+}, config.watchIntervalSeconds * 1000);

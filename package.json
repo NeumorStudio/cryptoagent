@@ -1,0 +1,30 @@
+{
+  "name": "cryptoagent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agente autónomo que opera en simulación (paper trading) con datos de mercado reales",
+  "type": "module",
+  "scripts": {
+    "mission": "tsx src/mission.ts",
+    "agent": "tsx src/run.ts",
+    "report": "tsx src/report.ts",
+    "watcher": "tsx src/watcher.ts",
+    "dashboard": "tsx src/dashboard/cli.ts",
+    "reset": "tsx src/reset.ts",
+    "typecheck": "tsc --noEmit",
+    "build:plugin": "node scripts/build-plugin.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "dotenv": "^18.0.4",
+    "playwright": "^1.63.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

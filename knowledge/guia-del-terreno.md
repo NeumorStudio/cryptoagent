@@ -51,7 +51,9 @@ Fuente principal: documentación oficial (pump.fun/docs/fees, pump.fun/docs/bond
 
 ## 4. Fuentes de datos públicas (sin clave, comprobadas)
 
-Úsalas con `http_get`. Todas devuelven JSON.
+Atajos: `scan_market` combina en una llamada las tendencias de Jupiter, pump.fun en directo, los promocionados de
+DexScreener y las tendencias de GeckoTerminal; `token_report` junta la ficha de un token de Jupiter, DexScreener,
+RugCheck y pump.fun. Para cualquier otra consulta, usa estas APIs con `http_get`. Todas devuelven JSON.
 
 **pump.fun**
 - Tokens más recientes: `https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=false`

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { db, logActivity, logJournal, now } from "../db.js";
+import * as research from "../market/research.js";
 import * as mission from "../sim/mission.js";
 import * as orders from "../sim/orders.js";
 import * as sim from "../sim/portfolio.js";
@@ -36,6 +37,24 @@ const formatThesis = (t: z.infer<typeof thesis>) =>
 // Herramientas del simulador: las comparten el runner por API y el servidor MCP.
 export const SIM_TOOLS = [
   tool({
+    name: "scan_market",
+    description:
+      "Escaneo de mercado en Solana en una sola llamada: combina los tokens en tendencia de Jupiter (5 min y 1 h), los que están en directo " +
+      "en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal, con sus datos clave (capitalización, liquidez, " +
+      "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero.",
+    schema: z.object({ limit: z.number().int().min(5).max(60).default(25) }),
+    run: async ({ limit }) => json(await research.scanMarket(limit)),
+  }),
+  tool({
+    name: "token_report",
+    description:
+      "Ficha completa de un token de Solana en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
+      "auditoría (autoridades de mint y freeze, % del creador y de los mayores holders), riesgos de RugCheck, webs y redes sociales del " +
+      "proyecto y, si es de pump.fun, su descripción, comentarios y máximo histórico.",
+    schema: z.object({ mint: z.string() }),
+    run: async ({ mint }) => json(await research.tokenReport(mint.trim())),
+  }),
+  tool({
     name: "field_guide",
     description:
       "Guía del terreno: qué mercados puede ejecutar el simulador y cómo los simula, cómo funciona pump.fun " +
@@ -65,8 +84,8 @@ export const SIM_TOOLS = [
   tool({
     name: "wait",
     description:
-      `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos). Mientras esperas, tus órdenes condicionales se siguen vigilando. ` +
-      "Vuelve antes si la misión termina.",
+      `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus órdenes condicionales se siguen vigilando. ` +
+      "Vuelve antes si la misión termina. El tiempo también pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.",
     schema: z.object({ minutes: z.number().min(1).max(MAX_WAIT_MINUTES) }),
     run: async ({ minutes }) => {
       const until = Date.now() + minutes * 60_000;

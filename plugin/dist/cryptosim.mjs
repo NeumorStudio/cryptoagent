@@ -515,17 +515,17 @@ var require_codegen = __commonJS({
         this.nodes = nodes;
       }
       render(opts) {
-        return this.nodes.reduce((code, n) => code + n.render(opts), "");
+        return this.nodes.reduce((code, n2) => code + n2.render(opts), "");
       }
       optimizeNodes() {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
-          const n = nodes[i].optimizeNodes();
-          if (Array.isArray(n))
-            nodes.splice(i, 1, ...n);
-          else if (n)
-            nodes[i] = n;
+          const n2 = nodes[i].optimizeNodes();
+          if (Array.isArray(n2))
+            nodes.splice(i, 1, ...n2);
+          else if (n2)
+            nodes[i] = n2;
           else
             nodes.splice(i, 1);
         }
@@ -535,16 +535,16 @@ var require_codegen = __commonJS({
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
-          const n = nodes[i];
-          if (n.optimizeNames(names, constants))
+          const n2 = nodes[i];
+          if (n2.optimizeNames(names, constants))
             continue;
-          subtractNames(names, n.names);
+          subtractNames(names, n2.names);
           nodes.splice(i, 1);
         }
         return nodes.length > 0 ? this : void 0;
       }
       get names() {
-        return this.nodes.reduce((names, n) => addNames(names, n.names), {});
+        return this.nodes.reduce((names, n2) => addNames(names, n2.names), {});
       }
     };
     var BlockNode = class extends ParentNode {
@@ -955,8 +955,8 @@ var require_codegen = __commonJS({
       endFunc() {
         return this._endBlockNode(Func);
       }
-      optimize(n = 1) {
-        while (n-- > 0) {
+      optimize(n2 = 1) {
+        while (n2-- > 0) {
           this._root.optimizeNodes();
           this._root.optimizeNames(this._root.names, this._constants);
         }
@@ -970,19 +970,19 @@ var require_codegen = __commonJS({
         this._nodes.push(node2);
       }
       _endBlockNode(N1, N2) {
-        const n = this._currNode;
-        if (n instanceof N1 || N2 && n instanceof N2) {
+        const n2 = this._currNode;
+        if (n2 instanceof N1 || N2 && n2 instanceof N2) {
           this._nodes.pop();
           return this;
         }
         throw new Error(`CodeGen: not in block "${N2 ? `${N1.kind}/${N2.kind}` : N1.kind}"`);
       }
       _elseNode(node2) {
-        const n = this._currNode;
-        if (!(n instanceof If)) {
+        const n2 = this._currNode;
+        if (!(n2 instanceof If)) {
           throw new Error('CodeGen: "else" without "if"');
         }
-        this._currNode = n.else = node2;
+        this._currNode = n2.else = node2;
         return this;
       }
       get _root() {
@@ -999,8 +999,8 @@ var require_codegen = __commonJS({
     };
     exports.CodeGen = CodeGen;
     function addNames(names, from) {
-      for (const n in from)
-        names[n] = (names[n] || 0) + (from[n] || 0);
+      for (const n2 in from)
+        names[n2] = (names[n2] || 0) + (from[n2] || 0);
       return names;
     }
     function addExprNames(names, from) {
@@ -1020,11 +1020,11 @@ var require_codegen = __commonJS({
           items.push(c);
         return items;
       }, []));
-      function replaceName(n) {
-        const c = constants[n.str];
-        if (c === void 0 || names[n.str] !== 1)
-          return n;
-        delete names[n.str];
+      function replaceName(n2) {
+        const c = constants[n2.str];
+        if (c === void 0 || names[n2.str] !== 1)
+          return n2;
+        delete names[n2.str];
         return c;
       }
       function canOptimize(e) {
@@ -1032,8 +1032,8 @@ var require_codegen = __commonJS({
       }
     }
     function subtractNames(names, from) {
-      for (const n in from)
-        names[n] = (names[n] || 0) - (from[n] || 0);
+      for (const n2 in from)
+        names[n2] = (names[n2] || 0) - (from[n2] || 0);
     }
     function not(x) {
       return typeof x == "boolean" || typeof x == "number" || x === null ? !x : (0, code_1._)`!${par(x)}`;
@@ -7222,8 +7222,8 @@ var require_dist2 = __commonJS({
       function X(e = process.env) {
         let o = {};
         for (let t of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
-          let n = e[`DOTENV_${t}`] != null ? e[`DOTENV_${t}`] : e[`DOTENV_CONFIG_${t}`];
-          n != null && (o[t.toLowerCase()] = t === "ENCODING" || t === "PATH" ? n : G(n));
+          let n2 = e[`DOTENV_${t}`] != null ? e[`DOTENV_${t}`] : e[`DOTENV_CONFIG_${t}`];
+          n2 != null && (o[t.toLowerCase()] = t === "ENCODING" || t === "PATH" ? n2 : G(n2));
         }
         return o;
       }
@@ -7241,9 +7241,9 @@ var require_dist2 = __commonJS({
         let o = {}, t = e.toString();
         t = t.replace(/\r\n?/mg, `
 `);
-        let n;
-        for (; (n = te.exec(t)) != null; ) {
-          let r = n[1], s = n[2] || "";
+        let n2;
+        for (; (n2 = te.exec(t)) != null; ) {
+          let r = n2[1], s = n2[2] || "";
           s = s.trim();
           let i = s[0];
           s = s.replace(/^(['"`])([\s\S]*)\1$/mg, "$2"), i === '"' && (s = s.replace(/\\n/g, `
@@ -7261,67 +7261,67 @@ var require_dist2 = __commonJS({
         let o = {}, t = typeof e == "string" ? e : e.toString();
         t.indexOf("\r") !== -1 && (t = t.replace(/\r\n?/g, `
 `));
-        let n = t.length, r = 0;
-        for (; r < n; ) {
+        let n2 = t.length, r = 0;
+        for (; r < n2; ) {
           let s = t.charCodeAt(r);
-          for (; r < n && w(s); ) r++, s = t.charCodeAt(r);
-          if (r >= n) break;
+          for (; r < n2 && w(s); ) r++, s = t.charCodeAt(r);
+          if (r >= n2) break;
           if (s === 35) {
-            for (; r < n && !O(t.charCodeAt(r)); ) r++;
+            for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
             continue;
           }
           let i = -1;
-          if (s === 101 && r + 6 < n && t.charCodeAt(r + 1) === 120 && t.charCodeAt(r + 2) === 112 && t.charCodeAt(r + 3) === 111 && t.charCodeAt(r + 4) === 114 && t.charCodeAt(r + 5) === 116) {
+          if (s === 101 && r + 6 < n2 && t.charCodeAt(r + 1) === 120 && t.charCodeAt(r + 2) === 112 && t.charCodeAt(r + 3) === 111 && t.charCodeAt(r + 4) === 114 && t.charCodeAt(r + 5) === 116) {
             let C = t.charCodeAt(r + 6);
             if (w(C)) {
               let d = r + 7;
-              for (; d < n && w(t.charCodeAt(d)); ) d++;
+              for (; d < n2 && w(t.charCodeAt(d)); ) d++;
               b[t.charCodeAt(d)] && (i = r + 6, r = d);
             } else s = t.charCodeAt(r);
           }
           let l = r, u = 0;
-          for (; r < n && (u = t.charCodeAt(r), b[u]); ) r++;
+          for (; r < n2 && (u = t.charCodeAt(r), b[u]); ) r++;
           if (r === l) {
-            for (; r < n && !O(t.charCodeAt(r)); ) r++;
+            for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
             continue;
           }
           let p = t.slice(l, r), f = r;
-          if (r >= n && (u = 0), w(u)) do
-            r++, u = r < n ? t.charCodeAt(r) : 0;
+          if (r >= n2 && (u = 0), w(u)) do
+            r++, u = r < n2 ? t.charCodeAt(r) : 0;
           while (w(u));
           if (u === 61) r++;
-          else if (u === 58 && r === f && r + 1 < n && w(t.charCodeAt(r + 1))) r += 2;
+          else if (u === 58 && r === f && r + 1 < n2 && w(t.charCodeAt(r + 1))) r += 2;
           else {
-            for (r = i === -1 ? f : i; r < n && !O(t.charCodeAt(r)); ) r++;
+            for (r = i === -1 ? f : i; r < n2 && !O(t.charCodeAt(r)); ) r++;
             continue;
           }
           let c = r, a = r;
-          for (; a < n && w(t.charCodeAt(a)); ) a++;
+          for (; a < n2 && w(t.charCodeAt(a)); ) a++;
           let g = t.charCodeAt(a), h, y = false;
           if (g === 39 || g === 34 || g === 96) {
             let C = t[a], d = t.indexOf(C, a + 1), m = -1, v = -1;
             for (; d !== -1; ) {
               let q = t.charCodeAt(d - 1) === 92, A = d + 1;
-              for (; A < n && !O(t.charCodeAt(A)) && w(t.charCodeAt(A)); ) A++;
-              if ((A === n || O(t.charCodeAt(A)) || t.charCodeAt(A) === 35) && (m = d, v = A), !q) break;
+              for (; A < n2 && !O(t.charCodeAt(A)) && w(t.charCodeAt(A)); ) A++;
+              if ((A === n2 || O(t.charCodeAt(A)) || t.charCodeAt(A) === 35) && (m = d, v = A), !q) break;
               d = t.indexOf(C, d + 1);
             }
             if (m !== -1) {
-              if (h = t.slice(a + 1, m), r = v, t.charCodeAt(r) === 35) for (; r < n && !O(t.charCodeAt(r)); ) r++;
+              if (h = t.slice(a + 1, m), r = v, t.charCodeAt(r) === 35) for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
               y = true;
             }
           }
           if (!y) {
             let C = t.indexOf(`
 `, c);
-            C === -1 && (C = n);
+            C === -1 && (C = n2);
             let d = t.indexOf("#", c);
             (d === -1 || d > C) && (d = C);
             let m = c, v = d;
             for (; m < v && w(t.charCodeAt(m)); ) m++;
             for (; v > m && w(t.charCodeAt(v - 1)); ) v--;
             let q = t.charCodeAt(m);
-            if (v - m >= 2 && (q === 39 || q === 34 || q === 96) && t.charCodeAt(v - 1) === q ? h = t.slice(m + 1, v - 1) : h = t.slice(m, v), r = d, d < C) for (; r < n && !O(t.charCodeAt(r)); ) r++;
+            if (v - m >= 2 && (q === 39 || q === 34 || q === 96) && t.charCodeAt(v - 1) === q ? h = t.slice(m + 1, v - 1) : h = t.slice(m, v), r = d, d < C) for (; r < n2 && !O(t.charCodeAt(r)); ) r++;
           }
           g === 34 && (y || a < r) && h.indexOf("\\") !== -1 && (h = h.replace(/\\n/g, `
 `).replace(/\\r/g, "\r")), o[p] = h;
@@ -7345,8 +7345,8 @@ var require_dist2 = __commonJS({
       }
       function ce(e) {
         e = ie(e);
-        let o = j.resolve(process.cwd(), ".env"), t = "utf8", n = process.env;
-        e && e.processEnv != null && (n = e.processEnv);
+        let o = j.resolve(process.cwd(), ".env"), t = "utf8", n2 = process.env;
+        e && e.processEnv != null && (n2 = e.processEnv);
         let r = k(e && e.debug);
         e && e.encoding ? t = e.encoding : r && T("no encoding is specified (UTF-8 is used by default)");
         let s = [o];
@@ -7362,7 +7362,7 @@ var require_dist2 = __commonJS({
         } catch (a) {
           r && T(`failed to load ${c} ${a.message}`), i = a;
         }
-        let p = E.populate(n, l, e), f = k(Object.prototype.hasOwnProperty.call(e, "quiet") ? e.quiet : B(n).quiet);
+        let p = E.populate(n2, l, e), f = k(Object.prototype.hasOwnProperty.call(e, "quiet") ? e.quiet : B(n2).quiet);
         if (r || !f) {
           let c = Object.keys(p).length, a = [];
           for (let g of s) try {
@@ -7379,12 +7379,12 @@ var require_dist2 = __commonJS({
         return E.configDotenv(e);
       }
       function le(e, o, t = {}) {
-        let n = !!(t && t.debug), r = !!(t && t.override), s = {};
+        let n2 = !!(t && t.debug), r = !!(t && t.override), s = {};
         if (e === null || typeof e != "object" || o === null || typeof o != "object") {
           let i = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
           throw i.code = "OBJECT_REQUIRED", i;
         }
-        for (let i of Object.keys(o)) Object.prototype.hasOwnProperty.call(e, i) ? (r === true && (e[i] = o[i], s[i] = o[i]), n && T(r === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = o[i], s[i] = o[i]);
+        for (let i of Object.keys(o)) Object.prototype.hasOwnProperty.call(e, i) ? (r === true && (e[i] = o[i], s[i] = o[i]), n2 && T(r === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = o[i], s[i] = o[i]);
         return s;
       }
       var E = { configDotenv: ce, config: ae, parse: ne, populate: le };
@@ -7398,32 +7398,32 @@ var require_dist2 = __commonJS({
       var _ = __require("child_process"), fe = __require("fs"), L = __require("path");
       function ue(e) {
         let o = ['"'], t = 0;
-        for (let n of e) {
-          if (n === "\\") {
+        for (let n2 of e) {
+          if (n2 === "\\") {
             t++;
             continue;
           }
-          n === '"' ? o.push("\\".repeat(t * 2 + 1), '"') : o.push("\\".repeat(t), n), t = 0;
+          n2 === '"' ? o.push("\\".repeat(t * 2 + 1), '"') : o.push("\\".repeat(t), n2), t = 0;
         }
         return o.push("\\".repeat(t * 2), '"'), o.join("");
       }
       function H(e, o = 1) {
         for (let t = 0; t < o; t++) {
-          let n = [];
+          let n2 = [];
           for (let r of e) {
             let s = r.charCodeAt(0), i = s >= 48 && s <= 57 || s >= 65 && s <= 90 || s >= 97 && s <= 122, l = "\\/:._-".includes(r);
-            !i && !l && s < 128 && n.push("^"), n.push(r);
+            !i && !l && s < 128 && n2.push("^"), n2.push(r);
           }
-          e = n.join("");
+          e = n2.join("");
         }
         return e;
       }
       function P(e, o) {
-        let t = Object.keys(e).reverse().find((n) => n.toUpperCase() === o);
+        let t = Object.keys(e).reverse().find((n2) => n2.toUpperCase() === o);
         return t === void 0 ? void 0 : e[t];
       }
       function de(e, o, t) {
-        let n = (P(o, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n] : [...n, ""], i = /[\\/]/.test(e) ? [t] : [t, ...(P(o, "PATH") || "").split(";")];
+        let n2 = (P(o, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n2.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n2] : [...n2, ""], i = /[\\/]/.test(e) ? [t] : [t, ...(P(o, "PATH") || "").split(";")];
         for (let l of i) for (let u of s) {
           let p = L.resolve(t, l.replace(/^"|"$/g, ""), e + u);
           try {
@@ -7434,12 +7434,12 @@ var require_dist2 = __commonJS({
       }
       function pe(e, o, t) {
         if (process.platform !== "win32") return _.spawn(e, o, t);
-        let n = t.env || process.env, r = de(e, n, t.cwd || process.cwd());
+        let n2 = t.env || process.env, r = de(e, n2, t.cwd || process.cwd());
         if (r && /\.(?:exe|com)$/i.test(r)) return _.spawn(r, o, t);
         let s = /\.(?:bat|cmd)$/i.test(r || e), i = [H(L.normalize(r || e))];
         for (let u of o) i.push(H(ue(u), s ? 2 : 1));
         let l = i.join(" ");
-        return _.spawn(P(n, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t, windowsVerbatimArguments: true });
+        return _.spawn(P(n2, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t, windowsVerbatimArguments: true });
       }
       W.exports = pe;
     });
@@ -7450,7 +7450,7 @@ var require_dist2 = __commonJS({
 `));
       }
       function we(e) {
-        let o = [], t = false, n, r, s, i, l = -1;
+        let o = [], t = false, n2, r, s, i, l = -1;
         for (let p = 0; p < e.length; p++) {
           let f = e[p];
           if (f === "--") {
@@ -7459,7 +7459,7 @@ var require_dist2 = __commonJS({
           }
           if (f === "--help" || f === "-h") return { help: true };
           if (f === "--quiet" || f === "-q") {
-            n = true;
+            n2 = true;
             continue;
           }
           if (f === "--debug") {
@@ -7487,7 +7487,7 @@ var require_dist2 = __commonJS({
           break;
         }
         let u = l === -1 ? [] : e.slice(l);
-        return { paths: o, pathSet: t, quiet: n, debug: r, override: s, fast: i, command: u };
+        return { paths: o, pathSet: t, quiet: n2, debug: r, override: s, fast: i, command: u };
       }
       function Ee(e) {
         return e[0] === "~" ? Q.join(ge.homedir(), e.slice(1)) : e;
@@ -7497,17 +7497,17 @@ var require_dist2 = __commonJS({
         return o.path != null && (t.paths = [o.path], t.defaultPath = false), e.pathSet && (t.paths = e.paths, t.defaultPath = false), e.quiet != null && (t.quiet = e.quiet), e.debug != null && (t.debug = e.debug), e.override != null && (t.override = e.override), e.fast != null && (t.fast = e.fast), t;
       }
       function be(e) {
-        let o = {}, t = [], n = { override: e.override, debug: e.debug };
+        let o = {}, t = [], n2 = { override: e.override, debug: e.debug };
         for (let s of e.paths) {
           let i = Q.resolve(process.cwd(), Ee(s));
           try {
             let l = R.parse(he.readFileSync(i, { encoding: e.encoding }), { fast: e.fast });
-            R.populate(o, l, n), t.push(s);
+            R.populate(o, l, n2), t.push(s);
           } catch (l) {
             if (e.debug && console.log(`\u2506 failed to load ${s} ${l.message}`), !(e.defaultPath && l.code === "ENOENT")) throw l;
           }
         }
-        return { injected: R.populate(process.env, o, n), loadedPaths: t };
+        return { injected: R.populate(process.env, o, n2), loadedPaths: t };
       }
       function J(e) {
         let o = e[0];
@@ -7532,10 +7532,10 @@ var require_dist2 = __commonJS({
           $(), process.exitCode = 1;
           return;
         }
-        let n = Ae(t);
+        let n2 = Ae(t);
         try {
-          let c = be(n);
-          if (!n.quiet) {
+          let c = be(n2);
+          if (!n2.quiet) {
             let a = `\u25C7 injected env (${Object.keys(c.injected).length})`;
             c.loadedPaths.length > 0 && (a += ` from ${c.loadedPaths.join(", ")}`), console.error(a);
           }
@@ -29856,17 +29856,17 @@ var ZodArray2 = /* @__PURE__ */ $constructor("ZodArray", (inst, def) => {
   inst._zod.processJSONSchema = (ctx, json3, params) => arrayProcessor(inst, ctx, json3, params);
   inst.element = def.element;
 }, {
-  min(n, params) {
-    return this.check(_minLength(n, params));
+  min(n2, params) {
+    return this.check(_minLength(n2, params));
   },
   nonempty(params) {
     return this.check(_minLength(1, params));
   },
-  max(n, params) {
-    return this.check(_maxLength(n, params));
+  max(n2, params) {
+    return this.check(_maxLength(n2, params));
   },
-  length(n, params) {
-    return this.check(_length(n, params));
+  length(n2, params) {
+    return this.check(_length(n2, params));
   },
   unwrap() {
     return this.element;
@@ -30823,8 +30823,8 @@ function containsRef(value) {
     return Object.values(sub).some(containsRef);
   });
 }
-function plural(n) {
-  return n === 1 ? "element" : "elements";
+function plural(n2) {
+  return n2 === 1 ? "element" : "elements";
 }
 function checkArrayGuards(arraySchema, guards) {
   const guard = z.transform((value) => value).check((payload) => {
@@ -37054,7 +37054,7 @@ function logJournal(entry) {
 async function fetchJson(url2, timeoutMs = 15e3) {
   const res = await fetch(url2, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { accept: "application/json" }
+    headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
   });
   const text2 = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status} en ${url2}: ${text2.slice(0, 300)}`);
@@ -37696,9 +37696,9 @@ function resultText(content) {
   }
   return "";
 }
-var short = (s, n = 140) => {
+var short = (s, n2 = 140) => {
   const str = typeof s === "string" ? s : JSON.stringify(s ?? "");
-  return str.length > n ? str.slice(0, n) + "\u2026" : str;
+  return str.length > n2 ? str.slice(0, n2) + "\u2026" : str;
 };
 function describeToolUse(rawName, input2) {
   const name = normalizeTool(rawName);
@@ -37836,8 +37836,8 @@ function dbEvents() {
   for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons").all()) {
     events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lecci\xF3n #${l.id}, de la misi\xF3n #${l.mission_id}` : void 0 });
   }
-  for (const n of db.prepare("SELECT id, ts, text FROM notes").all()) {
-    events.push({ id: `n${n.id}`, ts: n.ts, kind: "note", title: n.text });
+  for (const n2 of db.prepare("SELECT id, ts, text FROM notes").all()) {
+    events.push({ id: `n${n2.id}`, ts: n2.ts, kind: "note", title: n2.text });
   }
   return events;
 }
@@ -37956,7 +37956,7 @@ async function sessionBriefing(sessionId2) {
     "Cartera:",
     JSON.stringify(portfolio, null, 2),
     "",
-    notes.length ? "Tus notas:\n" + notes.map((n) => `- (id ${n.id}, ${n.ts}) ${n.text}`).join("\n") : "No tienes notas guardadas.",
+    notes.length ? "Tus notas:\n" + notes.map((n2) => `- (id ${n2.id}, ${n2.ts}) ${n2.text}`).join("\n") : "No tienes notas guardadas.",
     "",
     openOrders.length ? "\xD3rdenes condicionales abiertas:\n" + JSON.stringify(openOrders, null, 2) : "No tienes \xF3rdenes condicionales abiertas.",
     "",
@@ -37977,6 +37977,175 @@ async function endSession(sessionId2, finalText, tokens) {
 
 // src/tools/index.ts
 import { readFileSync as readFileSync3 } from "node:fs";
+
+// src/market/research.ts
+var n = (v, digits = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : void 0;
+var ageMinutes = (iso) => iso === void 0 ? void 0 : Math.round((Date.now() - new Date(iso).getTime()) / 6e4);
+async function attempt(label, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    return { error: `${label}: ${err.message.slice(0, 160)}` };
+  }
+}
+async function scanMarket(limit = 25) {
+  const merged = /* @__PURE__ */ new Map();
+  const add = (mint, source, data) => {
+    if (!mint) return;
+    const c = merged.get(mint) ?? { mint, sources: [] };
+    if (!c.sources.includes(source)) c.sources.push(source);
+    for (const [k, v] of Object.entries(data)) if (v !== void 0 && c[k] === void 0) c[k] = v;
+    merged.set(mint, c);
+  };
+  const jup = async (interval) => {
+    const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/toptrending/${interval}?limit=50`);
+    for (const t of list) {
+      add(t.id, `jupiter_trending_${interval}`, {
+        symbol: t.symbol,
+        name: t.name,
+        mcapUsd: n(t.mcap, 0),
+        liquidityUsd: n(t.liquidity, 0),
+        priceChange5mPct: n(t.stats5m?.priceChange),
+        priceChange1hPct: n(t.stats1h?.priceChange),
+        netBuyers5m: t.stats5m?.numNetBuyers,
+        traders5m: t.stats5m?.numTraders,
+        ageMinutes: ageMinutes(t.createdAt)
+      });
+    }
+    return list.length;
+  };
+  const pump = async () => {
+    const list = await fetchJson("https://frontend-api-v3.pump.fun/coins/currently-live?limit=40&offset=0&includeNsfw=false");
+    for (const c of list) {
+      add(c.mint, "pumpfun_live", {
+        symbol: c.symbol,
+        name: c.name,
+        mcapUsd: n(c.usd_market_cap, 0),
+        pumpfunGraduated: c.complete,
+        pumpfunReplies: c.reply_count,
+        ageMinutes: ageMinutes(c.created_timestamp)
+      });
+    }
+    return list.length;
+  };
+  const boosts = async () => {
+    const list = await fetchJson("https://api.dexscreener.com/token-boosts/latest/v1");
+    const sol = list.filter((b) => b.chainId === "solana");
+    for (const b of sol) add(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
+    return sol.length;
+  };
+  const gecko = async () => {
+    const res = await fetchJson("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools");
+    for (const p of res.data) {
+      const mint = String(p.relationships?.base_token?.data?.id ?? "").replace(/^solana_/, "");
+      const a = p.attributes ?? {};
+      add(mint, "geckoterminal_trending", {
+        name: a.name,
+        liquidityUsd: n(Number(a.reserve_in_usd), 0),
+        priceChange5mPct: n(Number(a.price_change_percentage?.m5)),
+        priceChange1hPct: n(Number(a.price_change_percentage?.h1)),
+        ageMinutes: ageMinutes(a.pool_created_at)
+      });
+    }
+    return res.data.length;
+  };
+  const status = await Promise.all([
+    attempt("jupiter_trending_5m", () => jup("5m")),
+    attempt("jupiter_trending_1h", () => jup("1h")),
+    attempt("pumpfun_live", pump),
+    attempt("dexscreener_boosted", boosts),
+    attempt("geckoterminal_trending", gecko)
+  ]);
+  const candidates = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+  return {
+    note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con su mint.",
+    sourcesStatus: status.map(
+      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}` : s.error
+    ),
+    totalUnique: merged.size,
+    candidates
+  };
+}
+async function tokenReport(mint) {
+  const [jupiter, dexscreener, rugcheck, pumpfun] = await Promise.all([
+    attempt("jupiter", async () => {
+      const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+      const t = list.find((x) => x.id === mint);
+      if (!t) return { error: "no encontrado en Jupiter" };
+      const stats = (s) => s && {
+        priceChangePct: n(s.priceChange),
+        buyVolumeUsd: n(s.buyVolume, 0),
+        sellVolumeUsd: n(s.sellVolume, 0),
+        buys: s.numBuys,
+        sells: s.numSells,
+        traders: s.numTraders,
+        netBuyers: s.numNetBuyers,
+        organicBuyers: s.numOrganicBuyers
+      };
+      return {
+        symbol: t.symbol,
+        name: t.name,
+        priceUsd: t.usdPrice,
+        mcapUsd: n(t.mcap, 0),
+        liquidityUsd: n(t.liquidity, 0),
+        holders: t.holderCount,
+        ageMinutes: ageMinutes(t.createdAt),
+        launchpad: t.launchpad,
+        graduatedAt: t.graduatedAt,
+        organicScore: n(t.organicScore, 1),
+        verified: t.isVerified,
+        website: t.website,
+        audit: t.audit,
+        stats5m: stats(t.stats5m),
+        stats1h: stats(t.stats1h),
+        stats24h: stats(t.stats24h)
+      };
+    }),
+    attempt("dexscreener", async () => {
+      const pairs = await fetchJson(`https://api.dexscreener.com/tokens/v1/solana/${mint}`);
+      if (!pairs.length) return { error: "sin pares en DexScreener" };
+      const top = pairs[0];
+      return {
+        pairs: pairs.length,
+        mainDex: top.dexId,
+        pairAgeMinutes: ageMinutes(top.pairCreatedAt),
+        liquidityUsd: n(top.liquidity?.usd, 0),
+        volumeUsd: top.volume,
+        txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
+        priceChangePct: top.priceChange,
+        websites: top.info?.websites?.map((w) => w.url),
+        socials: top.info?.socials?.map((s) => `${s.type}: ${s.url}`),
+        boosts: top.boosts?.active,
+        url: top.url
+      };
+    }),
+    attempt("rugcheck", async () => {
+      const r = await fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`);
+      return {
+        scoreNormalised: r.score_normalised,
+        risks: (r.risks ?? []).map((x) => `${x.level}: ${x.name}${x.value ? ` (${x.value})` : ""}`)
+      };
+    }),
+    mint.endsWith("pump") ? attempt("pumpfun", async () => {
+      const c = await fetchJson(`https://frontend-api-v3.pump.fun/coins-v2/${mint}`);
+      return {
+        description: c.description,
+        twitter: c.twitter,
+        telegram: c.telegram,
+        website: c.website,
+        replies: c.reply_count,
+        participants: c.num_participants,
+        graduated: c.complete,
+        mcapUsd: n(c.usd_market_cap, 0),
+        athMcapUsd: n(c.ath_market_cap, 0),
+        securityVerdict: c.security_verdict,
+        createdMinutesAgo: ageMinutes(c.created_timestamp),
+        url: `https://pump.fun/coin/${mint}`
+      };
+    }) : Promise.resolve(void 0)
+  ]);
+  return { mint, jupiter, dexscreener, rugcheck, ...pumpfun ? { pumpfun } : {} };
+}
 
 // src/tools/define.ts
 function tool(def) {
@@ -38001,6 +38170,18 @@ Fuentes: ${t.sources.join(" \xB7 ")}
 Plan: ${t.exit_plan}`;
 var SIM_TOOLS = [
   tool({
+    name: "scan_market",
+    description: "Escaneo de mercado en Solana en una sola llamada: combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal, con sus datos clave (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero.",
+    schema: external_exports.object({ limit: external_exports.number().int().min(5).max(60).default(25) }),
+    run: async ({ limit }) => json2(await scanMarket(limit))
+  }),
+  tool({
+    name: "token_report",
+    description: "Ficha completa de un token de Solana en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa (autoridades de mint y freeze, % del creador y de los mayores holders), riesgos de RugCheck, webs y redes sociales del proyecto y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico.",
+    schema: external_exports.object({ mint: external_exports.string() }),
+    run: async ({ mint }) => json2(await tokenReport(mint.trim()))
+  }),
+  tool({
     name: "field_guide",
     description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
     schema: external_exports.object({}),
@@ -38023,7 +38204,7 @@ var SIM_TOOLS = [
   }),
   tool({
     name: "wait",
-    description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos). Mientras esperas, tus \xF3rdenes condicionales se siguen vigilando. Vuelve antes si la misi\xF3n termina.`,
+    description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus \xF3rdenes condicionales se siguen vigilando. Vuelve antes si la misi\xF3n termina. El tiempo tambi\xE9n pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.`,
     schema: external_exports.object({ minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES) }),
     run: async ({ minutes }) => {
       const until = Date.now() + minutes * 6e4;

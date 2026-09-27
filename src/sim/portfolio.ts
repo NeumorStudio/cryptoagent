@@ -229,7 +229,7 @@ export async function swap(args: {
     missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
-    summary: `Swap ${result.sold} → ${result.received}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
+    summary: `Swap ${Number(amount.toPrecision(6))} ${input.symbol} → ${Number(quote.amountOut.toPrecision(6))} ${output.symbol}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
     reasoning: args.reasoning,
     details: { inputMint: input.address, outputMint: output.address, ...result },
   });

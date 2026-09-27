@@ -37369,7 +37369,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.12.0";
+var CODE_VERSION = "0.12.1";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -38826,7 +38826,7 @@ async function swap(args) {
     missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
-    summary: `Swap ${result.sold} \u2192 ${result.received}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
+    summary: `Swap ${Number(amount.toPrecision(6))} ${input2.symbol} \u2192 ${Number(quote2.amountOut.toPrecision(6))} ${output2.symbol}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
     reasoning: args.reasoning,
     details: { inputMint: input2.address, outputMint: output2.address, ...result }
   });
@@ -41047,8 +41047,23 @@ function state() {
     orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
-    memory: memorySummary(mission?.id ?? null)
+    memory: memorySummary(mission?.id ?? null),
+    ...mission ? missionDetail(mission.id) : { trades: [], positions: [], lastNote: null, lastReview: null }
   };
+}
+function missionDetail(missionId) {
+  const trades = db.prepare(
+    `SELECT id, ts, kind, summary, details FROM journal
+         WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'order_failed') ORDER BY id`
+  ).all(missionId).map((j) => {
+    const d = j.details ? JSON.parse(j.details) : {};
+    const venue = j.kind === "cex_order" ? "binance" : String(d.chain ?? d.from ?? "solana");
+    return { id: j.id, ts: j.ts, kind: j.kind, summary: j.summary, venue };
+  });
+  const positions = listPositions(missionId).filter((p) => p.status === "open").map((p) => ({ venue: p.venue, asset: p.asset, symbol: p.symbol, openCostUsd: p.openCostUsd }));
+  const lastNote = db.prepare("SELECT ts, title FROM activity WHERE mission_id = ? AND kind = 'thought' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
+  const lastReview = db.prepare("SELECT ts, title, body FROM activity WHERE mission_id = ? AND kind = 'review' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
+  return { trades, positions, lastNote, lastReview };
 }
 function send(res, status, type, body) {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store" });

@@ -3,558 +3,666 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Caja negra de la misión</title>
+<title>cryptoagent · la carrera</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anybody:wdth,wght@50..150,300..900&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #F2F3F1;
-    --surface: #FAFAF8;
-    --ink: #16202B;
-    --ink-2: #3D4854;
-    --muted: #5E6975;
-    --rule: #D6DAD8;
-    --rule-strong: #B9BFBC;
-    --series: #1F5FB0;
-    --gain: #0B6E44;
-    --loss: #B3261E;
-    --think: #8A5300;
-    --think-bg: #F6EBD9;
-    --research: #2B5379;
-    --trade: #0B6E44;
-    --order: #0E6269;
-    --hypo: #6B4A2E;
-    --system: #16202B;
-    --flash: #F0D9A8;
-    --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
-    --font-text: "Schibsted Grotesk", system-ui, sans-serif;
-    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    color-scheme: dark;
+    /* Asfalto, tinta hueso y amarillo de pista (el amarillo es solo para la carrera: pista, corredor, meta y curva). */
+    --bg: #14161A;
+    --surface: #1C1F24;
+    --surface-2: #23262C;
+    --rule: #2C3037;
+    --ink: #EDE9E1;
+    --muted: #A5A197;
+    --accent: #F2C230;
+    --accent-ink: #14161A;
+    --up: #5BD08F;
+    --down: #F0776E;
+    /* Un color fijo por cadena (validado para daltonismo sobre este fondo, en este orden). */
+    --solana: #199E70;
+    --base: #3987E5;
+    --bsc: #D95926;
+    --binance: #9085E9;
+    --font: "Anybody", "Arial Narrow", system-ui, sans-serif;
     --ease: cubic-bezier(0.16, 1, 0.3, 1);
-    color-scheme: light;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #10151B;
-      --surface: #141A21;
-      --ink: #E4E8EC;
-      --ink-2: #C3CBD3;
-      --muted: #97A3AF;
-      --rule: #25303A;
-      --rule-strong: #34414D;
-      --series: #5B8FDB;
-      --gain: #4CC38A;
-      --loss: #F0776E;
-      --think: #E3A94F;
-      --think-bg: #2A2214;
-      --research: #8EB3DA;
-      --trade: #4CC38A;
-      --order: #5CC2C9;
-      --hypo: #C9A27F;
-      --system: #E4E8EC;
-      --flash: #3A2F17;
-      color-scheme: dark;
-    }
-  }
-
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  body {
-    background: var(--bg);
-    color: var(--ink);
-    font: 400 15px/1.5 var(--font-text);
-    -webkit-font-smoothing: antialiased;
-  }
-  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  :focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  html { overflow-x: clip; }
+  body { font: 400 16px/1.55 var(--font); font-stretch: 100%; -webkit-font-smoothing: antialiased; }
+  .tab { font-variant-numeric: tabular-nums; }
+  h1, h2, h3, p { margin: 0; }
+  h2 { font-size: 13px; font-weight: 700; font-stretch: 125%; letter-spacing: .02em; color: var(--muted); margin-bottom: 14px; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
-  /* ── Cabecera: identidad de la misión y reloj ─────────────────────── */
-  header {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: end;
-    gap: 8px 32px;
-    padding: 20px 28px 16px;
-    border-bottom: 1px solid var(--rule-strong);
-  }
-  .mission-name { margin: 0; font: 700 15px/1.3 var(--font-text); }
-  .mission-sub { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
-  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-  .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--gain); display: inline-block; }
-  .live.off i { background: var(--loss); }
-  .clock { text-align: right; }
-  .clock-label { font-size: 13px; color: var(--muted); }
-  .clock-value {
-    font: 800 clamp(40px, 6vw, 64px)/0.9 var(--font-display);
-    letter-spacing: 0.01em;
-    font-variant-numeric: tabular-nums;
-  }
-  .clock-value.ended { font-size: clamp(30px, 4vw, 44px); }
-  .clock-value.urgent { color: var(--loss); }
-
-  /* ── Rejilla principal ────────────────────────────────────────────── */
-  main {
-    display: grid;
-    grid-template-columns: minmax(340px, 400px) 1fr;
-    height: calc(100dvh - var(--header-h, 110px));
-  }
-  aside {
-    overflow-y: auto;
-    padding: 24px 28px 40px;
-    border-right: 1px solid var(--rule);
-  }
-  section + section { margin-top: 32px; }
-  h2 {
-    margin: 0 0 12px;
-    font: 700 13px/1.2 var(--font-text);
-    color: var(--ink-2);
-  }
-
-  /* Valor y carril de progreso */
-  .value-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
-  .value { font: 800 52px/1 var(--font-display); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .pnl { font-size: 14px; }
-  .pnl.up { color: var(--gain); }
-  .pnl.down { color: var(--loss); }
-  .rail { position: relative; margin: 20px 0 6px; height: 28px; }
-  .rail-track { position: absolute; left: 0; right: 0; top: 13px; height: 2px; background: var(--rule-strong); }
-  .rail-fill { position: absolute; left: 0; top: 12px; height: 4px; background: var(--series); border-radius: 2px; transform-origin: left; transition: transform 600ms var(--ease); }
-  .rail-tick { position: absolute; top: 9px; width: 1px; height: 10px; background: var(--rule-strong); }
-  .rail-marker {
-    position: absolute; top: 5px; width: 3px; height: 18px; margin-left: -1px;
-    background: var(--ink); border-radius: 2px; transition: left 600ms var(--ease);
-  }
-  .rail-ends { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
-  .rail-ends b { color: var(--ink); font-weight: 500; }
-  .missing { margin: 12px 0 0; font-size: 14px; color: var(--ink-2); }
-
-  /* Gráfico */
-  .chart-wrap { position: relative; }
-  .chart { display: block; width: 100%; height: 170px; }
-  .chart .grid { stroke: var(--rule); stroke-width: 1; }
-  .chart .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
-  .chart .ref-target { stroke: var(--ink); stroke-dasharray: 6 3; }
-  .chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  .chart .axis { fill: var(--muted); font: 11px var(--font-mono); }
-  .chart .ref-label { fill: var(--ink-2); font: 11px var(--font-text); }
-  .chart .cross { stroke: var(--muted); stroke-width: 1; }
-  .chart .dot { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
-  .tooltip {
-    position: absolute; pointer-events: none; padding: 6px 8px;
-    background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 4px;
-    font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity 120ms;
-  }
-  .chart-empty { font-size: 14px; color: var(--muted); padding: 24px 0; }
-  details.data-table summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 6px; }
-
-  /* Tablas de posiciones y órdenes */
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 0 0 6px; border-bottom: 1px solid var(--rule); }
-  td { padding: 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
-  td.r, th.r { text-align: right; }
-  .venue { color: var(--muted); font-size: 12px; }
-  tr.transit td { font-style: italic; opacity: .8; }
-  .order { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
-  .order .when { color: var(--muted); font-size: 12px; }
-  .empty { font-size: 14px; color: var(--muted); margin: 0; }
-  .ok { color: var(--gain); }
-  .ko { color: var(--loss); }
-  .lesson { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
-  .lesson .when { color: var(--muted); font-size: 12px; }
-  #lessons { margin-top: 4px; }
-  h3.sub { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 0; font-weight: 600; }
-
-  /* ── Transcripción ────────────────────────────────────────────────── */
-  .transcript { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .filters {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-    padding: 14px 28px; border-bottom: 1px solid var(--rule);
-  }
-  .chip {
-    min-height: 36px; padding: 0 14px; border-radius: 18px;
-    border: 1px solid var(--rule-strong); background: transparent; color: var(--ink-2);
-    font: 500 13px var(--font-text); cursor: pointer;
-  }
-  .chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
-  .chip:hover:not([aria-pressed="true"]) { border-color: var(--ink-2); }
-  .chip:active { transform: translateY(1px); }
-  .follow { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; min-height: 36px; }
-  .follow input { width: 16px; height: 16px; accent-color: var(--ink); }
-
-  .log { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0 40px; }
-  .row {
-    position: relative;
-    display: grid;
-    grid-template-columns: 76px 104px minmax(0, 1fr);
-    gap: 0 14px;
-    padding: 9px 28px;
-    border-bottom: 1px solid var(--rule);
-  }
-  .row::before {
-    content: ""; position: absolute; inset: 0; background: var(--flash);
-    opacity: 0; pointer-events: none;
-  }
-  .row.fresh::before { animation: flash 1800ms var(--ease); }
-  @keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
-  .row > * { position: relative; }
-  .ts { font: 400 12px/1.9 var(--font-mono); color: var(--muted); }
-  .who { font: 700 11px/2.1 var(--font-text); letter-spacing: 0.02em; }
-  .what { min-width: 0; overflow-wrap: anywhere; }
-  .what p { margin: 0; max-width: 78ch; white-space: pre-wrap; }
-  .row details { margin-top: 4px; }
-  .thesis { margin: 6px 0 2px; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; font-size: 14px; max-width: 78ch; }
-  .thesis dt { color: var(--muted); font-size: 12px; line-height: 1.7; }
-  .thesis dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
-  .thesis a { color: var(--research); }
-  .thesis.plain { display: block; margin: 6px 0 2px; color: var(--ink-2); white-space: pre-wrap; }
-  .row summary { cursor: pointer; font-size: 12px; color: var(--muted); width: max-content; }
-  .row pre {
-    margin: 6px 0 2px; padding: 10px 12px; max-height: 320px; overflow: auto;
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
-    font: 12px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
-  }
-
-  .k-thought, .k-thinking { background: var(--think-bg); }
-  .k-thought .what p, .k-thinking .what p { font-size: 16px; line-height: 1.55; }
-  .k-thought .who, .k-thinking .who, .k-note .who, .k-lesson .who, .k-review .who, .k-request .who { color: var(--think); }
-  .k-lesson .what p { font-weight: 500; }
-  .k-search .who, .k-browse .who, .k-fetch .who, .k-tool .who, .k-result .who { color: var(--research); }
-  .k-trade .who { color: var(--trade); }
-  .k-trade .what p { font-weight: 500; }
-  .k-order .who { color: var(--order); }
-  .k-hypothetical .who { color: var(--hypo); }
-  .k-error .who { color: var(--loss); }
-  .k-mission .who, .k-session .who, .k-text .who { color: var(--system); }
-  .k-mission .what p { font-weight: 700; }
-  .k-session { background: transparent; }
-  .k-session .what p { color: var(--muted); }
-
-  .log-empty { padding: 48px 28px; color: var(--muted); max-width: 60ch; }
-  .banner { padding: 10px 28px; background: var(--loss); color: #fff; font-size: 14px; display: none; }
+  .banner { display: none; background: var(--down); color: var(--accent-ink); padding: 10px 24px; font-weight: 600; }
   .banner.show { display: block; }
 
-  @media (max-width: 860px) {
-    header { grid-template-columns: 1fr; }
-    .clock { text-align: left; }
-    main { grid-template-columns: 1fr; height: auto; }
-    aside { border-right: 0; border-bottom: 1px solid var(--rule); padding: 20px 16px 28px; }
-    .filters { padding: 12px 16px; }
-    .log { overflow: visible; }
-    .row { grid-template-columns: 64px minmax(0, 1fr); padding: 9px 16px; }
-    .row .who { grid-column: 2; line-height: 1.4; }
-    .row .what { grid-column: 2; }
-    .row .ts { grid-row: 1 / span 2; }
-    header { padding: 16px; }
+  /* ── Cabecera ─────────────────────────────────────────── */
+  .top {
+    display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 24px;
+    padding: 28px 40px 0; max-width: 1360px; margin: 0 auto;
+  }
+  .mission { display: grid; gap: 4px; }
+  .mission h1 { font-size: 15px; font-weight: 600; font-stretch: 110%; }
+  .mission p { color: var(--muted); font-size: 14px; }
+  .live { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--up); }
+  .live.off i { background: var(--down); }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; font-stretch: 120%; background: var(--surface-2); color: var(--ink); margin-left: 6px; }
+  .pill.win { background: var(--accent); color: var(--accent-ink); }
+  .clock { text-align: right; }
+  .clock-label { display: block; font-size: 13px; color: var(--muted); }
+  .clock-value { font-size: clamp(40px, 6vw, 64px); line-height: 1; font-weight: 800; font-stretch: 140%; }
+  .clock-value.urgent { color: var(--down); }
+  .clock-value.ended { font-size: clamp(24px, 3vw, 32px); font-stretch: 120%; }
+
+  main { max-width: 1360px; margin: 0 auto; padding: 8px 40px 64px; display: grid; gap: 44px; }
+
+  /* ── La carrera ───────────────────────────────────────── */
+  .hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; }
+  .value { font-size: clamp(64px, 11vw, 148px); line-height: .95; font-weight: 800; font-stretch: 150%; letter-spacing: -.01em; }
+  .value .cur { font-size: .45em; font-stretch: 120%; color: var(--muted); }
+  .delta { font-size: clamp(22px, 2.6vw, 32px); font-weight: 700; font-stretch: 120%; }
+  .delta.up { color: var(--up); } .delta.down { color: var(--down); }
+  .gap { color: var(--muted); font-size: 17px; flex-basis: 100%; }
+
+  .track { position: relative; height: 96px; margin-top: 26px; overflow: clip; overflow-clip-margin: 14px; }
+  .lane { position: absolute; left: 0; right: 0; top: 44px; height: 12px; border-radius: 6px; background: var(--surface-2); }
+  .fill { position: absolute; top: 44px; height: 12px; transform: scaleX(0); transition: transform 700ms var(--ease); }
+  .fill.ahead { background: var(--accent); transform-origin: left; border-radius: 0 6px 6px 0; }
+  .fill.behind { background: var(--down); transform-origin: right; border-radius: 6px 0 0 6px; }
+  .mark { position: absolute; top: 30px; height: 40px; width: 2px; margin-left: -1px; background: var(--muted); }
+  .mark.finish { width: 14px; margin-left: -7px; border-radius: 2px;
+    background: repeating-conic-gradient(var(--ink) 0 25%, var(--bg) 0 50%) 0 0 / 7px 7px; }
+  .mark-label { position: absolute; top: 76px; transform: translateX(-50%); white-space: nowrap; font-size: 13px; color: var(--muted); }
+  .mark-label b { color: var(--ink); font-weight: 600; }
+  .mark-label.right { transform: translateX(-100%); }
+  .mark-label.left { transform: none; }
+  /* El corredor y el fantasma viajan con transform: el carril mide lo mismo que la pista. */
+  .rail { position: absolute; inset: 0; transition: transform 700ms var(--ease); pointer-events: none; }
+  .runner { position: absolute; left: 0; top: 36px; width: 28px; height: 28px; margin-left: -14px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 0 4px var(--bg); }
+  .runner-tag { position: absolute; left: 0; top: 4px; transform: translateX(-50%); font-size: 12px; font-weight: 700; font-stretch: 125%;
+    background: var(--accent); color: var(--accent-ink); padding: 1px 8px; border-radius: 4px; white-space: nowrap; }
+  .ghost { position: absolute; left: 0; top: 41px; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%;
+    border: 2px dashed var(--muted); background: var(--bg); }
+
+  .time { margin-top: 18px; display: grid; gap: 6px; }
+  .time-bar { height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+  .time-fill { height: 100%; background: var(--muted); transform-origin: left; transform: scaleX(0); transition: transform 1s linear; }
+  .time-fill.urgent { background: var(--down); }
+  .time-legend { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+
+  /* ── Curva ───────────────────────────────────────────── */
+  .sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+  .hint { font-size: 13px; color: var(--muted); }
+  .chart-wrap { position: relative; }
+  .chart { display: block; width: 100%; height: 260px; overflow: visible; }
+  .chart .grid { stroke: var(--rule); stroke-width: 1; }
+  .chart .ref { stroke: var(--muted); stroke-width: 1; opacity: .6; }
+  .chart .ref.meta { stroke: var(--accent); opacity: 1; }
+  .chart .ref-label { fill: var(--muted); font-size: 12px; }
+  .chart .ref-label.meta { fill: var(--ink); font-weight: 600; }
+  .chart .future { fill: var(--surface); }
+  .chart .area { fill: var(--accent); opacity: .1; }
+  .chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .now-line { stroke: var(--muted); stroke-width: 1; }
+  .chart .axis { fill: var(--muted); font-size: 12px; }
+  .chart .end-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+  .chart .cross { stroke: var(--muted); stroke-width: 1; }
+  .chart .flag { cursor: pointer; }
+  .chart .flag .stem { stroke: var(--muted); stroke-width: 1; }
+  .chart .flag .cloth { stroke: var(--bg); stroke-width: 1.5; }
+  .chart .flag .hit { fill: transparent; }
+  .chart .flag.fail .cloth { fill: var(--down); }
+  .chart .flag.drop { animation: drop 420ms var(--ease) both; }
+  @keyframes drop { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .chart-empty { color: var(--muted); padding: 40px 0; }
+  .tooltip { position: absolute; pointer-events: none; opacity: 0; background: var(--surface-2); border: 1px solid var(--rule);
+    padding: 6px 10px; border-radius: 6px; font-size: 13px; max-width: 320px; transition: opacity 120ms; }
+  details.data summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 8px; width: max-content; }
+  details.data table { margin-top: 8px; border-collapse: collapse; font-size: 13px; }
+  details.data td, details.data th { padding: 2px 16px 2px 0; text-align: left; }
+
+  /* ── Tres bloques ────────────────────────────────────── */
+  .trio { display: grid; grid-template-columns: 1.1fr 1.2fr 1fr; gap: 40px; }
+  .trio > section { border-top: 1px solid var(--rule); padding-top: 18px; min-width: 0; }
+
+  .stack { display: flex; gap: 2px; height: 24px; }
+  .seg { height: 100%; min-width: 3px; transition: flex-grow 600ms var(--ease); }
+  .seg:first-child { border-radius: 4px 0 0 4px; } .seg:last-child { border-radius: 0 4px 4px 0; } .seg:only-child { border-radius: 4px; }
+  .seg.transit { background: repeating-linear-gradient(45deg, var(--muted) 0 3px, transparent 3px 7px); }
+  .legend, .bets, .recent, .beliefs { list-style: none; margin: 0; padding: 0; }
+  .legend { margin-top: 14px; display: grid; gap: 6px; }
+  .legend li, .bets li { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; font-size: 15px; }
+  .key { width: 12px; height: 12px; border-radius: 3px; }
+  .key.transit { background: repeating-linear-gradient(45deg, var(--muted) 0 2px, transparent 2px 4px); }
+  .legend .amt { color: var(--muted); }
+  .sub { font-size: 13px; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
+  .bets li { grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+  .bets .chain { color: var(--muted); font-size: 13px; margin-left: 6px; }
+  .bets .pl.up { color: var(--up); } .bets .pl.down { color: var(--down); }
+  .quiet { color: var(--muted); font-size: 15px; }
+
+  .note { font-size: clamp(19px, 1.8vw, 23px); line-height: 1.4; font-weight: 500; }
+  .note-when { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .recent { margin-top: 20px; display: grid; gap: 8px; }
+  .recent li { display: grid; grid-template-columns: 44px 12px 1fr; gap: 10px; align-items: baseline; font-size: 14px; }
+  .recent time { color: var(--muted); }
+  .recent .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); align-self: center; }
+  .recent li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .more { margin-top: 18px; background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 10px 16px; min-height: 44px; cursor: pointer; }
+  .more:hover { border-color: var(--muted); }
+
+  .review { font-size: 16px; }
+  .review-when { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .runs { display: flex; align-items: center; gap: 6px; height: 96px; margin-top: 8px; position: relative; }
+  .runs::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--rule); }
+  .run { flex: 0 1 18px; height: 100%; position: relative; z-index: 1; }
+  .run i { position: absolute; left: 0; right: 0; }
+  .run.up i { bottom: 50%; background: var(--up); border-radius: 4px 4px 0 0; }
+  .run.down i { top: 50%; background: var(--down); border-radius: 0 0 4px 4px; }
+  .run.win i { background: var(--accent); }
+  .runs-legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .beliefs { display: grid; gap: 10px; }
+  .beliefs li { font-size: 14px; line-height: 1.45; }
+  .beliefs .verdict { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .ask { margin-top: 18px; padding: 12px 14px; border-radius: 6px; background: var(--surface); font-size: 14px; }
+  .ask b { font-weight: 700; }
+
+  /* ── Cajón: todo lo que hace ─────────────────────────── */
+  /* Capa fija que recorta el cajón cerrado: así no ensancha la página. */
+  .layer { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 10; }
+  .drawer { pointer-events: auto; position: absolute; inset: 0 0 0 auto; width: min(640px, 100vw); background: var(--surface); border-left: 1px solid var(--rule);
+    transform: translateX(100%); visibility: hidden; transition: transform 320ms var(--ease), visibility 0s 320ms; display: grid; grid-template-rows: auto auto 1fr; z-index: 10; }
+  .drawer.open { transform: none; visibility: visible; transition: transform 320ms var(--ease); }
+  .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px 8px; }
+  .drawer-head h2 { margin: 0; color: var(--ink); font-size: 16px; }
+  .close { background: none; border: 1px solid var(--rule); border-radius: 6px; min-width: 44px; min-height: 44px; cursor: pointer; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 22px 12px; align-items: center; }
+  .chip { background: var(--bg); border: 1px solid var(--rule); border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; min-height: 36px; }
+  .chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .follow { font-size: 13px; color: var(--muted); margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .log { overflow-y: auto; padding: 0 22px 40px; }
+  .row { display: grid; grid-template-columns: 44px 84px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+  .row .ts { color: var(--muted); } .row .who { font-size: 11px; font-weight: 700; font-stretch: 120%; color: var(--muted); padding-top: 2px; }
+  .row.fresh { animation: fresh 1.2s var(--ease); }
+  @keyframes fresh { from { opacity: 0; } to { opacity: 1; } }
+  .row details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .row pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 4px; max-height: 280px; overflow: auto; }
+  .thesis { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; color: var(--muted); font-size: 13px; }
+  .thesis dt { font-weight: 600; } .thesis dd { margin: 0; }
+  .thesis a { color: var(--ink); }
+  .scrim { position: fixed; inset: 0; background: #0009; opacity: 0; pointer-events: none; transition: opacity 320ms; z-index: 9; }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+
+  @media (max-width: 980px) {
+    .trio { grid-template-columns: 1fr; gap: 32px; }
+  }
+  @media (max-width: 640px) {
+    .top { padding: 18px 16px 0; grid-template-columns: 1fr; gap: 12px; }
+    .clock { text-align: left; display: flex; align-items: baseline; gap: 8px; }
+    .clock-value { font-size: 30px; }
+    .sec-head { flex-direction: column; gap: 2px; margin-bottom: 8px; }
+    main { padding: 4px 16px 48px; gap: 32px; }
+    .chart { height: 200px; }
+    .row { grid-template-columns: 40px 1fr; } .row .who { display: none; }
   }
   @media (prefers-reduced-motion: reduce) {
-    *, *::before { animation: none !important; transition: none !important; }
+    *, *::before, *::after { transition: none !important; animation: none !important; }
   }
 </style>
 </head>
 <body>
-<div class="banner" id="banner" role="alert">Se ha perdido la conexión con el panel. Comprueba que `npm run dashboard` sigue abierto.</div>
-<header id="header">
-  <div>
-    <p class="mission-name" id="missionName">Misión</p>
-    <p class="mission-sub" id="missionSub">Cargando…</p>
-    <p class="mission-sub" id="missionBrief" hidden></p>
+<div class="banner" id="banner" role="alert">Se ha perdido la conexión con el panel. Comprueba que el panel sigue abierto (npm run dashboard o Claude Code).</div>
+
+<header class="top">
+  <div class="mission">
     <span class="live" id="live"><i></i><span id="liveText">conectando</span></span>
+    <h1><span id="missionName">Misión</span><span class="pill" id="pill" hidden></span></h1>
+    <p id="missionSub">Cargando…</p>
   </div>
   <div class="clock">
-    <div class="clock-label" id="clockLabel">Tiempo restante</div>
-    <div class="clock-value" id="clock">--:--:--</div>
+    <span class="clock-label" id="clockLabel">quedan</span>
+    <span class="clock-value tab" id="clock">--:--</span>
   </div>
 </header>
 
 <main>
-  <aside>
-    <section aria-labelledby="h-value">
-      <h2 id="h-value">Valor de la cartera</h2>
-      <div class="value-row">
-        <span class="value" id="value">…</span>
-        <span class="pnl num" id="pnl"></span>
-      </div>
-      <div class="rail" aria-hidden="true">
-        <div class="rail-track"></div>
-        <div class="rail-fill" id="railFill" style="transform: scaleX(0)"></div>
-        <div id="railTicks"></div>
-        <div class="rail-marker" id="railMarker" style="left: 0%"></div>
-      </div>
-      <div class="rail-ends"><span>Capital <b class="num" id="initial">…</b></span><span>Objetivo <b class="num" id="target">…</b></span></div>
-      <p class="missing" id="missing"></p>
-    </section>
-
-    <section aria-labelledby="h-chart">
-      <h2 id="h-chart">Evolución del valor</h2>
-      <div class="chart-wrap" id="chartWrap">
-        <svg class="chart" id="chart" role="img" aria-label="Valor de la cartera a lo largo de la misión"></svg>
-        <div class="tooltip" id="tooltip"></div>
-      </div>
-      <details class="data-table">
-        <summary>Ver los datos</summary>
-        <table><thead><tr><th>Hora</th><th class="r">Valor</th></tr></thead><tbody id="chartTable"></tbody></table>
-      </details>
-    </section>
-
-    <section aria-labelledby="h-pos">
-      <h2 id="h-pos">Posiciones</h2>
-      <table>
-        <thead><tr><th>Activo</th><th class="r">Cantidad</th><th class="r">USD</th></tr></thead>
-        <tbody id="holdings"></tbody>
-      </table>
-    </section>
-
-    <section aria-labelledby="h-orders">
-      <h2 id="h-orders">Órdenes abiertas</h2>
-      <div id="orders"></div>
-    </section>
-
-    <section aria-labelledby="h-memory">
-      <h2 id="h-memory">Memoria entre misiones</h2>
-      <table>
-        <thead><tr><th>Misión</th><th class="r">Objetivo</th><th class="r">Resultado</th></tr></thead>
-        <tbody id="history"></tbody>
-      </table>
-      <h3 class="sub">Lo que ha aprendido</h3>
-      <div id="lessons"></div>
-      <h3 class="sub">Lo que pide</h3>
-      <div id="requests"></div>
-    </section>
-  </aside>
-
-  <section class="transcript" aria-labelledby="h-log">
-    <h2 id="h-log" style="position:absolute;left:-9999px">Transcripción del agente</h2>
-    <div class="filters" role="group" aria-label="Filtrar la transcripción">
-      <button class="chip" data-filter="all" aria-pressed="true">Todo</button>
-      <button class="chip" data-filter="mind" aria-pressed="false">Sus notas</button>
-      <button class="chip" data-filter="research" aria-pressed="false">Lo que investiga</button>
-      <button class="chip" data-filter="trades" aria-pressed="false">Operaciones</button>
-      <button class="chip" data-filter="system" aria-pressed="false">Misión y errores</button>
-      <label class="follow"><input type="checkbox" id="follow" checked> Seguir en directo</label>
+  <section aria-labelledby="h-race">
+    <h2 class="sr" id="h-race">La carrera</h2>
+    <div class="hero">
+      <output class="value" id="value" aria-live="polite"><span id="valueNum">…</span><span class="cur"> $</span></output>
+      <span class="delta" id="delta"></span>
+      <p class="gap" id="gap"></p>
     </div>
-    <div class="log" id="log" aria-live="polite"></div>
+    <div class="track" id="track" aria-hidden="true">
+      <div class="lane"></div>
+      <div class="fill behind" id="fillBehind"></div>
+      <div class="fill ahead" id="fillAhead"></div>
+      <div class="mark" id="startMark"></div>
+      <div class="mark finish" id="finishMark"></div>
+      <span class="mark-label" id="startLabel"></span>
+      <span class="mark-label right" id="finishLabel"></span>
+      <div class="rail" id="ghostRail" hidden><span class="ghost"></span></div>
+      <div class="rail" id="runnerRail"><span class="runner-tag">agente</span><span class="runner"></span></div>
+    </div>
+    <div class="time">
+      <div class="time-bar"><div class="time-fill" id="timeFill"></div></div>
+      <div class="time-legend"><span id="timeStart"></span><span id="timeMid"></span><span id="timeEnd"></span></div>
+    </div>
   </section>
+
+  <section aria-labelledby="h-curve">
+    <div class="sec-head"><h2 id="h-curve">Cómo va la carrera</h2><span class="hint">cada bandera es una operación, del color de su cadena</span></div>
+    <div class="chart-wrap" id="chartWrap">
+      <svg class="chart" id="chart" role="img" aria-label="Valor de la cartera a lo largo de la misión, con sus operaciones"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+    <details class="data"><summary>Ver los datos</summary><table><thead><tr><th>Hora</th><th>Valor</th></tr></thead><tbody id="chartTable"></tbody></table></details>
+  </section>
+
+  <div class="trio">
+    <section aria-labelledby="h-money">
+      <h2 id="h-money">Dónde está el dinero</h2>
+      <div class="stack" id="stack" role="img" aria-label="Reparto de la cartera por cadena"></div>
+      <ul class="legend" id="legend"></ul>
+      <p class="sub">En juego</p>
+      <ul class="bets" id="bets"></ul>
+    </section>
+
+    <section aria-labelledby="h-now">
+      <h2 id="h-now">Ahora mismo</h2>
+      <p class="note" id="note"></p>
+      <p class="note-when" id="noteWhen"></p>
+      <ol class="recent" id="recent"></ol>
+      <button class="more" id="openLog" aria-controls="drawer" aria-expanded="false">Ver todo lo que hace</button>
+    </section>
+
+    <section aria-labelledby="h-learn">
+      <h2 id="h-learn">Qué aprende</h2>
+      <p class="review" id="review"></p>
+      <p class="review-when" id="reviewWhen"></p>
+      <p class="sub">Misiones anteriores</p>
+      <div class="runs" id="runs" role="img" aria-label="Resultado de las misiones anteriores"></div>
+      <p class="runs-legend" id="runsLegend"></p>
+      <p class="sub">Lo que tiene más claro</p>
+      <ul class="beliefs" id="beliefs"></ul>
+      <div id="ask"></div>
+    </section>
+  </div>
 </main>
 
+<div class="scrim" id="scrim"></div>
+<div class="layer">
+<aside class="drawer" id="drawer" aria-labelledby="h-log" aria-hidden="true">
+  <div class="drawer-head"><h2 id="h-log">Todo lo que hace el agente</h2><button class="close" id="closeLog" aria-label="Cerrar">✕</button></div>
+  <div class="filters" role="group" aria-label="Filtrar">
+    <button class="chip" data-filter="all" aria-pressed="true">Todo</button>
+    <button class="chip" data-filter="mind" aria-pressed="false">Notas y revisor</button>
+    <button class="chip" data-filter="research" aria-pressed="false">Investiga</button>
+    <button class="chip" data-filter="trades" aria-pressed="false">Opera</button>
+    <button class="chip" data-filter="system" aria-pressed="false">Misión y errores</button>
+    <label class="follow"><input type="checkbox" id="follow" checked> seguir</label>
+  </div>
+  <div class="log" id="log" aria-live="polite"></div>
+</aside>
+</div>
+
 <script>
-const VENUE_LABELS = { solana: "Solana", binance: "Binance", base: "Base", bsc: "BNB Chain" };
 const $ = (id) => document.getElementById(id);
-const usd = (n) => n == null ? "…" : n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $";
-const pct = (n, d = 2) => n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
-const qty = (n) => n.toLocaleString("es-ES", { maximumFractionDigits: n >= 1000 ? 0 : 6 });
-const time = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-const dateTime = (iso) => new Date(iso).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const fmt = (n, d = 2) => n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
+const usd = (n) => (n == null ? "…" : `${fmt(n, n >= 1000 ? 0 : 2)} $`);
+const signed = (n, suffix) => `${n >= 0 ? "+" : "−"}${fmt(Math.abs(n), Math.abs(n) >= 100 ? 0 : 1)}${suffix}`;
+const hm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+const ago = (iso) => {
+  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+  return s < 60 ? "hace un momento" : s < 3600 ? `hace ${Math.round(s / 60)} min` : `a las ${hm(iso)}`;
+};
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const VENUES = ["solana", "base", "bsc", "binance"];
+const LABEL = { solana: "Solana", base: "Base", bsc: "BNB Chain", binance: "Binance" };
+const COLOR = { solana: "var(--solana)", base: "var(--base)", bsc: "var(--bsc)", binance: "var(--binance)" };
+const CASH = new Set(["USDC", "USDT", "FDUSD", "USDbC"]);
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v; else node.setAttribute(k, v);
+    if (k === "class") node.className = v; else if (k === "style") node.style.cssText = v; else node.setAttribute(k, v);
   }
   for (const c of children) if (c != null) node.append(c);
   return node;
 }
 
-// Altura real de la cabecera para que las dos columnas ocupen el resto de la pantalla.
-const syncHeader = () => document.documentElement.style.setProperty("--header-h", $("header").offsetHeight + "px");
-new ResizeObserver(syncHeader).observe($("header"));
-
-// ── Estado: misión, cartera, gráfico ───────────────────────────────────
 let state = null;
+let events = [];
 
+// ── Cabecera y reloj ─────────────────────────────────────────
 function renderClock() {
   const m = state?.mission;
   const clock = $("clock");
-  if (!m) { clock.textContent = "sin misión"; clock.className = "clock-value ended"; return; }
+  if (!m) { clock.textContent = "sin misión"; clock.className = "clock-value ended"; $("clockLabel").textContent = ""; return; }
+  const t0 = new Date(m.created_at).getTime(), t1 = new Date(m.deadline).getTime();
+  const left = Math.max(0, t1 - Date.now());
+  const frac = Math.min(1, (Date.now() - t0) / (t1 - t0));
+  $("timeStart").textContent = `salida ${hm(m.created_at)}`;
+  $("timeEnd").textContent = `fin ${hm(m.deadline)}`;
   if (m.status !== "active") {
-    $("clockLabel").textContent = m.ended_at ? `Terminó ${dateTime(m.ended_at)}` : "Terminada";
-    clock.textContent = m.status === "succeeded" ? "Conseguida" : m.status === "expired" ? "Se acabó el tiempo" : "Cancelada";
+    clock.textContent = m.ended_at ? `acabó ${hm(m.ended_at)}` : "terminada";
     clock.className = "clock-value ended";
+    $("clockLabel").textContent = "";
+    $("timeFill").style.transform = "scaleX(1)";
+    $("timeMid").textContent = "";
     return;
   }
-  const ms = Math.max(0, new Date(m.deadline) - Date.now());
-  const h = Math.floor(ms / 3.6e6), mi = Math.floor(ms / 6e4) % 60, s = Math.floor(ms / 1000) % 60;
-  clock.textContent = `${h}:${String(mi).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  clock.className = "clock-value" + (ms < 10 * 60_000 ? " urgent" : "");
-  $("clockLabel").textContent = `Tiempo restante · plazo ${dateTime(m.deadline)}`;
+  const h = Math.floor(left / 3.6e6), mi = Math.floor(left / 6e4) % 60, s = Math.floor(left / 1000) % 60;
+  clock.textContent = h ? `${h}:${String(mi).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${mi}:${String(s).padStart(2, "0")}`;
+  const urgent = left < Math.max(60_000, (t1 - t0) * 0.1);
+  clock.className = "clock-value tab" + (urgent ? " urgent" : "");
+  $("clockLabel").textContent = "quedan";
+  $("timeFill").style.transform = `scaleX(${frac})`;
+  $("timeFill").className = "time-fill" + (urgent ? " urgent" : "");
+  $("timeMid").textContent = `${Math.round(frac * 100)} % del tiempo gastado`;
 }
 setInterval(renderClock, 1000);
 
-function renderState() {
+// La cifra grande cuenta hasta su nuevo valor en lugar de saltar.
+let shown = null;
+function countTo(target) {
+  const out = $("valueNum");
+  const num = (n) => fmt(n, n >= 1000 ? 0 : 2);
+  if (shown == null || reduced) { shown = target; out.textContent = num(target); return; }
+  const from = shown, start = performance.now(), dur = 600;
+  const step = (now) => {
+    const k = Math.min(1, (now - start) / dur), e = 1 - Math.pow(1 - k, 3);
+    out.textContent = num(from + (target - from) * e);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  shown = target;
+  requestAnimationFrame(step);
+}
+
+function render() {
   const { mission: m, valuation: v } = state;
   if (!m) {
     $("missionName").textContent = "No hay ninguna misión";
-    $("missionSub").textContent = "Crea una escribiendo /trading en Claude Code";
+    $("missionSub").textContent = "Empieza una con /cryptoagent:trading en Claude Code.";
+    $("valueNum").textContent = "";
     return;
   }
-  const statusText = { active: "en curso", succeeded: "conseguida", expired: "terminada por tiempo", cancelled: "cancelada" }[m.status] ?? m.status;
-  $("missionName").textContent = `Misión #${m.id} · ${statusText}`;
-  $("missionSub").textContent = `De ${usd(m.initial_usd)} a ${usd(m.target_usd)} · empezó ${dateTime(m.created_at)}`;
-  $("missionBrief").hidden = false;
-  $("missionBrief").textContent = m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre, sin instrucciones";
+  const minutes = Math.round((new Date(m.deadline) - new Date(m.created_at)) / 60000);
+  const span = minutes >= 120 ? `${Math.round(minutes / 60)} h` : `${minutes} min`;
+  $("missionName").textContent = `Misión #${m.id}`;
+  const pill = $("pill");
+  pill.hidden = false;
+  pill.textContent = { active: "en carrera", succeeded: "meta alcanzada", expired: "no llegó", cancelled: "detenida", closing: "cerrando" }[m.status] ?? m.status;
+  pill.className = "pill" + (m.status === "succeeded" ? " win" : "");
+  $("missionSub").textContent = `De ${usd(m.initial_usd)} a ${usd(m.target_usd)} en ${span} · ${m.instructions ? `instrucciones: ${m.instructions}` : "modo libre"}`;
   renderClock();
 
   const current = m.status === "active" ? v?.totalUsd : (m.final_usd ?? v?.totalUsd);
-  $("value").textContent = usd(current);
-  $("initial").textContent = usd(m.initial_usd);
-  $("target").textContent = usd(m.target_usd);
   if (current != null) {
+    countTo(current);
     const diff = current - m.initial_usd;
-    const pnl = $("pnl");
-    pnl.textContent = `${diff >= 0 ? "+" : "−"}${usd(Math.abs(diff))} (${diff >= 0 ? "+" : "−"}${pct(Math.abs(diff / m.initial_usd * 100))} %)`;
-    pnl.className = "pnl num " + (diff >= 0 ? "up" : "down");
-    const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd);
-    const clamped = Math.min(1, Math.max(0, progress));
-    $("railFill").style.transform = `scaleX(${clamped})`;
-    $("railMarker").style.left = `${clamped * 100}%`;
-    $("missing").textContent = m.status !== "active" ? `Resultado final: ${usd(current)}`
-      : progress >= 1 ? "Objetivo alcanzado, cerrando posiciones…"
-      : progress < 0 ? `Por debajo del capital inicial. Faltan ${usd(m.target_usd - current)} para el objetivo.`
-      : `Faltan ${usd(m.target_usd - current)} para el objetivo (${pct(progress * 100, 1)} % del camino).`;
+    $("delta").textContent = `${signed((diff / m.initial_usd) * 100, " %")}`;
+    $("delta").className = "delta " + (diff >= 0 ? "up" : "down");
+    const toGo = m.target_usd - current;
+    $("gap").textContent =
+      m.status === "succeeded" ? `Meta alcanzada: terminó con ${usd(m.final_usd ?? current)}.`
+      : m.status !== "active" ? `Terminó con ${usd(current)}, a ${usd(Math.max(0, toGo))} de la meta.`
+      : toGo <= 0 ? "En la meta: cerrando posiciones."
+      : `Le faltan ${usd(toGo)} para la meta.`;
+    const bench = v?.benchmarkUsd;
+    if (bench != null && m.status === "active") {
+      const vs = current - bench;
+      $("gap").textContent += Math.abs(vs) < 0.005 ? " Va igual que si no hubiera operado." : ` Va ${usd(Math.abs(vs))} por ${vs > 0 ? "delante" : "detrás"} de no operar (el círculo discontinuo de la pista).`;
+    }
+    renderTrack(m, current, v);
   }
-
-  // Posiciones
-  const holdings = $("holdings");
-  holdings.replaceChildren();
-  const rows = (v?.holdings ?? []).filter((h) => h.usd >= 0.01 || h.amount > 0).sort((a, b) => b.usd - a.usd);
-  if (!rows.length) holdings.append(el("tr", {}, el("td", { colspan: "3", class: "empty" }, "Sin posiciones")));
-  for (const h of rows) {
-    holdings.append(el("tr", {},
-      el("td", {}, h.symbol, el("div", { class: "venue" }, VENUE_LABELS[h.venue] ?? h.venue)),
-      el("td", { class: "r num" }, qty(h.amount)),
-      el("td", { class: "r num" }, usd(h.usd))));
-  }
-  // Transferencias y puentes en camino: ya cuentan en el valor de la cartera.
-  for (const t of v?.inTransit ?? []) {
-    holdings.append(el("tr", { class: "transit" },
-      el("td", {}, t.symbol, el("div", { class: "venue" }, `en tránsito a ${VENUE_LABELS[t.to] ?? t.to} · llega ${time(t.arrivesAt)}`)),
-      el("td", { class: "r num" }, qty(t.amount)),
-      el("td", { class: "r num" }, usd(t.usd))));
-  }
-
-  // Órdenes
-  const orders = $("orders");
-  orders.replaceChildren();
-  if (!state.orders.length) orders.append(el("p", { class: "empty" }, "Ninguna"));
-  for (const o of state.orders) {
-    const a = o.action;
-    const action = a.side ? `${a.side === "BUY" ? "Compra" : "Venta"} en ${a.symbol}, ${qty(a.amount)}` : `Swap de ${qty(a.amount)} ${a.input.length > 10 ? a.input.slice(0, 4) + "…" : a.input} a ${a.output.length > 10 ? a.output.slice(0, 4) + "…" : a.output}`;
-    orders.append(el("div", { class: "order" },
-      el("div", {}, `#${o.id} · si ${o.trigger_label} ${o.condition === "above" ? "sube a" : "baja a"} `, el("span", { class: "num" }, String(o.trigger_price))),
-      el("div", {}, action),
-      el("div", { class: "when" }, o.expires_at ? `Caduca ${dateTime(o.expires_at)}` : "Sin caducidad")));
-  }
-
-  // Memoria: historial objetivo de misiones y lecciones del agente
-  const history = $("history");
-  history.replaceChildren();
-  if (!state.history.length) history.append(el("tr", {}, el("td", { colspan: "3", class: "empty" }, "Aún no ha terminado ninguna misión")));
-  for (const h of state.history.slice().reverse()) {
-    const cls = h.outcome === "objetivo conseguido" ? "ok" : h.outcome === "cancelada" ? "" : "ko";
-    history.append(el("tr", {},
-      el("td", {}, `#${h.missionId}`, el("div", { class: "venue" }, `${usd(h.capitalUsd)} en ${h.durationMinutes >= 120 ? Math.round(h.durationMinutes / 60) + " h" : h.durationMinutes + " min"}`)),
-      el("td", { class: "r num" }, `+${pct(h.targetPct, 1)} %`),
-      el("td", { class: `r num ${cls}` }, h.resultPct === null ? h.outcome : `${h.resultPct >= 0 ? "+" : "−"}${pct(Math.abs(h.resultPct))} %`)));
-  }
-  const lessons = $("lessons");
-  lessons.replaceChildren();
-  const mem = state.memory;
-  if (!mem.beliefs.length && !mem.howtos.length) lessons.append(el("p", { class: "empty" }, "Todavía no hay nada en su memoria."));
-  for (const h of mem.howtos) {
-    lessons.append(el("div", { class: "lesson" },
-      el("div", {}, h.title),
-      el("div", { class: "when" }, `Howto #${h.id} · ${h.topic} · ${VENUE_LABELS[h.scope] ?? (h.scope === "any" ? "general" : h.scope)}`)));
-  }
-  for (const b of mem.beliefs) {
-    lessons.append(el("div", { class: "lesson" },
-      el("div", {}, b.statement.length > 260 ? b.statement.slice(0, 260) + "…" : b.statement),
-      el("div", { class: "when" }, `Creencia #${b.id} · ${b.verdict}`)));
-  }
-  const requests = $("requests");
-  requests.replaceChildren();
-  if (!mem.requests.length) requests.append(el("p", { class: "empty" }, "No ha pedido nada que no tenga."));
-  for (const r of mem.requests) {
-    requests.append(el("div", { class: "lesson" },
-      el("div", {}, r.capability),
-      el("div", { class: "when" }, r.why),
-      el("div", { class: "when" }, `Petición #${r.id}${r.times_requested > 1 ? ` · ${r.times_requested} veces` : ""} · responde con /cryptoagent:peticiones`)));
-  }
-
   renderChart();
+  renderMoney(v);
+  renderNow();
+  renderLearn();
 }
 
-// ── Gráfico: valor frente a capital inicial y objetivo, eje x = duración de la misión ──
-function renderChart() {
-  const { mission: m, valuation: v, snapshots } = state;
-  const svg = $("chart");
-  const wrap = $("chartWrap");
-  svg.replaceChildren();
-  $("chartTable").replaceChildren();
-  if (!m) return;
+// ── Pista ────────────────────────────────────────────────────
+function renderTrack(m, value, v) {
+  const bench = v?.benchmarkUsd;
+  const stretch = m.target_usd - m.initial_usd;
+  const lo = Math.min(m.initial_usd - stretch * 0.4, value, bench ?? Infinity);
+  const hi = Math.max(m.target_usd, value) + stretch * 0.04;
+  const pos = (x) => ((x - lo) / (hi - lo)) * 100;
+  const start = pos(m.initial_usd), finish = pos(m.target_usd), runner = pos(value);
 
-  const points = snapshots.map((s) => ({ t: new Date(s.ts).getTime(), y: s.total_usd }));
-  if (m.status === "active" && v) points.push({ t: Date.now(), y: v.totalUsd });
-  for (const p of points.slice().reverse().slice(0, 200)) {
-    $("chartTable").append(el("tr", {}, el("td", { class: "num" }, dateTime(new Date(p.t).toISOString())), el("td", { class: "r num" }, usd(p.y))));
+  $("startMark").style.left = `${start}%`;
+  $("finishMark").style.left = `${finish}%`;
+  const sl = $("startLabel");
+  sl.style.left = `${start}%`;
+  sl.replaceChildren("salida ", el("b", {}, usd(m.initial_usd)));
+  const fl = $("finishLabel");
+  fl.style.left = `${Math.min(100, finish + 1)}%`;
+  fl.replaceChildren("meta ", el("b", {}, usd(m.target_usd)));
+
+  const ahead = $("fillAhead"), behind = $("fillBehind");
+  ahead.style.left = `${start}%`; ahead.style.width = `${100 - start}%`;
+  ahead.style.transform = `scaleX(${value > m.initial_usd ? (runner - start) / (100 - start) : 0})`;
+  behind.style.left = "0"; behind.style.width = `${start}%`;
+  behind.style.transform = `scaleX(${value < m.initial_usd ? (start - runner) / start : 0})`;
+  $("runnerRail").style.transform = `translateX(${runner}%)`;
+
+  // El fantasma: lo que valdría la cartera si el agente no hubiera hecho nada.
+  const g = $("ghostRail");
+  g.hidden = bench == null;
+  if (bench != null) {
+    g.style.transform = `translateX(${pos(bench)}%)`;
   }
-  const old = wrap.querySelector(".chart-empty");
-  if (old) old.remove();
+}
+
+// ── Curva con banderas ───────────────────────────────────────
+const seenFlags = new Set();
+let firstChart = true;
+
+function valueAt(points, t) {
+  if (!points.length) return null;
+  if (t <= points[0].t) return points[0].y;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].t >= t) {
+      const a = points[i - 1], b = points[i];
+      return a.y + ((b.y - a.y) * (t - a.t)) / (b.t - a.t || 1);
+    }
+  }
+  return points.at(-1).y;
+}
+
+function renderChart() {
+  const m = state.mission, v = state.valuation;
+  const svg = $("chart"), wrap = $("chartWrap");
+  svg.replaceChildren();
+  wrap.querySelector(".chart-empty")?.remove();
+  const points = state.snapshots.map((s) => ({ t: new Date(s.ts).getTime(), y: s.total_usd }));
+  if (m.status === "active" && v?.totalUsd != null) points.push({ t: Date.now(), y: v.totalUsd });
+  $("chartTable").replaceChildren(...points.slice(-60).map((p) => el("tr", {}, el("td", {}, hm(new Date(p.t).toISOString())), el("td", {}, usd(p.y)))));
   if (points.length < 2) {
-    wrap.append(el("p", { class: "chart-empty" }, "La línea aparecerá cuando haya al menos dos mediciones (una por minuto con el panel abierto)."));
+    wrap.append(el("p", { class: "chart-empty" }, "La curva aparece con la segunda medición (una por minuto mientras el panel está abierto)."));
     return;
   }
 
-  const W = wrap.clientWidth, H = 170, pad = { l: 8, r: 8, t: 10, b: 20 };
+  const W = wrap.clientWidth, H = svg.clientHeight || 260, pad = { l: 4, r: 64, t: 28, b: 24 };
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const t0 = new Date(m.created_at).getTime();
   const t1 = Math.max(new Date(m.deadline).getTime(), points.at(-1).t);
   const ys = points.map((p) => p.y).concat([m.initial_usd, m.target_usd]);
-  const span = Math.max(...ys) - Math.min(...ys) || 1;
-  const y0 = Math.min(...ys) - span * 0.1, y1 = Math.max(...ys) + span * 0.1;
+  const range = Math.max(...ys) - Math.min(...ys) || 1;
+  const y0 = Math.min(...ys) - range * 0.08, y1 = Math.max(...ys) + range * 0.08;
   const X = (t) => pad.l + ((t - t0) / (t1 - t0)) * (W - pad.l - pad.r);
   const Y = (y) => pad.t + (1 - (y - y0) / (y1 - y0)) * (H - pad.t - pad.b);
   const NS = "http://www.w3.org/2000/svg";
-  const add = (tag, attrs, text) => {
+  const add = (tag, attrs, parent = svg, text) => {
     const n = document.createElementNS(NS, tag);
     for (const [k, val] of Object.entries(attrs)) n.setAttribute(k, val);
-    if (text) n.textContent = text;
-    svg.append(n);
+    if (text != null) n.textContent = text;
+    parent.append(n);
     return n;
   };
 
+  // Lo que queda de carrera, sombreado; la línea de ahora; salida y meta.
+  const nowX = X(Math.min(Date.now(), t1));
+  if (m.status === "active") add("rect", { class: "future", x: nowX, y: pad.t, width: Math.max(0, W - pad.r - nowX), height: H - pad.t - pad.b });
   add("line", { class: "grid", x1: pad.l, x2: W - pad.r, y1: H - pad.b, y2: H - pad.b });
-  add("line", { class: "ref ref-target", x1: pad.l, x2: W - pad.r, y1: Y(m.target_usd), y2: Y(m.target_usd) });
-  add("text", { class: "ref-label", x: pad.l + 2, y: Y(m.target_usd) - 4 }, `objetivo ${usd(m.target_usd)}`);
   add("line", { class: "ref", x1: pad.l, x2: W - pad.r, y1: Y(m.initial_usd), y2: Y(m.initial_usd) });
-  add("text", { class: "ref-label", x: pad.l + 2, y: Y(m.initial_usd) + 13 }, `capital ${usd(m.initial_usd)}`);
-  add("text", { class: "axis", x: pad.l, y: H - 4 }, time(m.created_at).slice(0, 5));
-  add("text", { class: "axis", x: W - pad.r, y: H - 4, "text-anchor": "end" }, `plazo ${time(m.deadline).slice(0, 5)}`);
-  add("path", { class: "line", d: points.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Y(p.y).toFixed(1)}`).join("") });
+  add("text", { class: "ref-label", x: W - pad.r + 8, y: Y(m.initial_usd) + 4 }, svg, `salida`);
+  add("line", { class: "ref meta", x1: pad.l, x2: W - pad.r, y1: Y(m.target_usd), y2: Y(m.target_usd) });
+  add("text", { class: "ref-label meta", x: W - pad.r + 8, y: Y(m.target_usd) + 4 }, svg, `meta`);
+  add("text", { class: "axis", x: pad.l, y: H - 6 }, svg, hm(m.created_at));
+  add("text", { class: "axis", x: W - pad.r, y: H - 6, "text-anchor": "end" }, svg, hm(new Date(t1).toISOString()));
 
-  // Capa de hover: cruz y tooltip con el punto más cercano.
-  const cross = add("line", { class: "cross", y1: pad.t, y2: H - pad.b, opacity: 0 });
-  const dot = add("circle", { class: "dot", r: 4, opacity: 0 });
+  const path = points.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Y(p.y).toFixed(1)}`).join("");
+  add("path", { class: "area", d: `${path}L${X(points.at(-1).t).toFixed(1)},${H - pad.b}L${X(points[0].t).toFixed(1)},${H - pad.b}Z` });
+  add("path", { class: "line", d: path });
+  const last = points.at(-1);
+  add("circle", { class: "end-dot", cx: X(last.t), cy: Y(last.y), r: 5 });
+
+  // Hover: cruz y valor.
   const tip = $("tooltip");
-  const hit = add("rect", { x: 0, y: 0, width: W, height: H, fill: "transparent" });
+  const showTip = (html, x, y) => {
+    tip.replaceChildren(...html);
+    tip.style.opacity = 1;
+    tip.style.left = Math.max(0, Math.min(x + 12, W - tip.offsetWidth)) + "px";
+    tip.style.top = Math.max(0, y - tip.offsetHeight - 10) + "px";
+  };
+  const cross = add("line", { class: "cross", y1: pad.t, y2: H - pad.b, opacity: 0 });
+  const hit = add("rect", { x: pad.l, y: 0, width: Math.max(0, X(last.t) - pad.l), height: H, fill: "transparent" });
   hit.addEventListener("pointermove", (e) => {
     const x = e.offsetX * (W / svg.clientWidth);
-    const p = points.reduce((best, q) => Math.abs(X(q.t) - x) < Math.abs(X(best.t) - x) ? q : best);
+    const p = points.reduce((best, q) => (Math.abs(X(q.t) - x) < Math.abs(X(best.t) - x) ? q : best));
     cross.setAttribute("x1", X(p.t)); cross.setAttribute("x2", X(p.t)); cross.setAttribute("opacity", 1);
-    dot.setAttribute("cx", X(p.t)); dot.setAttribute("cy", Y(p.y)); dot.setAttribute("opacity", 1);
-    tip.textContent = `${time(new Date(p.t).toISOString())} · ${usd(p.y)}`;
-    tip.style.opacity = 1;
-    tip.style.left = Math.min(X(p.t) + 10, W - tip.offsetWidth) + "px";
-    tip.style.top = Math.max(0, Y(p.y) - 34) + "px";
+    showTip([el("b", {}, usd(p.y)), ` · ${hm(new Date(p.t).toISOString())}`], X(p.t), Y(p.y));
   });
-  hit.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); dot.setAttribute("opacity", 0); tip.style.opacity = 0; });
-}
-new ResizeObserver(() => state && renderChart()).observe($("chartWrap"));
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); tip.style.opacity = 0; });
 
-// ── Transcripción ──────────────────────────────────────────────────────
+  // Banderas: una por operación, del color de la cadena; las nuevas caen sobre la curva.
+  for (const tr of state.trades) {
+    const t = new Date(tr.ts).getTime();
+    if (t < t0) continue;
+    const x = X(t), y = Y(valueAt(points, t) ?? m.initial_usd);
+    const failed = tr.kind === "failed_tx" || tr.kind === "order_failed";
+    const g = add("g", { class: "flag" + (failed ? " fail" : ""), tabindex: 0, role: "img", "aria-label": `${hm(tr.ts)} ${tr.summary}` });
+    add("line", { class: "stem", x1: x, x2: x, y1: y, y2: y - 22 }, g);
+    add("path", { class: "cloth", d: `M${x},${y - 22}L${x + 11},${y - 18}L${x},${y - 14}Z`, fill: failed ? "" : (COLOR[tr.venue] ?? "var(--muted)") }, g);
+    add("rect", { class: "hit", x: x - 8, y: y - 28, width: 24, height: 32 }, g);
+    const show = () => showTip([el("b", {}, hm(tr.ts)), ` · ${LABEL[tr.venue] ?? tr.venue}`, el("br"), tr.summary], x, y - 22);
+    g.addEventListener("pointerenter", show);
+    g.addEventListener("focus", show);
+    g.addEventListener("pointerleave", () => (tip.style.opacity = 0));
+    g.addEventListener("blur", () => (tip.style.opacity = 0));
+    if (!seenFlags.has(tr.id)) {
+      if (!firstChart) g.classList.add("drop");
+      seenFlags.add(tr.id);
+    }
+  }
+  firstChart = false;
+}
+new ResizeObserver(() => state?.mission && renderChart()).observe($("chartWrap"));
+
+// ── Dónde está el dinero ─────────────────────────────────────
+function renderMoney(v) {
+  const stack = $("stack"), legend = $("legend"), bets = $("bets");
+  stack.replaceChildren(); legend.replaceChildren(); bets.replaceChildren();
+  if (!v) { legend.append(el("li", { class: "quiet" }, "Valorando la cartera…")); return; }
+  const byVenue = Object.fromEntries(VENUES.map((x) => [x, 0]));
+  for (const h of v.holdings) byVenue[h.venue] = (byVenue[h.venue] ?? 0) + h.usd;
+  const transit = (v.inTransit ?? []).reduce((s, t) => s + t.usd, 0);
+  const total = VENUES.reduce((s, x) => s + byVenue[x], 0) + transit || 1;
+  for (const x of VENUES) {
+    if (byVenue[x] < 0.005) continue;
+    stack.append(el("div", { class: "seg", style: `flex-grow:${byVenue[x]};background:${COLOR[x]}`, title: `${LABEL[x]}: ${usd(byVenue[x])}` }));
+    legend.append(el("li", {}, el("span", { class: "key", style: `background:${COLOR[x]}` }), el("span", {}, LABEL[x]),
+      el("span", { class: "amt tab" }, `${usd(byVenue[x])} · ${Math.round((byVenue[x] / total) * 100)} %`)));
+  }
+  if (transit > 0) {
+    stack.append(el("div", { class: "seg transit", style: `flex-grow:${transit}`, title: `En camino: ${usd(transit)}` }));
+    const t = v.inTransit[0];
+    legend.append(el("li", {}, el("span", { class: "key transit" }), el("span", {}, `En camino a ${LABEL[t.to] ?? t.to}`),
+      el("span", { class: "amt tab" }, `${usd(transit)} · llega ${hm(t.arrivesAt)}`)));
+  }
+  // Lo que ha comprado el agente, con cómo le va respecto a lo que pagó.
+  const open = state.positions.map((p) => {
+    const h = v.holdings.find((x) => x.venue === p.venue && x.asset === p.asset);
+    return { ...p, now: h?.usd ?? 0 };
+  }).filter((p) => p.now > 0.005 && !CASH.has(p.symbol)).sort((a, b) => b.now - a.now);
+  if (!open.length) { bets.append(el("li", { class: "quiet" }, "Nada: todo está en efectivo y en el gas de cada cadena.")); return; }
+  for (const p of open.slice(0, 5)) {
+    const pl = p.openCostUsd ? ((p.now - p.openCostUsd) / p.openCostUsd) * 100 : 0;
+    bets.append(el("li", {}, el("span", {}, p.symbol, el("span", { class: "chain" }, LABEL[p.venue] ?? p.venue)),
+      el("span", { class: "tab" }, usd(p.now)), el("span", { class: `pl tab ${pl >= 0 ? "up" : "down"}` }, signed(pl, " %"))));
+  }
+}
+
+// ── Ahora mismo ──────────────────────────────────────────────
+const RECENT_KINDS = { trade: "var(--accent)", order: "var(--muted)", error: "var(--down)", review: "var(--ink)", request: "var(--ink)", hypothetical: "var(--muted)", thought: "var(--muted)" };
+function renderNow() {
+  const n = state.lastNote;
+  $("note").textContent = n ? `«${n.title}»` : state.mission.status === "active" ? "Todavía no ha anotado nada." : "Sin notas en esta misión.";
+  $("noteWhen").textContent = n ? `Su última nota, ${ago(n.ts)}` : "";
+  const list = $("recent");
+  list.replaceChildren();
+  const recent = events.filter((e) => e.kind in RECENT_KINDS && e.kind !== "thought").slice(-5).reverse();
+  for (const e of recent) {
+    list.append(el("li", {}, el("time", { class: "tab" }, hm(e.ts)), el("span", { class: "dot", style: `background:${RECENT_KINDS[e.kind]}` }), el("span", { title: e.title }, e.title)));
+  }
+}
+
+// ── Qué aprende ──────────────────────────────────────────────
+function renderLearn() {
+  const r = state.lastReview;
+  $("review").textContent = r ? (r.body ? r.body : r.title) : "El revisor todavía no ha pasado por esta misión.";
+  $("reviewWhen").textContent = r ? `El revisor, ${ago(r.ts)}` : "";
+
+  const runs = $("runs");
+  runs.replaceChildren();
+  const past = state.history.filter((h) => h.resultPct != null).slice(-12);
+  const maxAbs = Math.max(10, ...past.map((h) => Math.abs(h.resultPct)));
+  for (const h of past) {
+    const up = h.resultPct >= 0;
+    const bar = el("i", { style: `height:${Math.max(4, (Math.abs(h.resultPct) / maxAbs) * 50)}%` });
+    runs.append(el("div", { class: `run ${up ? "up" : "down"}${h.outcome === "objetivo conseguido" ? " win" : ""}`, title: `Misión #${h.missionId}: ${signed(h.resultPct, " %")} · ${h.outcome}` }, bar));
+  }
+  const wins = past.filter((h) => h.outcome === "objetivo conseguido").length;
+  $("runsLegend").textContent = past.length
+    ? `${past.length} misiones, ${wins} con la meta alcanzada (en amarillo).`
+    : "Es su primera misión.";
+
+  const beliefs = $("beliefs");
+  beliefs.replaceChildren();
+  const mem = state.memory;
+  const top = mem.beliefs.slice(0, 3);
+  if (!top.length && !mem.howtos.length) beliefs.append(el("li", { class: "quiet" }, "Todavía no tiene nada en la memoria."));
+  for (const h of mem.howtos.slice(0, 2)) beliefs.append(el("li", {}, h.title, el("span", { class: "verdict" }, `cómo se hace · ${h.topic}`)));
+  for (const b of top) {
+    const text = b.statement.length > 150 ? b.statement.slice(0, 150).replace(/\s\S*$/, "") + "…" : b.statement;
+    beliefs.append(el("li", {}, text, el("span", { class: "verdict" }, b.verdict)));
+  }
+  const ask = $("ask");
+  ask.replaceChildren();
+  if (mem.requests.length) {
+    const first = mem.requests[0];
+    ask.append(el("p", { class: "ask" }, el("b", {}, mem.requests.length === 1 ? "Pide algo que no tiene: " : `Pide ${mem.requests.length} cosas que no tiene, como: `),
+      first.capability, ". Contéstale con /cryptoagent:peticiones."));
+  }
+}
+
+// ── Cajón con todo lo que hace ───────────────────────────────
 const WHO = {
   thought: "ANOTA", thinking: "RAZONA", text: "DICE", note: "APUNTA", lesson: "APRENDE", review: "REVISOR", request: "PIDE",
   search: "BUSCA", browse: "NAVEGA", fetch: "CONSULTA", tool: "HERRAMIENTA", result: "RESULTADO",
-  trade: "OPERA", order: "ORDEN", hypothetical: "HIPÓTESIS",
-  mission: "MISIÓN", session: "SESIÓN", error: "ERROR",
+  trade: "OPERA", order: "ORDEN", hypothetical: "HIPÓTESIS", mission: "MISIÓN", session: "SESIÓN", error: "ERROR",
 };
 const GROUPS = {
   mind: ["thought", "thinking", "text", "note", "lesson", "review", "request"],
@@ -563,15 +671,13 @@ const GROUPS = {
   system: ["mission", "session", "error"],
 };
 let filter = "all";
-const seen = new Map(); // id → fila
-let firstLoad = true;
+const seen = new Map();
+let firstLog = true;
+const visible = (kind) => filter === "all" || GROUPS[filter].includes(kind);
 
-function visible(kind) { return filter === "all" || GROUPS[filter].includes(kind); }
-
-// Tesis de una operación ("Por qué: …\nPruebas: …\nFuentes: a · b\nPlan: …") o un motivo simple.
-function renderNote(note) {
-  const parts = note.split("\n").map((line) => line.match(/^(Por qué|Pruebas|Fuentes|Plan|Lecciones): ([\s\S]*)$/));
-  if (!parts.every(Boolean)) return el("p", { class: "thesis plain" }, note);
+function renderThesis(note) {
+  const parts = note.split("\n").map((line) => line.match(/^(Por qué|Pruebas|Fuentes|Plan|Memoria|Lecciones): ([\s\S]*)$/));
+  if (!parts.every(Boolean)) return el("p", { class: "thesis" }, note);
   const dl = el("dl", { class: "thesis" });
   for (const [, label, value] of parts) {
     const dd = el("dd");
@@ -580,56 +686,42 @@ function renderNote(note) {
         if (i) dd.append(" · ");
         dd.append(/^https?:\/\//.test(src) ? el("a", { href: src, target: "_blank", rel: "noopener noreferrer" }, src) : src);
       });
-    } else {
-      dd.append(value);
-    }
+    } else dd.append(value);
     dl.append(el("dt", {}, label), dd);
   }
   return dl;
 }
 
 function makeRow(e) {
-  const what = el("div", { class: "what" }, el("p", {}, e.title));
-  if (e.note) what.append(renderNote(e.note));
-  if (e.body) {
-    what.append(el("details", {}, el("summary", {}, "Ver detalle"), el("pre", {}, e.body)));
-  }
+  const what = el("div", {}, el("p", {}, e.title));
+  if (e.note) what.append(renderThesis(e.note));
+  if (e.body) what.append(el("details", {}, el("summary", {}, "detalle"), el("pre", {}, e.body)));
   const row = el("div", { class: `row k-${e.kind}`, "data-kind": e.kind },
-    el("time", { class: "ts", datetime: e.ts }, time(e.ts)),
-    el("span", { class: "who" }, WHO[e.kind] ?? e.kind.toUpperCase()),
-    what);
+    el("time", { class: "ts tab" }, hm(e.ts)), el("span", { class: "who" }, WHO[e.kind] ?? e.kind.toUpperCase()), what);
   row.hidden = !visible(e.kind);
   return row;
 }
 
-function renderEvents(events) {
+function renderLog(list) {
   const log = $("log");
-  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
-  if (!events.length && !seen.size) {
-    log.replaceChildren(el("p", { class: "log-empty" },
-      state?.mission?.status === "active"
-        ? "El agente todavía no ha hecho nada en esta misión. Lánzalo con /trading en Claude Code o con npm run agent."
-        : "No hay actividad que mostrar."));
+  if (!list.length && !seen.size) {
+    log.replaceChildren(el("p", { class: "quiet" }, state?.mission?.status === "active" ? "El agente todavía no ha hecho nada en esta misión." : "No hay actividad."));
     return;
   }
-  log.querySelector(".log-empty")?.remove();
-  for (const e of events) {
+  log.querySelector(".quiet")?.remove();
+  for (const e of list) {
     const existing = seen.get(e.id);
     if (existing) {
-      // Un evento puede completarse después (llega el resultado de una herramienta).
       if (e.body && !existing.querySelector("details")) existing.replaceWith(seen.set(e.id, makeRow(e)).get(e.id));
       continue;
     }
     const row = makeRow(e);
-    if (!firstLoad) row.classList.add("fresh");
+    if (!firstLog) row.classList.add("fresh");
     seen.set(e.id, row);
     log.append(row);
   }
-  firstLoad = false;
-  if ($("follow").checked && (nearBottom || events.length)) log.scrollTop = log.scrollHeight;
-  if (window.matchMedia("(max-width: 860px)").matches && $("follow").checked && events.length) {
-    log.lastElementChild?.scrollIntoView({ block: "end" });
-  }
+  firstLog = false;
+  if ($("follow").checked && list.length) log.scrollTop = log.scrollHeight;
 }
 
 for (const chip of document.querySelectorAll(".chip")) {
@@ -639,23 +731,32 @@ for (const chip of document.querySelectorAll(".chip")) {
     for (const row of seen.values()) row.hidden = !visible(row.dataset.kind);
   });
 }
+function openLog(open) {
+  $("drawer").classList.toggle("open", open);
+  $("drawer").setAttribute("aria-hidden", String(!open));
+  $("scrim").classList.toggle("show", open);
+  $("openLog").setAttribute("aria-expanded", String(open));
+  if (open) { $("closeLog").focus(); $("log").scrollTop = $("log").scrollHeight; } else $("openLog").focus();
+}
+$("openLog").addEventListener("click", () => openLog(true));
+$("closeLog").addEventListener("click", () => openLog(false));
+$("scrim").addEventListener("click", () => openLog(false));
+addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawer").classList.contains("open")) openLog(false); });
 
-// ── Sondeo ─────────────────────────────────────────────────────────────
+// ── Sondeo ───────────────────────────────────────────────────
 let lastOk = 0;
 let missionKey = null;
-
 async function poll() {
   try {
-    const [s, events] = await Promise.all([
-      fetch("/api/state").then((r) => r.json()),
-      fetch("/api/events").then((r) => r.json()),
-    ]);
-    // Si cambia la misión, se vacía la transcripción.
+    const [s, ev] = await Promise.all([fetch("/api/state").then((r) => r.json()), fetch("/api/events").then((r) => r.json())]);
     const key = s.mission?.id ?? "none";
-    if (key !== missionKey) { missionKey = key; seen.clear(); $("log").replaceChildren(); firstLoad = true; }
+    if (key !== missionKey) {
+      missionKey = key; seen.clear(); seenFlags.clear(); $("log").replaceChildren(); firstLog = true; firstChart = true; shown = null;
+    }
     state = s;
-    renderState();
-    renderEvents(events.filter((e) => !seen.has(e.id) || (e.body && !seen.get(e.id).querySelector("details"))));
+    events = ev;
+    render();
+    renderLog(ev.filter((e) => !seen.has(e.id) || (e.body && !seen.get(e.id).querySelector("details"))));
     lastOk = Date.now();
     $("banner").classList.remove("show");
   } catch {

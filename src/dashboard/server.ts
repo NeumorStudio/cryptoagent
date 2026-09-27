@@ -9,6 +9,7 @@ import { listCapabilityRequests, recall } from "../sim/memory.js";
 import { getActiveMission, getLastMission, missionHistory, type Mission } from "../sim/mission.js";
 import { listOrders } from "../sim/orders.js";
 import { valuation } from "../sim/portfolio.js";
+import { listPositions } from "../sim/positions.js";
 import { timeline } from "./timeline.js";
 
 const INDEX_HTML = asset("index.html", "src/dashboard/index.html");
@@ -68,7 +69,31 @@ function state() {
     snapshots,
     history: missionHistory(),
     memory: memorySummary(mission?.id ?? null),
+    ...(mission ? missionDetail(mission.id) : { trades: [], positions: [], lastNote: null, lastReview: null }),
   };
+}
+
+/** Lo que el panel dibuja sobre la carrera: operaciones (banderas), posiciones abiertas y lo último de cada agente. */
+function missionDetail(missionId: number) {
+  const trades = (
+    db
+      .prepare(
+        `SELECT id, ts, kind, summary, details FROM journal
+         WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'order_failed') ORDER BY id`,
+      )
+      .all(missionId) as Array<{ id: number; ts: string; kind: string; summary: string; details: string | null }>
+  ).map((j) => {
+    const d = j.details ? (JSON.parse(j.details) as Record<string, unknown>) : {};
+    // Dónde ocurrió: la cadena del swap, Binance, o el origen de una transferencia.
+    const venue = j.kind === "cex_order" ? "binance" : String(d.chain ?? d.from ?? "solana");
+    return { id: j.id, ts: j.ts, kind: j.kind, summary: j.summary, venue };
+  });
+  const positions = listPositions(missionId)
+    .filter((p) => p.status === "open")
+    .map((p) => ({ venue: p.venue, asset: p.asset, symbol: p.symbol, openCostUsd: p.openCostUsd }));
+  const lastNote = db.prepare("SELECT ts, title FROM activity WHERE mission_id = ? AND kind = 'thought' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
+  const lastReview = db.prepare("SELECT ts, title, body FROM activity WHERE mission_id = ? AND kind = 'review' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
+  return { trades, positions, lastNote, lastReview };
 }
 
 function send(res: http.ServerResponse, status: number, type: string, body: string) {

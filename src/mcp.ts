@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard } from "./dashboard/server.js";
-import { checkMission, createLabRun, createMission, getActiveMission, getLastMission, getMission, labRunStatus, stopMission } from "./sim/mission.js";
+import { activeLabRun, checkMission, createLabRun, createMission, getActiveMission, getLastMission, getMission, labRunStatus, stopLabRun, stopMission } from "./sim/mission.js";
 import { config } from "./config.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { statusReport } from "./sim/status.js";
@@ -28,6 +28,16 @@ function resolveMission(requested: number | undefined): number | null {
   if (requested !== undefined) {
     if (!getMission(requested)) throw new Error(`No existe la misión #${requested}`);
     return requested;
+  }
+  // Todos los agentes comparten este servidor y no se sabe quién llama: durante una tanda, una
+  // llamada sin mission_id podría ser de un agente del laboratorio que lo olvidó y acabaría
+  // operando la misión principal. Se rechaza.
+  const run = activeLabRun();
+  if (run) {
+    throw new Error(
+      `Hay una tanda del laboratorio en curso (#${run.id}): indica tu mission_id en cada llamada. ` +
+        "La misión principal no se puede usar hasta que la tanda termine.",
+    );
   }
   return (getActiveMission() ?? getLastMission())?.id ?? null;
 }
@@ -162,6 +172,23 @@ server.registerTool(
         groups: { control, memoria, explorador },
       });
       return text(JSON.stringify(run, null, 2));
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "stop_lab_run",
+  {
+    description:
+      "[Solo para el usuario, no para los agentes] Detiene todas las misiones activas de una tanda del laboratorio (por defecto, la que " +
+      "está en curso). Con close_positions = true vende todas las posiciones a mercado.",
+    inputSchema: { close_positions: z.boolean(), run_id: z.number().int().optional() },
+  },
+  async ({ close_positions, run_id }) => {
+    try {
+      return text(JSON.stringify(await stopLabRun(close_positions, run_id), null, 2));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }

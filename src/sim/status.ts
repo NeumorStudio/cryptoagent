@@ -1,6 +1,6 @@
 // Resumen de la misión en texto, pensado para leerse en el chat (también desde el móvil con Remote Control).
 import { db } from "../db.js";
-import { getActiveMission, getLastMission, getMission } from "./mission.js";
+import { activeLabRun, getActiveMission, getLastMission, getMission, labRunStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
 import { listPositions } from "./positions.js";
@@ -14,9 +14,40 @@ function timeLeft(deadline: string) {
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 }
 
+/** Clasificación de la última tanda del laboratorio, en texto. */
+async function labReport(): Promise<string[]> {
+  const lab = await labRunStatus();
+  if (!lab) return [];
+  const { run, leaderboard } = lab;
+  const statusLabel: Record<string, string> = { active: "activa", closing: "cerrando", succeeded: "CONSEGUIDA", expired: "sin llegar", cancelled: "detenida" };
+  const lines = [
+    `Laboratorio · tanda #${run.id} ${run.status === "active" ? "en curso" : "terminada"}: ${leaderboard.length} agentes, ` +
+      `de ${usd(run.capital_usd)} a ${usd(run.target_usd)} en ${run.duration_minutes} min`,
+  ];
+  for (const r of leaderboard) {
+    lines.push(`- ${r.label} (${r.group}): ${usd(r.valueUsd)} (${pct(r.resultPct)}) · ${statusLabel[r.status] ?? r.status}`);
+  }
+  // Media por grupo: es lo que dirá si la memoria ayuda.
+  const groups = new Map<string, number[]>();
+  for (const r of leaderboard) groups.set(r.group ?? "?", [...(groups.get(r.group ?? "?") ?? []), r.resultPct]);
+  if (groups.size > 1) {
+    lines.push(`Media por grupo: ${[...groups].map(([g, v]) => `${g} ${pct(v.reduce((s, x) => s + x, 0) / v.length)}`).join(" · ")}`);
+  }
+  return lines;
+}
+
 export async function statusReport(missionId?: number): Promise<string> {
+  const lab = missionId === undefined ? await labReport() : [];
+  const labActive = missionId === undefined && activeLabRun() !== undefined;
+  const main = await missionReport(missionId);
+  // Durante una tanda, el laboratorio va primero; si no, la misión principal.
+  if (labActive) return [...lab, "", main].join("\n");
+  return lab.length ? [main, "", ...lab].join("\n") : main;
+}
+
+async function missionReport(missionId?: number): Promise<string> {
   const m = missionId !== undefined ? getMission(missionId) : (getActiveMission() ?? getLastMission());
-  if (!m) return "No hay ninguna misión. Crea una con /cryptoagent:trading.";
+  if (!m) return "No hay ninguna misión principal. Crea una con /cryptoagent:trading.";
 
   const v = await valuation(m.id);
   const current = m.status === "active" ? v.totalUsd : (m.final_usd ?? v.totalUsd);

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import { asset } from "../paths.js";
 import { db } from "../db.js";
-import { getActiveMission, getLastMission, missionHistory, type Mission } from "../sim/mission.js";
+import { getActiveMission, getLastMission, labRunStatus, missionHistory, type Mission } from "../sim/mission.js";
 import { listOrders } from "../sim/orders.js";
 import { valuation } from "../sim/portfolio.js";
 import { timeline } from "./timeline.js";
@@ -14,11 +14,17 @@ const INDEX_HTML = asset("index.html", "src/dashboard/index.html");
 
 type Valuation = Awaited<ReturnType<typeof valuation>>;
 let cached: { at: string; value: Valuation } | null = null;
+let cachedLab: Awaited<ReturnType<typeof labRunStatus>> = null;
 let lastSnapshot = 0;
 let running: { url: string } | null = null;
 
 // La valoración consulta precios reales, así que se refresca en segundo plano y no en cada petición.
 async function refreshValuation(log: (msg: string) => void) {
+  // Clasificación de la tanda del laboratorio (también consulta precios reales).
+  cachedLab = await labRunStatus().catch((err) => {
+    log(`Error valorando el laboratorio: ${(err as Error).message}`);
+    return cachedLab;
+  });
   try {
     const mission = getActiveMission() ?? getLastMission();
     if (!mission) {
@@ -47,6 +53,7 @@ function state() {
     orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
+    lab: cachedLab,
     lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all(),
   };
 }

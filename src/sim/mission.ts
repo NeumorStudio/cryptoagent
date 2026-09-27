@@ -141,6 +141,8 @@ export async function createLabRun(args: {
   groups: Partial<Record<LabGroup, number>>;
 }) {
   validate(args.capitalUsd, args.targetUsd, args.durationMinutes);
+  const running = activeLabRun();
+  if (running) throw new Error(`Ya hay una tanda en curso (#${running.id}). Espera a que termine o detenla antes de lanzar otra.`);
   const plan = (Object.entries(args.groups) as Array<[LabGroup, number]>).filter(([, n]) => n > 0);
   const total = plan.reduce((s, [, n]) => s + n, 0);
   if (total < 1) throw new Error("La tanda necesita al menos un agente");
@@ -303,6 +305,40 @@ export async function checkMission(missionId?: number): Promise<string[]> {
     }),
   );
   return results.flat();
+}
+
+/** Tanda del laboratorio en curso, si la hay. */
+export function activeLabRun(): { id: number } | undefined {
+  return db.prepare("SELECT id FROM lab_runs WHERE status = 'active' ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
+}
+
+export const GROUP_RULES: Record<LabGroup, string> = {
+  control: "Grupo CONTROL: trabajas sin memoria de misiones anteriores. Sirves de referencia para medir si la memoria ayuda.",
+  memoria:
+    "Grupo MEMORIA: tienes acceso al manual de estrategia del laboratorio (recall_lessons), con lo aprendido en tandas anteriores y las estadísticas de sus operaciones.",
+  explorador:
+    "Grupo EXPLORADOR: tu papel es descubrir cosas nuevas. No puedes comprar tokens que ya se operaron en tandas anteriores del laboratorio (la lista está en tu misión).",
+};
+
+/** Tokens que ya se compraron en tandas anteriores: el grupo explorador no puede repetirlos. */
+export function exploredTokens(runId: number): Array<{ mint: string; symbol: string }> {
+  return db
+    .prepare(
+      `SELECT DISTINCT p.asset AS mint, p.symbol FROM positions p JOIN missions m ON m.id = p.mission_id
+       WHERE m.lab_run_id IS NOT NULL AND m.lab_run_id < ? AND p.venue = 'solana'
+         AND p.asset NOT IN ('So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')`,
+    )
+    .all(runId) as Array<{ mint: string; symbol: string }>;
+}
+
+/** Detiene todas las misiones activas de una tanda (por defecto, la que esté en curso). */
+export async function stopLabRun(closePositions: boolean, runId?: number) {
+  const id = runId ?? activeLabRun()?.id;
+  if (id === undefined) throw new Error("No hay ninguna tanda del laboratorio en curso");
+  const missions = db.prepare("SELECT id FROM missions WHERE lab_run_id = ? AND status = 'active'").all(id) as Array<{ id: number }>;
+  const results = await Promise.all(missions.map((m) => stopMission(closePositions, m.id).catch((err) => ({ missionId: m.id, error: (err as Error).message }))));
+  closeFinishedLabRuns();
+  return { runId: id, stopped: results };
 }
 
 /** Clasificación de una tanda del laboratorio (por defecto, la última). */

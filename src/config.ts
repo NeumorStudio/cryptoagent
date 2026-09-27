@@ -20,7 +20,8 @@ export const config = {
   initialSol: num("INITIAL_SOL", 0.05),
   solanaTxFeeSol: num("SOLANA_TX_FEE_SOL", 0.0001),
   binanceTakerFee: num("BINANCE_TAKER_FEE", 0.001),
-  binanceUsdcWithdrawFee: num("BINANCE_USDC_WITHDRAW_FEE", 1),
+  // Comisión real de Binance por retirar USDC por la red Solana (septiembre de 2026).
+  binanceUsdcWithdrawFee: num("BINANCE_USDC_WITHDRAW_FEE", 0.3),
   maxStepsPerSession: num("MAX_STEPS_PER_SESSION", 80),
   loopPauseMinutes: num("LOOP_PAUSE_MINUTES", 30),
   watchIntervalSeconds: num("WATCH_INTERVAL_SECONDS", 60),

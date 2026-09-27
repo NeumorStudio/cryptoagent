@@ -90,7 +90,15 @@ knowledge/                        guía del terreno
 npm install
 npm run build:plugin      # regenera plugin/dist a partir de src/
 npm run typecheck
+npm test                  # tests (cada archivo usa una base de datos temporal)
+npx tsx scripts/migrate-dry.ts   # prueba las migraciones sobre una copia de ~/.cryptoagent/sim.db
 ```
+
+Los cambios de esquema van en `src/migrations.ts`, como un paso nuevo al final de la lista. Antes de migrar una
+base de datos con datos se guarda una copia en `~/.cryptoagent/backups`.
+
+El prompt del agente está solo en `plugin/agents/trader.md`. El runner por API lo lee de ahí y quita las líneas
+marcadas con `<!-- solo-plugin -->`.
 
 Para probar tus cambios, clona `NeumorStudio/claude-plugins` junto a este repositorio (`../claude-plugins`),
 añádelo como marketplace local e instala el plugin. Tras cada cambio: `npm run build:plugin` (también copia el

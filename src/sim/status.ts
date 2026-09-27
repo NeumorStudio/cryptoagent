@@ -43,7 +43,7 @@ export async function statusReport(missionId?: number): Promise<string> {
     lines.push("", `Posiciones (${open.length}) · liquidez ${usd(cash)}`);
     for (const p of open) {
       // Solo la parte de la posición que sigue abierta (el saldo puede incluir, p. ej., el SOL inicial para fees).
-      const h = v.holdings.find((x) => x.asset === p.asset);
+      const h = v.holdings.find((x) => x.venue === p.venue && x.asset === p.asset);
       const share = h && h.amount > 0 ? Math.min(1, p.qtyOpen / h.amount) : 0;
       const now = (h?.usd ?? 0) * share;
       const cost = p.openCostUsd;

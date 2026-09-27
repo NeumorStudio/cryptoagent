@@ -7,6 +7,7 @@ import * as binance from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
 import { getTokenInfo, resolveMint } from "../market/jupiter.js";
 import { binanceMarketOrder, swapSolana } from "./portfolio.js";
+import type { VenueId } from "./types.js";
 
 export interface SolanaAction {
   input: string;
@@ -24,7 +25,7 @@ interface OrderRow {
   id: number;
   mission_id: number;
   session_id: number | null;
-  venue: "solana" | "binance";
+  venue: VenueId;
   trigger_asset: string;
   trigger_label: string;
   condition: "above" | "below";
@@ -35,7 +36,7 @@ interface OrderRow {
   status: string;
 }
 
-async function currentPrice(venue: "solana" | "binance", asset: string): Promise<number> {
+async function currentPrice(venue: VenueId, asset: string): Promise<number> {
   if (venue === "solana") {
     const data = await fetchJson<Record<string, { usdPrice?: number } | null>>(`https://lite-api.jup.ag/price/v3?ids=${asset}`);
     const price = data[asset]?.usdPrice;
@@ -49,7 +50,7 @@ async function currentPrice(venue: "solana" | "binance", asset: string): Promise
 const isTriggered = (condition: "above" | "below", price: number, trigger: number) =>
   condition === "above" ? price >= trigger : price <= trigger;
 
-function describeAction(venue: "solana" | "binance", action: SolanaAction | BinanceAction): string {
+function describeAction(venue: VenueId, action: SolanaAction | BinanceAction): string {
   if (venue === "solana") {
     const a = action as SolanaAction;
     return `swap ${a.amount} ${a.input} → ${a.output}`;
@@ -61,7 +62,7 @@ function describeAction(venue: "solana" | "binance", action: SolanaAction | Bina
 export async function placeOrder(args: {
   missionId: number;
   sessionId: number | null;
-  venue: "solana" | "binance";
+  venue: VenueId;
   triggerAsset: string;
   condition: "above" | "below";
   triggerPrice: number;

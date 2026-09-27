@@ -5,7 +5,8 @@ import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, USDC_MINT, fromBaseUnits, getQuote, getTokenInfo, resolveMint, toBaseUnits } from "../market/jupiter.js";
-import { recordBinanceTrade, recordSolanaSwap, type TradeMeta } from "./positions.js";
+import { recordBinanceTrade, recordSolanaSwap } from "./positions.js";
+import type { Holding, TradeMeta, VenueId } from "./types.js";
 
 // Renta de una cuenta de token (ATA) en Solana: se paga al recibir un token nuevo
 // y se recupera al cerrar la cuenta cuando el saldo vuelve a cero.
@@ -13,18 +14,11 @@ const TOKEN_ACCOUNT_RENT_SOL = 0.00203928;
 // Comisiones de retirada de Binance por la red Solana.
 const BINANCE_WITHDRAW_FEES: Record<string, number> = {
   USDC: config.binanceUsdcWithdrawFee,
-  SOL: 0.01,
+  SOL: 0.001,
 };
 
-export type Venue = "solana" | "binance";
-
-export interface Holding {
-  venue: Venue;
-  asset: string;
-  symbol: string;
-  decimals: number;
-  amount: number;
-}
+export type Venue = VenueId;
+export type { Holding };
 
 const DUST = 1e-12;
 

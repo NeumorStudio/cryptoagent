@@ -3,17 +3,13 @@
 import { db, now } from "../db.js";
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
+import type { TradeMeta } from "./types.js";
 
 const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 const CASH_MINTS = new Set([USDC_MINT, USDT_MINT]);
 const CASH_TICKERS = new Set(["USDC", "USDT", "FDUSD"]);
 
-export interface TradeMeta {
-  /** Motivo de cierre cuando no lo decide el agente (orden condicional, fin de misión…). */
-  exitReason?: string;
-  thesis?: string;
-  lessonsApplied?: string;
-}
+export type { TradeMeta };
 
 interface PositionRow {
   id: number;

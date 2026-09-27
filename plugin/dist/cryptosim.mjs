@@ -3268,8 +3268,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path5) {
-      let input2 = path5;
+    function removeDotSegments(path6) {
+      let input2 = path6;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3678,8 +3678,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path5 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path5 && path5 !== "/" ? path5 : void 0;
+        const path6 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7968,8 +7968,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path5, errorMaps, issueData } = params;
-  const fullPath = [...path5, ...issueData.path || []];
+  const { data, path: path6, errorMaps, issueData } = params;
+  const fullPath = [...path6, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -8084,11 +8084,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path5, key) {
+  constructor(parent, value, path6, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path5;
+    this._path = path6;
     this._key = key;
   }
   get path() {
@@ -12042,10 +12042,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path5) {
-  if (!path5)
+function getElementAtPath(obj, path6) {
+  if (!path6)
     return obj;
-  return path5.reduce((acc, key) => acc?.[key], obj);
+  return path6.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12385,11 +12385,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path5, issues) {
+function prefixIssues(path6, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path5);
+    iss.path.unshift(path6);
     return iss;
   });
 }
@@ -12839,16 +12839,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path5 = []) => {
+  const processError = (error63, path6 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else {
-        const fullpath = [...path5, ...issue2.path];
+        const fullpath = [...path6, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -12887,17 +12887,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path5 = []) => {
+  const processError = (error63, path6 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else {
-        const fullpath = [...path5, ...issue2.path];
+        const fullpath = [...path6, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -12936,8 +12936,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path5) {
+  const path6 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path6) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -28452,11 +28452,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path5) {
-  if (path5.length === 0) {
+function getDotPath(path6) {
+  if (path6.length === 0) {
     return "object root";
   }
-  return path5.reduce((acc, seg, index) => {
+  return path6.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -30683,13 +30683,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path5 = ref.slice(1).split("/").filter(Boolean);
-  if (path5.length === 0) {
+  const path6 = ref.slice(1).split("/").filter(Boolean);
+  if (path6.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path5[0] === defsKey) {
-    const key = path5[1] === void 0 ? void 0 : decodeJSONPointerSegment(path5[1]);
+  if (path6[0] === defsKey) {
+    const key = path6[1] === void 0 ? void 0 : decodeJSONPointerSegment(path6[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -36873,8 +36873,8 @@ var StdioServerTransport = class {
 };
 
 // src/db.ts
-import { mkdirSync } from "node:fs";
-import path3 from "node:path";
+import { mkdirSync as mkdirSync2 } from "node:fs";
+import path4 from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 // src/config.ts
@@ -36916,7 +36916,8 @@ var config2 = {
   initialSol: num("INITIAL_SOL", 0.05),
   solanaTxFeeSol: num("SOLANA_TX_FEE_SOL", 1e-4),
   binanceTakerFee: num("BINANCE_TAKER_FEE", 1e-3),
-  binanceUsdcWithdrawFee: num("BINANCE_USDC_WITHDRAW_FEE", 1),
+  // Comisión real de Binance por retirar USDC por la red Solana (septiembre de 2026).
+  binanceUsdcWithdrawFee: num("BINANCE_USDC_WITHDRAW_FEE", 0.3),
   maxStepsPerSession: num("MAX_STEPS_PER_SESSION", 80),
   loopPauseMinutes: num("LOOP_PAUSE_MINUTES", 30),
   watchIntervalSeconds: num("WATCH_INTERVAL_SECONDS", 60),
@@ -36925,9 +36926,58 @@ var config2 = {
   dataDir: resolveDataDir()
 };
 
+// src/migrations.ts
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import path3 from "node:path";
+var MIGRATIONS = [
+  {
+    version: 1,
+    description: "Cupos de peticiones por servicio (APIs con l\xEDmite por ventana de tiempo)",
+    up: (db2) => db2.exec("CREATE TABLE IF NOT EXISTS http_budget (host TEXT PRIMARY KEY, window_start INTEGER NOT NULL, used INTEGER NOT NULL)")
+  }
+];
+var MAX_BACKUPS = 10;
+var schemaVersion = (db2) => db2.prepare("PRAGMA user_version").get().user_version;
+function hasUserData(db2) {
+  return Boolean(db2.prepare("SELECT 1 FROM missions LIMIT 1").get());
+}
+function backup(db2, dataDir, from) {
+  const dir = path3.join(dataDir, "backups");
+  mkdirSync(dir, { recursive: true });
+  const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+  const file2 = path3.join(dir, `sim-v${from}-${stamp}-${process.pid}.db`);
+  db2.exec(`VACUUM INTO '${file2.replace(/'/g, "''")}'`);
+  const old = readdirSync(dir).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).sort();
+  for (const f of old.slice(0, Math.max(0, old.length - MAX_BACKUPS))) rmSync(path3.join(dir, f), { force: true });
+  return file2;
+}
+function runMigrations(db2, dataDir, migrations = MIGRATIONS) {
+  const pending = migrations.filter((m) => m.version > schemaVersion(db2)).sort((a, b) => a.version - b.version);
+  if (!pending.length) return [];
+  if (hasUserData(db2)) backup(db2, dataDir, schemaVersion(db2));
+  const applied = [];
+  for (const m of pending) {
+    db2.exec("BEGIN IMMEDIATE");
+    try {
+      if (schemaVersion(db2) >= m.version) {
+        db2.exec("COMMIT");
+        continue;
+      }
+      m.up(db2);
+      db2.exec(`PRAGMA user_version = ${m.version}`);
+      db2.exec("COMMIT");
+      applied.push(m.version);
+    } catch (err) {
+      db2.exec("ROLLBACK");
+      throw new Error(`Fall\xF3 la migraci\xF3n ${m.version} (${m.description}): ${err.message}`);
+    }
+  }
+  return applied;
+}
+
 // src/db.ts
-mkdirSync(config2.dataDir, { recursive: true });
-var db = new DatabaseSync(path3.join(config2.dataDir, "sim.db"));
+mkdirSync2(config2.dataDir, { recursive: true });
+var db = new DatabaseSync(path4.join(config2.dataDir, "sim.db"));
 db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 10000;");
 db.exec(`
   CREATE TABLE IF NOT EXISTS meta (
@@ -37097,6 +37147,7 @@ for (const table of ["journal", "activity", "orders", "notes", "snapshots", "ses
     db.prepare("INSERT INTO meta (key, value) VALUES ('migration_mission_ids', '1')").run();
   }
 }
+runMigrations(db, config2.dataDir);
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
 function getMeta(key) {
   const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
@@ -37105,7 +37156,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.7.0";
+var CODE_VERSION = "0.7.1";
 var semver = (v) => v.split(".").map((n2) => Number.parseInt(n2, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -37148,7 +37199,13 @@ function logJournal(entry) {
 var DEFAULT_TTL_MS = 5e3;
 var MAX_PARALLEL_PER_HOST = 6;
 var MAX_RETRIES = 5;
-var MIN_INTERVAL_MS = { "lite-api.jup.ag": 1100 };
+var MIN_INTERVAL_MS = {
+  "lite-api.jup.ag": 1100,
+  // KyberSwap admite unas 30 peticiones cada 10 s.
+  "aggregator-api.kyberswap.com": 350,
+  // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
+  "api.gopluslabs.io": 2e3
+};
 var COOLDOWN_MS = 6e3;
 db.exec("CREATE TABLE IF NOT EXISTS http_pacing (host TEXT PRIMARY KEY, next_at INTEGER NOT NULL)");
 var reserveStmt = db.prepare(
@@ -37185,7 +37242,8 @@ function release(host) {
   waiting.get(host)?.shift()?.();
 }
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function request(url2, timeoutMs) {
+var fetchImpl = (...args) => fetch(...args);
+async function request(url2, opts) {
   const host = new URL(url2).host;
   for (let attempt2 = 0; ; attempt2++) {
     await pace(host);
@@ -37193,9 +37251,16 @@ async function request(url2, timeoutMs) {
     let res;
     let body;
     try {
-      res = await fetch(url2, {
-        signal: AbortSignal.timeout(timeoutMs),
-        headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
+      res = await fetchImpl(url2, {
+        method: opts.method ?? "GET",
+        signal: AbortSignal.timeout(opts.timeoutMs),
+        headers: {
+          accept: "application/json",
+          "user-agent": "Mozilla/5.0",
+          ...opts.body !== void 0 ? { "content-type": "application/json" } : {},
+          ...opts.headers
+        },
+        body: opts.body !== void 0 ? JSON.stringify(opts.body) : void 0
       });
       body = await res.text();
     } finally {
@@ -37213,27 +37278,36 @@ async function request(url2, timeoutMs) {
 }
 function fetchText(url2, opts = {}) {
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const key = opts.body !== void 0 || opts.method === "POST" ? `${opts.method ?? "GET"} ${url2} ${JSON.stringify(opts.body ?? null)}` : url2;
   const nowMs = Date.now();
-  const hit = cache.get(url2);
+  const hit = cache.get(key);
   if (hit && hit.expires > nowMs) return hit.value;
-  const value = request(url2, opts.timeoutMs ?? 15e3);
-  cache.set(url2, { expires: nowMs + ttl, value });
+  const value = request(url2, { ...opts, timeoutMs: opts.timeoutMs ?? 15e3 });
+  cache.set(key, { expires: nowMs + ttl, value });
   value.then(
     (r) => {
-      if (r.status < 200 || r.status >= 300) cache.delete(url2);
+      if (r.status < 200 || r.status >= 300) cache.delete(key);
     },
-    () => cache.delete(url2)
+    () => cache.delete(key)
   );
   if (cache.size > MAX_CACHE_ENTRIES) {
     for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
   }
   return value;
 }
-async function fetchJson(url2, timeoutMs = 15e3, ttlMs = DEFAULT_TTL_MS) {
-  const { status, body } = await fetchText(url2, { timeoutMs, ttlMs });
+async function fetchJson(url2, a = {}, ttlMs) {
+  const opts = typeof a === "number" ? { timeoutMs: a, ttlMs } : a;
+  const { status, body } = await fetchText(url2, opts);
   if (status < 200 || status >= 300) throw new Error(`HTTP ${status} en ${url2}: ${body.slice(0, 300)}`);
   return JSON.parse(body);
 }
+var budgetStmt = db.prepare(
+  `INSERT INTO http_budget (host, window_start, used) VALUES (?, ?, 1)
+   ON CONFLICT(host) DO UPDATE SET
+     window_start = CASE WHEN window_start + ? <= ? THEN excluded.window_start ELSE window_start END,
+     used = CASE WHEN window_start + ? <= ? THEN 1 ELSE used + 1 END
+   RETURNING used`
+);
 
 // src/market/binance.ts
 var BASE = "https://api.binance.com/api/v3";
@@ -37518,7 +37592,7 @@ function logResearch(missionId, tool2, target) {
 var TOKEN_ACCOUNT_RENT_SOL = 203928e-8;
 var BINANCE_WITHDRAW_FEES = {
   USDC: config2.binanceUsdcWithdrawFee,
-  SOL: 0.01
+  SOL: 1e-3
 };
 var DUST = 1e-12;
 function getHoldings(missionId) {
@@ -37930,7 +38004,7 @@ async function checkOrders() {
 
 // src/dashboard/server.ts
 import { spawn } from "node:child_process";
-import { readFileSync as readFileSync2 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
 import http from "node:http";
 
 // src/sim/mission.ts
@@ -38090,470 +38164,12 @@ async function checkMission(missionId) {
 }
 
 // src/dashboard/timeline.ts
-import { existsSync as existsSync2, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, statSync } from "node:fs";
 import os2 from "node:os";
-import path4 from "node:path";
-var projectsDir = path4.join(os2.homedir(), ".claude", "projects");
-var TRADER_AGENT = /(^|:)trader$/;
-var normalizeTool = (name) => name.replace(/^mcp__plugin_.*?_cryptosim__/, "mcp__cryptosim__");
-var COVERED_BY_DB = /^mcp__cryptosim__(simulate_|place_|cancel_order|record_hypothetical_action|log_progress|write_note|delete_note|write_lesson|delete_lesson)/;
-function resultText(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((b) => b?.type === "text" ? b.text : b?.type === "image" ? "[captura de pantalla]" : "").filter(Boolean).join("\n");
-  }
-  return "";
-}
-var short = (s, n2 = 140) => {
-  const str = typeof s === "string" ? s : JSON.stringify(s ?? "");
-  return str.length > n2 ? str.slice(0, n2) + "\u2026" : str;
-};
-function describeToolUse(rawName, input2) {
-  const name = normalizeTool(rawName);
-  if (name === "ToolSearch" || name === "SubagentHandback" || COVERED_BY_DB.test(name)) return null;
-  if (name === "WebSearch") return { kind: "search", title: `Busca en internet: \xAB${input2.query}\xBB` };
-  if (name === "WebFetch") return { kind: "fetch", title: `Lee ${input2.url}` };
-  if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input2.url}` };
-  if (name === "mcp__cryptosim__start_session") return { kind: "session", title: "Empieza una sesi\xF3n de trabajo" };
-  if (name === "mcp__cryptosim__end_session") return { kind: "session", title: "Cierra la sesi\xF3n" };
-  if (name === "mcp__cryptosim__recall_lessons") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
-  if (name === "mcp__cryptosim__wait") return { kind: "tool", title: `Espera ${input2.minutes} min` };
-  if (name.startsWith("mcp__cryptosim__")) return { kind: "tool", title: `Consulta ${name.replace("mcp__cryptosim__", "").replace(/_/g, " ")}` };
-  const browser = name.match(/^mcp__Claude_Browser__(.+)$/)?.[1];
-  if (browser) {
-    switch (browser) {
-      case "navigate":
-        return { kind: "browse", title: `Abre ${input2.url}` };
-      case "get_page_text":
-      case "read_page":
-        return { kind: "browse", title: "Lee la p\xE1gina" };
-      case "find":
-        return { kind: "browse", title: `Busca en la p\xE1gina: \xAB${input2.query}\xBB` };
-      case "computer":
-        return { kind: "browse", title: `Navegador: ${input2.action}${input2.text ? ` \xAB${short(input2.text, 60)}\xBB` : ""}` };
-      case "form_input":
-        return { kind: "browse", title: "Rellena un campo de la p\xE1gina" };
-      case "javascript_tool":
-        return { kind: "browse", title: "Inspecciona la p\xE1gina con JavaScript" };
-      case "browser_batch":
-        return { kind: "browse", title: `Navegador: ${input2.actions?.length ?? "varias"} acciones seguidas` };
-      default:
-        return { kind: "browse", title: `Navegador: ${browser.replace(/_/g, " ")}` };
-    }
-  }
-  return { kind: "tool", title: name };
-}
-var fileCache = /* @__PURE__ */ new Map();
-function parseTranscript(file2) {
-  const events = [];
-  const byToolId = /* @__PURE__ */ new Map();
-  for (const line of readFileSync(file2, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const content = entry.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const [i, block] of content.entries()) {
-      if (entry.type === "assistant" && block.type === "text" && block.text?.trim()) {
-        events.push({ id: `${entry.uuid}:${i}`, ts: entry.timestamp, kind: "text", title: block.text.trim() });
-      } else if (entry.type === "assistant" && block.type === "tool_use") {
-        const d = describeToolUse(block.name, block.input ?? {});
-        if (!d) continue;
-        const ev = { id: block.id, ts: entry.timestamp, ...d };
-        byToolId.set(block.id, ev);
-        events.push(ev);
-      } else if (block.type === "tool_result") {
-        const ev = byToolId.get(block.tool_use_id);
-        if (!ev) continue;
-        const text2 = resultText(block.content).trim();
-        if (text2) ev.body = text2.length > 3e3 ? text2.slice(0, 3e3) + "\n\u2026" : text2;
-        if (block.is_error) ev.kind = "error";
-      }
-    }
-  }
-  return events;
-}
-function transcriptEvents(since) {
-  if (!existsSync2(projectsDir)) return [];
-  const sinceMs = new Date(since).getTime();
-  const events = [];
-  const sessionDirs = readdirSync(projectsDir).flatMap((project) => {
-    const dir = path4.join(projectsDir, project);
-    try {
-      return readdirSync(dir).map((s) => path4.join(dir, s, "subagents"));
-    } catch {
-      return [];
-    }
-  });
-  for (const subDir of sessionDirs) {
-    if (!existsSync2(subDir)) continue;
-    for (const f of readdirSync(subDir)) {
-      if (!f.endsWith(".meta.json")) continue;
-      try {
-        if (!TRADER_AGENT.test(JSON.parse(readFileSync(path4.join(subDir, f), "utf8")).agentType ?? "")) continue;
-      } catch {
-        continue;
-      }
-      const file2 = path4.join(subDir, f.replace(".meta.json", ".jsonl"));
-      if (!existsSync2(file2)) continue;
-      const st = statSync(file2);
-      if (st.mtimeMs < sinceMs) continue;
-      const cached3 = fileCache.get(file2);
-      if (cached3 && cached3.mtimeMs === st.mtimeMs && cached3.size === st.size) {
-        events.push(...cached3.events);
-        continue;
-      }
-      const parsed = parseTranscript(file2);
-      fileCache.set(file2, { mtimeMs: st.mtimeMs, size: st.size, events: parsed });
-      events.push(...parsed);
-    }
-  }
-  return events;
-}
-var JOURNAL_KIND = {
-  swap: "trade",
-  cex_order: "trade",
-  transfer: "trade",
-  order_placed: "order",
-  order_cancelled: "order",
-  order_expired: "order",
-  order_failed: "error",
-  rejected: "error",
-  hypothetical: "hypothetical",
-  mission: "mission"
-};
-function dbEvents(missionId) {
-  if (missionId === null) return [];
-  const events = [];
-  for (const a of db.prepare("SELECT id, ts, kind, title, body FROM activity WHERE mission_id = ?").all(missionId)) {
-    events.push({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: a.title, body: a.body ?? void 0 });
-  }
-  for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ?").all(missionId)) {
-    events.push({
-      id: `j${j.id}`,
-      ts: j.ts,
-      kind: JOURNAL_KIND[j.kind] ?? "tool",
-      title: j.summary,
-      note: j.reasoning ?? void 0,
-      body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : void 0
-    });
-  }
-  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons WHERE mission_id = ?").all(missionId)) {
-    events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lecci\xF3n #${l.id}, de la misi\xF3n #${l.mission_id}` : void 0 });
-  }
-  for (const n2 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
-    events.push({ id: `n${n2.id}`, ts: n2.ts, kind: "note", title: n2.text });
-  }
-  return events;
-}
-function timeline(since, missionId) {
-  return [...transcriptEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
-}
-
-// src/dashboard/server.ts
-var INDEX_HTML = asset("index.html", "src/dashboard/index.html");
-var cached2 = null;
-var lastSnapshot = 0;
-var running = null;
-async function refreshValuation(log) {
-  try {
-    const mission = getActiveMission() ?? getLastMission();
-    if (!mission) {
-      cached2 = null;
-      return;
-    }
-    const record2 = mission.status === "active" && Date.now() - lastSnapshot >= 6e4;
-    cached2 = { at: (/* @__PURE__ */ new Date()).toISOString(), value: await valuation(mission.id, record2) };
-    if (record2) lastSnapshot = Date.now();
-  } catch (err) {
-    log(`Error valorando la cartera: ${err.message}`);
-  }
-}
-function state() {
-  const mission = getActiveMission() ?? getLastMission();
-  const snapshots = mission ? db.prepare("SELECT ts, total_usd FROM snapshots WHERE mission_id = ? ORDER BY ts").all(mission.id) : [];
-  return {
-    now: (/* @__PURE__ */ new Date()).toISOString(),
-    mission: mission ?? null,
-    // La valoración en caché puede ser de la misión anterior justo después de crear otra.
-    valuation: cached2 && mission && cached2.value.missionId === mission.id ? cached2.value : null,
-    valuedAt: cached2?.at ?? null,
-    orders: mission ? listOrders(mission.id, "open") : [],
-    snapshots,
-    history: missionHistory(),
-    lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all()
-  };
-}
-function send(res, status, type, body) {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
-  res.end(body);
-}
-function handler(port) {
-  return (req, res) => {
-    const url2 = new URL(req.url ?? "/", `http://localhost:${port}`);
-    try {
-      if (url2.pathname === "/") {
-        return send(res, 200, "text/html; charset=utf-8", readFileSync2(INDEX_HTML, "utf8"));
-      }
-      if (url2.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
-      if (url2.pathname === "/api/events") {
-        const mission = getActiveMission() ?? getLastMission();
-        const since = url2.searchParams.get("all") ? "1970" : mission?.created_at ?? "1970";
-        return send(res, 200, "application/json", JSON.stringify(timeline(since, mission?.id ?? null)));
-      }
-      send(res, 404, "text/plain", "No encontrado");
-    } catch (err) {
-      send(res, 500, "text/plain", err.message);
-    }
-  };
-}
-async function isOurDashboard(url2) {
-  try {
-    const res = await fetch(`${url2}/api/state`, { signal: AbortSignal.timeout(2e3) });
-    return res.ok && "mission" in await res.json();
-  } catch {
-    return false;
-  }
-}
-async function startDashboard(opts = {}) {
-  const port = opts.port ?? Number(process.env.DASHBOARD_PORT || 4321);
-  const log = opts.log ?? console.error;
-  const url2 = `http://localhost:${port}`;
-  if (running) return { url: running.url, alreadyRunning: true };
-  if (await isOurDashboard(url2)) return { url: url2, alreadyRunning: true };
-  const server2 = http.createServer(handler(port));
-  await new Promise((resolve, reject) => {
-    server2.once(
-      "error",
-      (err) => reject(err.code === "EADDRINUSE" ? new Error(`El puerto ${port} est\xE1 ocupado por otro programa. Usa otro con DASHBOARD_PORT.`) : err)
-    );
-    server2.listen(port, "127.0.0.1", resolve);
-  });
-  running = { url: url2 };
-  await refreshValuation(log);
-  setInterval(() => refreshValuation(log), 15e3).unref();
-  return { url: url2, alreadyRunning: false };
-}
-function openInBrowser(url2) {
-  const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
-  spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
-}
-
-// src/sim/memory.ts
-function profile(m) {
-  return {
-    durationMinutes: Math.max(1, Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4)),
-    targetPct: Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
-    directed: !!m.instructions
-  };
-}
-function distance(a, b) {
-  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + Math.abs(a.targetPct - b.targetPct) / 10 + (a.directed === b.directed ? 0 : 0.5);
-}
-var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
-var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
-function finishedMissions() {
-  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
-}
-function pendingReviews() {
-  return db.prepare(
-    `SELECT m.id FROM missions m
-         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
-           AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
-         ORDER BY m.id`
-  ).all().map((r) => r.id);
-}
-function markReviewed(missionId) {
-  db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
-}
-function summarize(label, ps) {
-  const closed = ps.filter((p) => p.pnlPct !== null);
-  if (!closed.length) return null;
-  const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
-  const avg = closed.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / closed.length;
-  return { group: label, trades: closed.length, winRatePct: Math.round(wins / closed.length * 100), avgPnlPct: Number(avg.toFixed(1)) };
-}
-function tradeStats(ps) {
-  const groups = [
-    ["todas", () => true],
-    ["token con < 30 min de vida al comprar", (p) => (p.entry.ageMinutes ?? Infinity) < 30],
-    ["token con \u2265 30 min de vida al comprar", (p) => (p.entry.ageMinutes ?? -1) >= 30],
-    ["liquidez < 50.000 $", (p) => (p.entry.liquidityUsd ?? Infinity) < 5e4],
-    ["liquidez \u2265 50.000 $", (p) => (p.entry.liquidityUsd ?? -1) >= 5e4],
-    ["comprado tras subir > 20 % en 5 min", (p) => (p.entry.priceChange5mPct ?? -Infinity) > 20],
-    ["comprado sin haber subido > 20 % en 5 min", (p) => (p.entry.priceChange5mPct ?? Infinity) <= 20],
-    ["con token_report antes de comprar", (p) => p.research.tokenReportBeforeBuying === true],
-    ["sin token_report antes de comprar", (p) => p.research.tokenReportBeforeBuying === false],
-    ["con riesgos 'danger' en RugCheck", (p) => (p.entry.rugcheckDangerRisks ?? 0) > 0],
-    ["cerradas por fin de misi\xF3n", (p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")]
-  ];
-  return groups.map(([label, fn]) => summarize(label, ps.filter(fn))).filter(Boolean);
-}
-function recall(missionId, limitLessons) {
-  const current = (missionId ? getMission(missionId) : void 0) ?? getActiveMission() ?? getLastMission();
-  const curProfile = current ? profile(current) : null;
-  const history = finishedMissions().filter((m) => m.id !== current?.id || m.status !== "active").map((m) => {
-    const p = profile(m);
-    const d = curProfile ? distance(curProfile, p) : 0;
-    return {
-      missionId: m.id,
-      profile: describe3(p),
-      similarity: curProfile ? similarityLabel(d) : void 0,
-      distance: Number(d.toFixed(2)),
-      instructions: m.instructions ?? void 0,
-      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`
-    };
-  }).sort((a, b) => a.distance - b.distance);
-  const distByMission = new Map(history.map((h) => [h.missionId, h.distance]));
-  const lessons = db.prepare("SELECT id, created_at, mission_id, text, applies_to, evidence, confidence FROM lessons ORDER BY id").all().map((l) => ({
-    id: l.id,
-    missionId: l.mission_id,
-    lesson: l.text,
-    appliesTo: l.applies_to ?? "(sin especificar)",
-    evidence: l.evidence ?? void 0,
-    confidence: l.confidence ?? void 0,
-    relevance: l.mission_id && distByMission.has(l.mission_id) ? similarityLabel(distByMission.get(l.mission_id)) : "sin misi\xF3n vinculada",
-    _d: l.mission_id && distByMission.has(l.mission_id) ? distByMission.get(l.mission_id) : 99
-  })).sort((a, b) => a._d - b._d).map(({ _d, ...rest }) => rest);
-  const all = listPositions();
-  const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
-  return {
-    currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
-    pendingReview: pendingReviews(),
-    missionHistory: history,
-    lessons: limitLessons ? lessons.slice(0, limitLessons) : lessons,
-    totalLessons: lessons.length,
-    tradeStats: {
-      note: "Resultados reales de tus operaciones cerradas, calculados por el simulador (no por ti).",
-      allMissions: tradeStats(all),
-      similarMissions: similarIds.size ? tradeStats(all.filter((p) => p.missionId !== null && similarIds.has(p.missionId))) : []
-    }
-  };
-}
-
-// src/sim/session.ts
-function startSession(missionId) {
-  return Number(db.prepare("INSERT INTO sessions (started_at, mission_id) VALUES (?, ?)").run(now(), missionId).lastInsertRowid);
-}
-async function sessionBriefing(sessionId, missionId) {
-  const header = `Sesi\xF3n #${sessionId}. Fecha y hora actual: ${now()}.`;
-  if (missionId === null) return [header, "", JSON.stringify(await missionStatus(), null, 2)].join("\n");
-  const mission = getMission(missionId);
-  const portfolio = await valuation(missionId, true);
-  const notes = db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId);
-  const openOrders = listOrders(missionId, "open");
-  const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15").all(missionId);
-  const memoryLines = [];
-  {
-    const mem = recall(missionId, 8);
-    if (mem.pendingReview.length) {
-      memoryLines.push(
-        `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misi\xF3n"} #${mem.pendingReview.join(", #")} (trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.`,
-        ""
-      );
-    }
-    memoryLines.push(
-      mem.missionHistory.length ? "Tu memoria, ordenada por parecido con esta misi\xF3n (recall_lessons tiene el detalle completo):\n" + JSON.stringify(
-        { missionHistory: mem.missionHistory.slice(0, 6), lessons: mem.lessons, totalLessons: mem.totalLessons, tradeStats: mem.tradeStats },
-        null,
-        2
-      ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
-      ""
-    );
-  }
-  return [
-    header,
-    "",
-    "Misi\xF3n:",
-    JSON.stringify(await missionStatus(missionId), null, 2),
-    "",
-    ...memoryLines,
-    "Cartera:",
-    JSON.stringify(portfolio, null, 2),
-    "",
-    notes.length ? "Tus notas:\n" + notes.map((n2) => `- (id ${n2.id}, ${n2.ts}) ${n2.text}`).join("\n") : "No tienes notas guardadas.",
-    "",
-    openOrders.length ? "\xD3rdenes condicionales abiertas:\n" + JSON.stringify(openOrders, null, 2) : "No tienes \xF3rdenes condicionales abiertas.",
-    "",
-    recent.length ? "\xDAltimas entradas del diario:\n" + recent.reverse().map((j) => `- ${j.ts} [${j.kind}] ${j.summary}`).join("\n") : "El diario est\xE1 vac\xEDo: es tu primera sesi\xF3n."
-  ].join("\n");
-}
-async function endSession(sessionId, missionId, finalText, tokens) {
-  const end = missionId !== null ? await valuation(missionId, true) : null;
-  db.prepare("UPDATE sessions SET ended_at = ?, final_text = ?, input_tokens = ?, output_tokens = ? WHERE id = ?").run(
-    now(),
-    finalText,
-    tokens?.input ?? 0,
-    tokens?.output ?? 0,
-    sessionId
-  );
-  return end;
-}
-
-// src/sim/status.ts
-var usd = (n2) => `${n2.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
-var pct = (n2) => `${n2 >= 0 ? "+" : "\u2212"}${Math.abs(n2).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
-var hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
-function timeLeft(deadline) {
-  const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
-  return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
-}
-async function statusReport(missionId) {
-  const m = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
-  if (!m) return "No hay ninguna misi\xF3n. Crea una con /cryptoagent:trading.";
-  const v = await valuation(m.id);
-  const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
-  const change = (current - m.initial_usd) / m.initial_usd * 100;
-  const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
-  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : "detenida por el usuario";
-  const lines = [];
-  lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
-  lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
-  lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
-  const open2 = listPositions(m.id).filter((p) => p.status === "open");
-  if (m.status === "active") {
-    const cash = v.holdings.filter((h) => ["USDC", "USDT"].includes(h.symbol)).reduce((s, h) => s + h.usd, 0);
-    lines.push("", `Posiciones (${open2.length}) \xB7 liquidez ${usd(cash)}`);
-    for (const p of open2) {
-      const h = v.holdings.find((x) => x.asset === p.asset);
-      const share = h && h.amount > 0 ? Math.min(1, p.qtyOpen / h.amount) : 0;
-      const now2 = (h?.usd ?? 0) * share;
-      const cost = p.openCostUsd;
-      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
-    }
-    const orders = listOrders(m.id, "open");
-    if (orders.length) {
-      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
-    }
-  }
-  const closed = listPositions(m.id).filter((p) => p.status === "closed");
-  if (closed.length) {
-    const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
-    lines.push("", `Operaciones cerradas: ${closed.length} (${wins} con beneficio)`);
-    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
-  }
-  const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE mission_id = ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.id);
-  if (recent.length) {
-    lines.push("", "\xDAltimos movimientos:");
-    for (const j of recent) {
-      const why = j.reasoning?.match(/^Por qué: (.*)$/m)?.[1];
-      lines.push(`- ${hhmm(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
-    }
-  }
-  const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2").all(m.id);
-  if (notes.length) {
-    lines.push("", "\xDAltima nota del agente:");
-    for (const n2 of notes) lines.push(`- ${hhmm(n2.ts)} ${n2.title.slice(0, 220)}`);
-  }
-  return lines.join("\n");
-}
+import path5 from "node:path";
 
 // src/tools/index.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync } from "node:fs";
 
 // src/market/research.ts
 var n = (v, digits = 2) => typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : void 0;
@@ -38724,6 +38340,98 @@ async function tokenReport(mint) {
   return { mint, jupiter, dexscreener, rugcheck, ...pumpfun ? { pumpfun } : {} };
 }
 
+// src/sim/memory.ts
+function profile(m) {
+  return {
+    durationMinutes: Math.max(1, Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4)),
+    targetPct: Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
+    directed: !!m.instructions
+  };
+}
+function distance(a, b) {
+  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + Math.abs(a.targetPct - b.targetPct) / 10 + (a.directed === b.directed ? 0 : 0.5);
+}
+var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
+var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
+function finishedMissions() {
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
+}
+function pendingReviews() {
+  return db.prepare(
+    `SELECT m.id FROM missions m
+         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
+         ORDER BY m.id`
+  ).all().map((r) => r.id);
+}
+function markReviewed(missionId) {
+  db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
+}
+function summarize(label, ps) {
+  const closed = ps.filter((p) => p.pnlPct !== null);
+  if (!closed.length) return null;
+  const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+  const avg = closed.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / closed.length;
+  return { group: label, trades: closed.length, winRatePct: Math.round(wins / closed.length * 100), avgPnlPct: Number(avg.toFixed(1)) };
+}
+function tradeStats(ps) {
+  const groups = [
+    ["todas", () => true],
+    ["token con < 30 min de vida al comprar", (p) => (p.entry.ageMinutes ?? Infinity) < 30],
+    ["token con \u2265 30 min de vida al comprar", (p) => (p.entry.ageMinutes ?? -1) >= 30],
+    ["liquidez < 50.000 $", (p) => (p.entry.liquidityUsd ?? Infinity) < 5e4],
+    ["liquidez \u2265 50.000 $", (p) => (p.entry.liquidityUsd ?? -1) >= 5e4],
+    ["comprado tras subir > 20 % en 5 min", (p) => (p.entry.priceChange5mPct ?? -Infinity) > 20],
+    ["comprado sin haber subido > 20 % en 5 min", (p) => (p.entry.priceChange5mPct ?? Infinity) <= 20],
+    ["con token_report antes de comprar", (p) => p.research.tokenReportBeforeBuying === true],
+    ["sin token_report antes de comprar", (p) => p.research.tokenReportBeforeBuying === false],
+    ["con riesgos 'danger' en RugCheck", (p) => (p.entry.rugcheckDangerRisks ?? 0) > 0],
+    ["cerradas por fin de misi\xF3n", (p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")]
+  ];
+  return groups.map(([label, fn]) => summarize(label, ps.filter(fn))).filter(Boolean);
+}
+function recall(missionId, limitLessons) {
+  const current = (missionId ? getMission(missionId) : void 0) ?? getActiveMission() ?? getLastMission();
+  const curProfile = current ? profile(current) : null;
+  const history = finishedMissions().filter((m) => m.id !== current?.id || m.status !== "active").map((m) => {
+    const p = profile(m);
+    const d = curProfile ? distance(curProfile, p) : 0;
+    return {
+      missionId: m.id,
+      profile: describe3(p),
+      similarity: curProfile ? similarityLabel(d) : void 0,
+      distance: Number(d.toFixed(2)),
+      instructions: m.instructions ?? void 0,
+      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`
+    };
+  }).sort((a, b) => a.distance - b.distance);
+  const distByMission = new Map(history.map((h) => [h.missionId, h.distance]));
+  const lessons = db.prepare("SELECT id, created_at, mission_id, text, applies_to, evidence, confidence FROM lessons ORDER BY id").all().map((l) => ({
+    id: l.id,
+    missionId: l.mission_id,
+    lesson: l.text,
+    appliesTo: l.applies_to ?? "(sin especificar)",
+    evidence: l.evidence ?? void 0,
+    confidence: l.confidence ?? void 0,
+    relevance: l.mission_id && distByMission.has(l.mission_id) ? similarityLabel(distByMission.get(l.mission_id)) : "sin misi\xF3n vinculada",
+    _d: l.mission_id && distByMission.has(l.mission_id) ? distByMission.get(l.mission_id) : 99
+  })).sort((a, b) => a._d - b._d).map(({ _d, ...rest }) => rest);
+  const all = listPositions();
+  const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
+  return {
+    currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
+    pendingReview: pendingReviews(),
+    missionHistory: history,
+    lessons: limitLessons ? lessons.slice(0, limitLessons) : lessons,
+    totalLessons: lessons.length,
+    tradeStats: {
+      note: "Resultados reales de tus operaciones cerradas, calculados por el simulador (no por ti).",
+      allMissions: tradeStats(all),
+      similarMissions: similarIds.size ? tradeStats(all.filter((p) => p.missionId !== null && similarIds.has(p.missionId))) : []
+    }
+  };
+}
+
 // src/tools/define.ts
 function tool(def) {
   return def;
@@ -38737,7 +38445,6 @@ var mid = (ctx) => {
 };
 var MAX_WAIT_MINUTES = 10;
 var FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
-var isTradingTool = (name) => name.startsWith("simulate_") || name.endsWith("_trigger_order");
 var reasoning = external_exports.string().describe("Por qu\xE9 haces esto. Queda en el diario.");
 var thesis = external_exports.object({
   why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
@@ -38752,37 +38459,35 @@ Fuentes: ${t.sources.join(" \xB7 ")}
 Plan: ${t.exit_plan}
 Lecciones: ${t.lessons_applied}`;
 var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
-var RESEARCH_TOOLS = /* @__PURE__ */ new Set([
-  "scan_market",
-  "token_report",
-  "http_get",
-  "field_guide",
-  "quote_solana_swap",
-  "recall_lessons",
-  "trade_history",
-  "journal_history"
-]);
 var SIM_TOOLS = [
   tool({
     name: "scan_market",
+    kind: "research",
+    researchTarget: () => void 0,
     description: "Escaneo de mercado en Solana en una sola llamada: combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal, con sus datos clave (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero.",
     schema: external_exports.object({ limit: external_exports.number().int().min(5).max(60).default(25) }),
     run: async ({ limit }) => json2(await scanMarket(limit))
   }),
   tool({
     name: "token_report",
+    kind: "research",
+    researchTarget: (i) => i.mint,
     description: "Ficha completa de un token de Solana en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa (autoridades de mint y freeze, % del creador y de los mayores holders), riesgos de RugCheck, webs y redes sociales del proyecto y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico.",
     schema: external_exports.object({ mint: external_exports.string() }),
     run: async ({ mint }) => json2(await tokenReport(mint.trim()))
   }),
   tool({
     name: "field_guide",
+    kind: "research",
+    researchTarget: () => void 0,
     description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
     schema: external_exports.object({}),
-    run: async () => readFileSync3(FIELD_GUIDE, "utf8")
+    run: async () => readFileSync(FIELD_GUIDE, "utf8")
   }),
   tool({
     name: "log_progress",
+    kind: "misc",
+    journaled: true,
     description: "Registro de trabajo: anota qu\xE9 vas a investigar o hacer a continuaci\xF3n, qu\xE9 has encontrado y qu\xE9 decisiones tomas. Se muestra en el panel del usuario.",
     schema: external_exports.object({ entry: external_exports.string() }),
     run: async ({ entry }, ctx) => {
@@ -38792,12 +38497,14 @@ var SIM_TOOLS = [
   }),
   tool({
     name: "mission_status",
+    kind: "misc",
     description: "Estado de tu misi\xF3n: capital inicial, objetivo, valor actual de la cartera, cu\xE1nto falta y tiempo restante. La misi\xF3n termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await missionStatus(ctx.missionId ?? void 0))
   }),
   tool({
     name: "wait",
+    kind: "misc",
     description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus \xF3rdenes condicionales se siguen vigilando. Vuelve antes si la misi\xF3n termina. El tiempo tambi\xE9n pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.`,
     schema: external_exports.object({ minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES) }),
     run: async ({ minutes }, ctx) => {
@@ -38818,6 +38525,8 @@ ${json2(await missionStatus(m))}`;
   }),
   tool({
     name: "http_get",
+    kind: "research",
+    researchTarget: (i) => i.url,
     description: "Hace una petici\xF3n HTTP GET y devuelve la respuesta en texto (\xFAtil para APIs p\xFAblicas en JSON).",
     schema: external_exports.object({ url: external_exports.string() }),
     run: async ({ url: url2 }) => {
@@ -38831,12 +38540,15 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   // ─── Cartera simulada ─────────────────────────────────────────────────────
   tool({
     name: "portfolio",
+    kind: "misc",
     description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n real ahora mismo, el PnL desde el inicio y lo que valdr\xEDa el capital inicial si se hubiera mantenido en SOL.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await valuation(mid(ctx)))
   }),
   tool({
     name: "quote_solana_swap",
+    kind: "research",
+    researchTarget: (i) => i.output,
     description: "Cotiza un swap en Solana con Jupiter (agregador de DEX de mainnet) sin ejecutarlo. input/output: direcci\xF3n mint del token, o los alias SOL y USDC. amount en unidades del token de entrada.",
     schema: external_exports.object({
       input: external_exports.string(),
@@ -38848,6 +38560,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "simulate_solana_swap",
+    kind: "trade",
+    journaled: true,
     description: "Ejecuta en simulaci\xF3n un swap en tu monedero de Solana. El resultado es la cotizaci\xF3n real de Jupiter en ese instante (liquidez y comisiones de los pools incluidas). Se descuentan la fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas SOL en el monedero para pagar la red.",
     schema: external_exports.object({
       input: external_exports.string(),
@@ -38871,18 +38585,24 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "simulate_binance_market_order",
+    kind: "trade",
+    journaled: true,
     description: "Ejecuta en simulaci\xF3n una orden de mercado en Binance spot contra el order book real (precio medio y slippage reales, comisi\xF3n taker incluida). BUY: amount = cantidad del activo quote a gastar. SELL: amount = cantidad del activo base a vender. symbol: par de Binance, p. ej. BTCUSDC.",
     schema: external_exports.object({ symbol: external_exports.string(), side: external_exports.enum(["BUY", "SELL"]), amount: external_exports.number().positive(), thesis }),
     run: async (i, ctx) => json2(await binanceMarketOrder({ missionId: mid(ctx), sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis), meta: tradeMeta(i.thesis) }))
   }),
   tool({
     name: "simulate_transfer",
+    kind: "trade",
+    journaled: true,
     description: "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulaci\xF3n. De Solana a Binance se paga la fee de red; de Binance a Solana, la comisi\xF3n de retirada de Binance.",
     schema: external_exports.object({ asset: external_exports.enum(["USDC", "SOL"]), from: external_exports.enum(["solana", "binance"]), amount: external_exports.number().positive(), reasoning }),
     run: async (i, ctx) => json2(await transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i }))
   }),
   tool({
     name: "place_solana_trigger_order",
+    kind: "trade",
+    journaled: true,
     description: "Deja una orden condicional en Solana: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n. El precio se comprueba aproximadamente cada minuto, as\xED que un pico muy breve puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla.",
     schema: external_exports.object({
       trigger_asset: external_exports.string().describe("Mint del token cuyo precio se vigila, o alias SOL/USDC"),
@@ -38911,6 +38631,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "place_binance_trigger_order",
+    kind: "trade",
+    journaled: true,
     description: "Deja una orden condicional en Binance: cuando el \xFAltimo precio de trigger_symbol cruce trigger_price, se ejecuta la orden de mercado indicada contra el order book real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n; se comprueba aproximadamente cada minuto. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla.",
     schema: external_exports.object({
       trigger_symbol: external_exports.string().describe("Par de Binance cuyo precio se vigila, p. ej. SOLUSDC"),
@@ -38938,18 +38660,23 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "list_orders",
+    kind: "misc",
     description: "Lista tus \xF3rdenes condicionales: abiertas, cerradas (ejecutadas, fallidas, canceladas, caducadas) o todas.",
     schema: external_exports.object({ status: external_exports.enum(["open", "closed", "all"]).default("open") }),
     run: async ({ status }, ctx) => json2(listOrders(mid(ctx), status))
   }),
   tool({
     name: "cancel_order",
+    kind: "misc",
+    journaled: true,
     description: "Cancela una orden condicional abierta.",
     schema: external_exports.object({ id: external_exports.number().int() }),
     run: async ({ id }, ctx) => cancelOrder(mid(ctx), id, ctx.sessionId)
   }),
   tool({
     name: "record_hypothetical_action",
+    kind: "misc",
+    journaled: true,
     description: "Anota en el diario cualquier acci\xF3n que har\xEDas pero que este simulador no puede ejecutar ni valorar (de cualquier tipo). No cambia tu cartera. Describe con precisi\xF3n qu\xE9 har\xEDas, con qu\xE9 par\xE1metros y qu\xE9 esperas que pase.",
     schema: external_exports.object({
       action_type: external_exports.string().describe("Nombre corto del tipo de acci\xF3n, elegido por ti"),
@@ -38972,6 +38699,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "journal_history",
+    kind: "memory",
+    researchTarget: () => void 0,
     description: "Devuelve las \xFAltimas entradas de tu diario de operaciones. Por defecto, de la misi\xF3n actual; con mission_id, las de una misi\xF3n anterior (\xFAtil para analizarla y sacar lecciones).",
     schema: external_exports.object({ limit: external_exports.number().int().min(1).max(200).default(30), mission_id: external_exports.number().int().optional() }),
     run: async ({ limit, mission_id }, ctx) => {
@@ -38983,18 +38712,23 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   // ─── Memoria a largo plazo: lecciones entre misiones ──────────────────────
   tool({
     name: "recall_lessons",
+    kind: "memory",
+    researchTarget: () => void 0,
     description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual (plazo, objetivo y enfoque): historial de misiones con su resultado, tus lecciones con su contexto y estad\xEDsticas reales de tus operaciones cerradas agrupadas por caracter\xEDsticas (antig\xFCedad y liquidez del token, si sub\xEDa mucho al comprar, si investigaste antes\u2026), en todas las misiones y en las parecidas.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(recall(ctx.missionId))
   }),
   tool({
     name: "trade_history",
+    kind: "memory",
+    researchTarget: () => void 0,
     description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos) y cu\xE1nto hab\xEDas investigado antes. Lo registra el simulador.",
     schema: external_exports.object({ mission_id: external_exports.number().int().optional(), limit: external_exports.number().int().min(1).max(200).default(50) }),
     run: async ({ mission_id, limit }) => json2(listPositions(mission_id).slice(0, limit))
   }),
   tool({
     name: "mark_mission_reviewed",
+    kind: "memory",
     description: "Da por revisada una misi\xF3n terminada cuando, tras analizarla, no aporta ninguna lecci\xF3n nueva. Si aprendiste algo, usa write_lesson.",
     schema: external_exports.object({ mission_id: external_exports.number().int(), note: external_exports.string().min(1).describe("Por qu\xE9 no hay lecciones nuevas") }),
     run: async ({ mission_id, note }, ctx) => {
@@ -39005,6 +38739,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "write_lesson",
+    kind: "memory",
+    journaled: true,
     description: "Guarda una lecci\xF3n en tu memoria a largo plazo. Se conserva entre misiones y marca la misi\xF3n como revisada. Por defecto se vincula a la misi\xF3n actual (o a la \xFAltima si no hay ninguna activa); indica mission_id para otra.",
     schema: external_exports.object({
       lesson: external_exports.string().min(1).describe("Qu\xE9 aprendiste: qu\xE9 hiciste, qu\xE9 pas\xF3 y qu\xE9 har\xEDas distinto"),
@@ -39022,6 +38758,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "delete_lesson",
+    kind: "memory",
+    journaled: true,
     description: "Borra una lecci\xF3n de tu memoria cuando los resultados la contradigan o ya no te sirva.",
     schema: external_exports.object({ id: external_exports.number().int() }),
     run: async ({ id }) => {
@@ -39032,6 +38770,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   // ─── Memoria entre sesiones y tiempo ──────────────────────────────────────
   tool({
     name: "write_note",
+    kind: "memory",
+    journaled: true,
     description: "Guarda una nota para ti mismo. Las notas se te muestran al empezar cada sesi\xF3n futura.",
     schema: external_exports.object({ text: external_exports.string() }),
     run: async ({ text: text2 }, ctx) => {
@@ -39041,6 +38781,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   }),
   tool({
     name: "delete_note",
+    kind: "memory",
+    journaled: true,
     description: "Borra una nota por su id cuando ya no sea \xFAtil.",
     schema: external_exports.object({ id: external_exports.number().int() }),
     run: async ({ id }, ctx) => {
@@ -39054,24 +38796,24 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
   const parsed = def.schema.safeParse(rawInput);
   if (!parsed.success) return { content: `Entrada no v\xE1lida: ${parsed.error.message}`, isError: true };
+  const trading = def.kind === "trade";
   const current = ctx.missionId !== null ? getMission(ctx.missionId) : void 0;
-  if (isTradingTool(name) && current?.status !== "active") {
+  if (trading && current?.status !== "active") {
     return { content: `Error: no hay ninguna misi\xF3n activa. ${(await missionStatus(ctx.missionId ?? void 0)).message ?? ""}`, isError: true };
   }
-  const unreviewed = isTradingTool(name) ? pendingReviews() : [];
+  const unreviewed = trading ? pendingReviews() : [];
   if (unreviewed.length) {
     return {
       content: `Error: antes de operar tienes que revisar ${unreviewed.length > 1 ? "las misiones" : "la misi\xF3n"} #${unreviewed.join(", #")}. Analiza qu\xE9 pas\xF3 (trade_history y journal_history con su mission_id) y guarda lo aprendido con write_lesson, o usa mark_mission_reviewed si no aporta nada nuevo.`,
       isError: true
     };
   }
-  if (RESEARCH_TOOLS.has(name)) {
-    const input2 = parsed.data;
-    logResearch(ctx.missionId, name, String(input2.mint ?? input2.url ?? input2.output ?? "") || void 0);
+  if (def.researchTarget) {
+    logResearch(ctx.missionId, name, def.researchTarget(parsed.data)?.trim() || void 0);
   }
   try {
     const content = await def.run(parsed.data, ctx);
-    if (isTradingTool(name)) {
+    if (trading) {
       const ended = await checkMission(ctx.missionId ?? void 0).catch(() => []);
       if (ended.length && typeof content === "string") return { content: `${content}
 
@@ -39080,11 +38822,379 @@ ${ended.join("\n")}`, isError: false };
     return { content, isError: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (isTradingTool(name)) {
+    if (trading) {
       logJournal({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
     }
     return { content: `Error: ${message}`, isError: true };
   }
+}
+
+// src/dashboard/timeline.ts
+var projectsDir = path5.join(os2.homedir(), ".claude", "projects");
+var TRADER_AGENT = /(^|:)trader$/;
+var normalizeTool = (name) => name.replace(/^mcp__plugin_.*?_cryptosim__/, "mcp__cryptosim__");
+var COVERED_BY_DB = new Set(SIM_TOOLS.filter((t) => t.journaled).map((t) => `mcp__cryptosim__${t.name}`));
+function resultText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((b) => b?.type === "text" ? b.text : b?.type === "image" ? "[captura de pantalla]" : "").filter(Boolean).join("\n");
+  }
+  return "";
+}
+var short = (s, n2 = 140) => {
+  const str = typeof s === "string" ? s : JSON.stringify(s ?? "");
+  return str.length > n2 ? str.slice(0, n2) + "\u2026" : str;
+};
+function describeToolUse(rawName, input2) {
+  const name = normalizeTool(rawName);
+  if (name === "ToolSearch" || name === "SubagentHandback" || COVERED_BY_DB.has(name)) return null;
+  if (name === "WebSearch") return { kind: "search", title: `Busca en internet: \xAB${input2.query}\xBB` };
+  if (name === "WebFetch") return { kind: "fetch", title: `Lee ${input2.url}` };
+  if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input2.url}` };
+  if (name === "mcp__cryptosim__start_session") return { kind: "session", title: "Empieza una sesi\xF3n de trabajo" };
+  if (name === "mcp__cryptosim__end_session") return { kind: "session", title: "Cierra la sesi\xF3n" };
+  if (name === "mcp__cryptosim__recall_lessons") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
+  if (name === "mcp__cryptosim__wait") return { kind: "tool", title: `Espera ${input2.minutes} min` };
+  if (name.startsWith("mcp__cryptosim__")) return { kind: "tool", title: `Consulta ${name.replace("mcp__cryptosim__", "").replace(/_/g, " ")}` };
+  const browser = name.match(/^mcp__Claude_Browser__(.+)$/)?.[1];
+  if (browser) {
+    switch (browser) {
+      case "navigate":
+        return { kind: "browse", title: `Abre ${input2.url}` };
+      case "get_page_text":
+      case "read_page":
+        return { kind: "browse", title: "Lee la p\xE1gina" };
+      case "find":
+        return { kind: "browse", title: `Busca en la p\xE1gina: \xAB${input2.query}\xBB` };
+      case "computer":
+        return { kind: "browse", title: `Navegador: ${input2.action}${input2.text ? ` \xAB${short(input2.text, 60)}\xBB` : ""}` };
+      case "form_input":
+        return { kind: "browse", title: "Rellena un campo de la p\xE1gina" };
+      case "javascript_tool":
+        return { kind: "browse", title: "Inspecciona la p\xE1gina con JavaScript" };
+      case "browser_batch":
+        return { kind: "browse", title: `Navegador: ${input2.actions?.length ?? "varias"} acciones seguidas` };
+      default:
+        return { kind: "browse", title: `Navegador: ${browser.replace(/_/g, " ")}` };
+    }
+  }
+  return { kind: "tool", title: name };
+}
+var fileCache = /* @__PURE__ */ new Map();
+function parseTranscript(file2) {
+  const events = [];
+  const byToolId = /* @__PURE__ */ new Map();
+  for (const line of readFileSync2(file2, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const [i, block] of content.entries()) {
+      if (entry.type === "assistant" && block.type === "text" && block.text?.trim()) {
+        events.push({ id: `${entry.uuid}:${i}`, ts: entry.timestamp, kind: "text", title: block.text.trim() });
+      } else if (entry.type === "assistant" && block.type === "tool_use") {
+        const d = describeToolUse(block.name, block.input ?? {});
+        if (!d) continue;
+        const ev = { id: block.id, ts: entry.timestamp, ...d };
+        byToolId.set(block.id, ev);
+        events.push(ev);
+      } else if (block.type === "tool_result") {
+        const ev = byToolId.get(block.tool_use_id);
+        if (!ev) continue;
+        const text2 = resultText(block.content).trim();
+        if (text2) ev.body = text2.length > 3e3 ? text2.slice(0, 3e3) + "\n\u2026" : text2;
+        if (block.is_error) ev.kind = "error";
+      }
+    }
+  }
+  return events;
+}
+function transcriptEvents(since) {
+  if (!existsSync2(projectsDir)) return [];
+  const sinceMs = new Date(since).getTime();
+  const events = [];
+  const sessionDirs = readdirSync2(projectsDir).flatMap((project) => {
+    const dir = path5.join(projectsDir, project);
+    try {
+      return readdirSync2(dir).map((s) => path5.join(dir, s, "subagents"));
+    } catch {
+      return [];
+    }
+  });
+  for (const subDir of sessionDirs) {
+    if (!existsSync2(subDir)) continue;
+    for (const f of readdirSync2(subDir)) {
+      if (!f.endsWith(".meta.json")) continue;
+      try {
+        if (!TRADER_AGENT.test(JSON.parse(readFileSync2(path5.join(subDir, f), "utf8")).agentType ?? "")) continue;
+      } catch {
+        continue;
+      }
+      const file2 = path5.join(subDir, f.replace(".meta.json", ".jsonl"));
+      if (!existsSync2(file2)) continue;
+      const st = statSync(file2);
+      if (st.mtimeMs < sinceMs) continue;
+      const cached3 = fileCache.get(file2);
+      if (cached3 && cached3.mtimeMs === st.mtimeMs && cached3.size === st.size) {
+        events.push(...cached3.events);
+        continue;
+      }
+      const parsed = parseTranscript(file2);
+      fileCache.set(file2, { mtimeMs: st.mtimeMs, size: st.size, events: parsed });
+      events.push(...parsed);
+    }
+  }
+  return events;
+}
+var JOURNAL_KIND = {
+  swap: "trade",
+  cex_order: "trade",
+  transfer: "trade",
+  order_placed: "order",
+  order_cancelled: "order",
+  order_expired: "order",
+  order_failed: "error",
+  rejected: "error",
+  hypothetical: "hypothetical",
+  mission: "mission"
+};
+function dbEvents(missionId) {
+  if (missionId === null) return [];
+  const events = [];
+  for (const a of db.prepare("SELECT id, ts, kind, title, body FROM activity WHERE mission_id = ?").all(missionId)) {
+    events.push({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: a.title, body: a.body ?? void 0 });
+  }
+  for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ?").all(missionId)) {
+    events.push({
+      id: `j${j.id}`,
+      ts: j.ts,
+      kind: JOURNAL_KIND[j.kind] ?? "tool",
+      title: j.summary,
+      note: j.reasoning ?? void 0,
+      body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : void 0
+    });
+  }
+  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons WHERE mission_id = ?").all(missionId)) {
+    events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lecci\xF3n #${l.id}, de la misi\xF3n #${l.mission_id}` : void 0 });
+  }
+  for (const n2 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
+    events.push({ id: `n${n2.id}`, ts: n2.ts, kind: "note", title: n2.text });
+  }
+  return events;
+}
+function timeline(since, missionId) {
+  return [...transcriptEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+}
+
+// src/dashboard/server.ts
+var INDEX_HTML = asset("index.html", "src/dashboard/index.html");
+var cached2 = null;
+var lastSnapshot = 0;
+var running = null;
+async function refreshValuation(log) {
+  try {
+    const mission = getActiveMission() ?? getLastMission();
+    if (!mission) {
+      cached2 = null;
+      return;
+    }
+    const record2 = mission.status === "active" && Date.now() - lastSnapshot >= 6e4;
+    cached2 = { at: (/* @__PURE__ */ new Date()).toISOString(), value: await valuation(mission.id, record2) };
+    if (record2) lastSnapshot = Date.now();
+  } catch (err) {
+    log(`Error valorando la cartera: ${err.message}`);
+  }
+}
+function state() {
+  const mission = getActiveMission() ?? getLastMission();
+  const snapshots = mission ? db.prepare("SELECT ts, total_usd FROM snapshots WHERE mission_id = ? ORDER BY ts").all(mission.id) : [];
+  return {
+    now: (/* @__PURE__ */ new Date()).toISOString(),
+    mission: mission ?? null,
+    // La valoración en caché puede ser de la misión anterior justo después de crear otra.
+    valuation: cached2 && mission && cached2.value.missionId === mission.id ? cached2.value : null,
+    valuedAt: cached2?.at ?? null,
+    orders: mission ? listOrders(mission.id, "open") : [],
+    snapshots,
+    history: missionHistory(),
+    lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all()
+  };
+}
+function send(res, status, type, body) {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
+  res.end(body);
+}
+function handler(port) {
+  return (req, res) => {
+    const url2 = new URL(req.url ?? "/", `http://localhost:${port}`);
+    try {
+      if (url2.pathname === "/") {
+        return send(res, 200, "text/html; charset=utf-8", readFileSync3(INDEX_HTML, "utf8"));
+      }
+      if (url2.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
+      if (url2.pathname === "/api/events") {
+        const mission = getActiveMission() ?? getLastMission();
+        const since = url2.searchParams.get("all") ? "1970" : mission?.created_at ?? "1970";
+        return send(res, 200, "application/json", JSON.stringify(timeline(since, mission?.id ?? null)));
+      }
+      send(res, 404, "text/plain", "No encontrado");
+    } catch (err) {
+      send(res, 500, "text/plain", err.message);
+    }
+  };
+}
+async function isOurDashboard(url2) {
+  try {
+    const res = await fetch(`${url2}/api/state`, { signal: AbortSignal.timeout(2e3) });
+    return res.ok && "mission" in await res.json();
+  } catch {
+    return false;
+  }
+}
+async function startDashboard(opts = {}) {
+  const port = opts.port ?? Number(process.env.DASHBOARD_PORT || 4321);
+  const log = opts.log ?? console.error;
+  const url2 = `http://localhost:${port}`;
+  if (running) return { url: running.url, alreadyRunning: true };
+  if (await isOurDashboard(url2)) return { url: url2, alreadyRunning: true };
+  const server2 = http.createServer(handler(port));
+  await new Promise((resolve, reject) => {
+    server2.once(
+      "error",
+      (err) => reject(err.code === "EADDRINUSE" ? new Error(`El puerto ${port} est\xE1 ocupado por otro programa. Usa otro con DASHBOARD_PORT.`) : err)
+    );
+    server2.listen(port, "127.0.0.1", resolve);
+  });
+  running = { url: url2 };
+  await refreshValuation(log);
+  setInterval(() => refreshValuation(log), 15e3).unref();
+  return { url: url2, alreadyRunning: false };
+}
+function openInBrowser(url2) {
+  const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
+  spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
+}
+
+// src/sim/session.ts
+function startSession(missionId) {
+  return Number(db.prepare("INSERT INTO sessions (started_at, mission_id) VALUES (?, ?)").run(now(), missionId).lastInsertRowid);
+}
+async function sessionBriefing(sessionId, missionId) {
+  const header = `Sesi\xF3n #${sessionId}. Fecha y hora actual: ${now()}.`;
+  if (missionId === null) return [header, "", JSON.stringify(await missionStatus(), null, 2)].join("\n");
+  const mission = getMission(missionId);
+  const portfolio = await valuation(missionId, true);
+  const notes = db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId);
+  const openOrders = listOrders(missionId, "open");
+  const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15").all(missionId);
+  const memoryLines = [];
+  {
+    const mem = recall(missionId, 8);
+    if (mem.pendingReview.length) {
+      memoryLines.push(
+        `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misi\xF3n"} #${mem.pendingReview.join(", #")} (trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.`,
+        ""
+      );
+    }
+    memoryLines.push(
+      mem.missionHistory.length ? "Tu memoria, ordenada por parecido con esta misi\xF3n (recall_lessons tiene el detalle completo):\n" + JSON.stringify(
+        { missionHistory: mem.missionHistory.slice(0, 6), lessons: mem.lessons, totalLessons: mem.totalLessons, tradeStats: mem.tradeStats },
+        null,
+        2
+      ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
+      ""
+    );
+  }
+  return [
+    header,
+    "",
+    "Misi\xF3n:",
+    JSON.stringify(await missionStatus(missionId), null, 2),
+    "",
+    ...memoryLines,
+    "Cartera:",
+    JSON.stringify(portfolio, null, 2),
+    "",
+    notes.length ? "Tus notas:\n" + notes.map((n2) => `- (id ${n2.id}, ${n2.ts}) ${n2.text}`).join("\n") : "No tienes notas guardadas.",
+    "",
+    openOrders.length ? "\xD3rdenes condicionales abiertas:\n" + JSON.stringify(openOrders, null, 2) : "No tienes \xF3rdenes condicionales abiertas.",
+    "",
+    recent.length ? "\xDAltimas entradas del diario:\n" + recent.reverse().map((j) => `- ${j.ts} [${j.kind}] ${j.summary}`).join("\n") : "El diario est\xE1 vac\xEDo: es tu primera sesi\xF3n."
+  ].join("\n");
+}
+async function endSession(sessionId, missionId, finalText, tokens) {
+  const end = missionId !== null ? await valuation(missionId, true) : null;
+  db.prepare("UPDATE sessions SET ended_at = ?, final_text = ?, input_tokens = ?, output_tokens = ? WHERE id = ?").run(
+    now(),
+    finalText,
+    tokens?.input ?? 0,
+    tokens?.output ?? 0,
+    sessionId
+  );
+  return end;
+}
+
+// src/sim/status.ts
+var usd = (n2) => `${n2.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
+var pct = (n2) => `${n2 >= 0 ? "+" : "\u2212"}${Math.abs(n2).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
+var hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+function timeLeft(deadline) {
+  const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
+  return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
+}
+async function statusReport(missionId) {
+  const m = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
+  if (!m) return "No hay ninguna misi\xF3n. Crea una con /cryptoagent:trading.";
+  const v = await valuation(m.id);
+  const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
+  const change = (current - m.initial_usd) / m.initial_usd * 100;
+  const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
+  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : "detenida por el usuario";
+  const lines = [];
+  lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
+  lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
+  lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
+  const open2 = listPositions(m.id).filter((p) => p.status === "open");
+  if (m.status === "active") {
+    const cash = v.holdings.filter((h) => ["USDC", "USDT"].includes(h.symbol)).reduce((s, h) => s + h.usd, 0);
+    lines.push("", `Posiciones (${open2.length}) \xB7 liquidez ${usd(cash)}`);
+    for (const p of open2) {
+      const h = v.holdings.find((x) => x.venue === p.venue && x.asset === p.asset);
+      const share = h && h.amount > 0 ? Math.min(1, p.qtyOpen / h.amount) : 0;
+      const now2 = (h?.usd ?? 0) * share;
+      const cost = p.openCostUsd;
+      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
+    }
+    const orders = listOrders(m.id, "open");
+    if (orders.length) {
+      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
+    }
+  }
+  const closed = listPositions(m.id).filter((p) => p.status === "closed");
+  if (closed.length) {
+    const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
+    lines.push("", `Operaciones cerradas: ${closed.length} (${wins} con beneficio)`);
+    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
+  }
+  const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE mission_id = ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.id);
+  if (recent.length) {
+    lines.push("", "\xDAltimos movimientos:");
+    for (const j of recent) {
+      const why = j.reasoning?.match(/^Por qué: (.*)$/m)?.[1];
+      lines.push(`- ${hhmm(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
+    }
+  }
+  const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2").all(m.id);
+  if (notes.length) {
+    lines.push("", "\xDAltima nota del agente:");
+    for (const n2 of notes) lines.push(`- ${hhmm(n2.ts)} ${n2.title.slice(0, 220)}`);
+  }
+  return lines.join("\n");
 }
 
 // src/mcp.ts

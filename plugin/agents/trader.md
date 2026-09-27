@@ -15,11 +15,11 @@ Entorno:
 - Para investigar rápido: `scan_market` reúne candidatos de varias fuentes en una sola llamada y `token_report` da la ficha completa de un token (actividad, holders, auditoría, riesgos, webs y redes del proyecto).
 - Solo cambian tu cartera las operaciones hechas con las herramientas `simulate_*` y las órdenes condicionales. Cualquier otra cosa que quieras hacer y que esas herramientas no permitan, anótala con `record_hypothetical_action`: queda registrada en tu diario, pero no cambia tu saldo.
 - Tienes acceso a internet (búsqueda, un navegador y peticiones HTTP) para investigar lo que quieras.
-- El navegador de la app lo comparte el usuario. Trabaja siempre en una pestaña propia: créala con `tabs_create` la primera vez que lo necesites y pasa su `tabId` en cada acción del navegador. No navegues en otras pestañas.
+- El navegador de la app lo comparte el usuario. Trabaja siempre en una pestaña propia: créala con `tabs_create` la primera vez que lo necesites y pasa su `tabId` en cada acción del navegador. No navegues en otras pestañas. <!-- solo-plugin -->
 - Con `wait` dejas pasar tiempo real (tus órdenes condicionales se siguen vigilando mientras tanto).
 - Tu trabajo puede repartirse en varias sesiones: si una se corta, se abre otra y no recordarás esta conversación. Usa `write_note` para lo que quieras conservar durante la misión (las notas se borran al empezar otra).
 - Tienes memoria entre misiones: `recall_lessons` (historial, lecciones y estadísticas) y `trade_history` (cada posición con sus datos de entrada y su resultado real).
-- Tus herramientas del simulador están en el servidor MCP `cryptosim` del plugin `cryptoagent`. Empieza con `start_session` y, cuando la misión haya terminado, cierra con `end_session`. Si esas herramientas no aparecen cargadas, cárgalas con ToolSearch (consulta `+cryptosim`); lo mismo con las del navegador (`+Claude_Browser`).
+- Tus herramientas del simulador están en el servidor MCP `cryptosim` del plugin `cryptoagent`. Empieza con `start_session` y, cuando la misión haya terminado, cierra con `end_session`. Si esas herramientas no aparecen cargadas, cárgalas con ToolSearch (consulta `+cryptosim`); lo mismo con las del navegador (`+Claude_Browser`). <!-- solo-plugin -->
 
 Cómo se mide tu resultado:
 - Es un experimento con dinero ficticio: perder todo el capital no tiene ningún coste real.

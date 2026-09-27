@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { config } from "./config.js";
+import { runMigrations } from "./migrations.js";
 
 mkdirSync(config.dataDir, { recursive: true });
 
@@ -188,6 +189,9 @@ for (const table of ["journal", "activity", "orders", "notes", "snapshots", "ses
     db.prepare("INSERT INTO meta (key, value) VALUES ('migration_mission_ids', '1')").run();
   }
 }
+
+// Cambios de esquema posteriores: migraciones versionadas (ver migrations.ts).
+runMigrations(db, config.dataDir);
 
 export const now = () => new Date().toISOString();
 

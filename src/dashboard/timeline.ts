@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { db } from "../db.js";
+import { SIM_TOOLS } from "../tools/index.js";
 
 export type EventKind =
   | "thought"
@@ -44,7 +45,7 @@ const TRADER_AGENT = /(^|:)trader$/;
 const normalizeTool = (name: string) => name.replace(/^mcp__plugin_.*?_cryptosim__/, "mcp__cryptosim__");
 
 // Herramientas del simulador cuyo efecto ya aparece en el diario o en la bitácora (se evitan duplicados).
-const COVERED_BY_DB = /^mcp__cryptosim__(simulate_|place_|cancel_order|record_hypothetical_action|log_progress|write_note|delete_note|write_lesson|delete_lesson)/;
+const COVERED_BY_DB = new Set(SIM_TOOLS.filter((t) => t.journaled).map((t) => `mcp__cryptosim__${t.name}`));
 
 function resultText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -64,7 +65,7 @@ const short = (s: unknown, n = 140) => {
 
 function describeToolUse(rawName: string, input: any): { kind: EventKind; title: string } | null {
   const name = normalizeTool(rawName);
-  if (name === "ToolSearch" || name === "SubagentHandback" || COVERED_BY_DB.test(name)) return null;
+  if (name === "ToolSearch" || name === "SubagentHandback" || COVERED_BY_DB.has(name)) return null;
   if (name === "WebSearch") return { kind: "search", title: `Busca en internet: «${input.query}»` };
   if (name === "WebFetch") return { kind: "fetch", title: `Lee ${input.url}` };
   if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input.url}` };

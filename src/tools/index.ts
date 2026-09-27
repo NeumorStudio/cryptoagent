@@ -23,8 +23,6 @@ const MAX_WAIT_MINUTES = 10;
 
 const FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 
-const isTradingTool = (name: string) => name.startsWith("simulate_") || name.endsWith("_trigger_order");
-
 const reasoning = z.string().describe("Por qué haces esto. Queda en el diario.");
 
 // Tesis obligatoria en cada operación de trading: obliga a argumentar con pruebas y fuentes.
@@ -50,22 +48,12 @@ const formatThesis = (t: z.infer<typeof thesis>) =>
 const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
 
 
-// Llamadas que cuentan como investigación para el registro de posiciones.
-const RESEARCH_TOOLS = new Set([
-  "scan_market",
-  "token_report",
-  "http_get",
-  "field_guide",
-  "quote_solana_swap",
-  "recall_lessons",
-  "trade_history",
-  "journal_history",
-]);
-
 // Herramientas del simulador: las comparten el runner por API y el servidor MCP.
 export const SIM_TOOLS = [
   tool({
     name: "scan_market",
+    kind: "research",
+    researchTarget: () => undefined,
     description:
       "Escaneo de mercado en Solana en una sola llamada: combina los tokens en tendencia de Jupiter (5 min y 1 h), los que están en directo " +
       "en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal, con sus datos clave (capitalización, liquidez, " +
@@ -75,6 +63,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "token_report",
+    kind: "research",
+    researchTarget: (i) => i.mint,
     description:
       "Ficha completa de un token de Solana en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
       "auditoría (autoridades de mint y freeze, % del creador y de los mayores holders), riesgos de RugCheck, webs y redes sociales del " +
@@ -84,6 +74,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "field_guide",
+    kind: "research",
+    researchTarget: () => undefined,
     description:
       "Guía del terreno: qué mercados puede ejecutar el simulador y cómo los simula, cómo funciona pump.fun " +
       "(curva, comisiones, graduación) y qué APIs públicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
@@ -92,6 +84,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "log_progress",
+    kind: "misc",
+    journaled: true,
     description:
       "Registro de trabajo: anota qué vas a investigar o hacer a continuación, qué has encontrado y qué decisiones tomas. " +
       "Se muestra en el panel del usuario.",
@@ -103,6 +97,7 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "mission_status",
+    kind: "misc",
     description:
       "Estado de tu misión: capital inicial, objetivo, valor actual de la cartera, cuánto falta y tiempo restante. " +
       "La misión termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
@@ -111,6 +106,7 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "wait",
+    kind: "misc",
     description:
       `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus órdenes condicionales se siguen vigilando. ` +
       "Vuelve antes si la misión termina. El tiempo también pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.",
@@ -131,6 +127,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "http_get",
+    kind: "research",
+    researchTarget: (i) => i.url,
     description: "Hace una petición HTTP GET y devuelve la respuesta en texto (útil para APIs públicas en JSON).",
     schema: z.object({ url: z.string() }),
     run: async ({ url }) => {
@@ -143,6 +141,7 @@ export const SIM_TOOLS = [
   // ─── Cartera simulada ─────────────────────────────────────────────────────
   tool({
     name: "portfolio",
+    kind: "misc",
     description:
       "Muestra tu cartera simulada y su valor en USD a precio de liquidación real ahora mismo, " +
       "el PnL desde el inicio y lo que valdría el capital inicial si se hubiera mantenido en SOL.",
@@ -151,6 +150,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "quote_solana_swap",
+    kind: "research",
+    researchTarget: (i) => i.output,
     description:
       "Cotiza un swap en Solana con Jupiter (agregador de DEX de mainnet) sin ejecutarlo. " +
       "input/output: dirección mint del token, o los alias SOL y USDC. amount en unidades del token de entrada.",
@@ -164,6 +165,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "simulate_solana_swap",
+    kind: "trade",
+    journaled: true,
     description:
       "Ejecuta en simulación un swap en tu monedero de Solana. El resultado es la cotización real de Jupiter en ese instante " +
       "(liquidez y comisiones de los pools incluidas). Se descuentan la fee de red en SOL y, si recibes un token nuevo, " +
@@ -191,6 +194,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "simulate_binance_market_order",
+    kind: "trade",
+    journaled: true,
     description:
       "Ejecuta en simulación una orden de mercado en Binance spot contra el order book real (precio medio y slippage reales, " +
       "comisión taker incluida). BUY: amount = cantidad del activo quote a gastar. SELL: amount = cantidad del activo base a vender. " +
@@ -201,6 +206,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "simulate_transfer",
+    kind: "trade",
+    journaled: true,
     description:
       "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulación. " +
       "De Solana a Binance se paga la fee de red; de Binance a Solana, la comisión de retirada de Binance.",
@@ -209,6 +216,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "place_solana_trigger_order",
+    kind: "trade",
+    journaled: true,
     description:
       "Deja una orden condicional en Solana: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, " +
       "below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotización real de ese instante. " +
@@ -242,6 +251,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "place_binance_trigger_order",
+    kind: "trade",
+    journaled: true,
     description:
       "Deja una orden condicional en Binance: cuando el último precio de trigger_symbol cruce trigger_price, se ejecuta la orden de mercado " +
       "indicada contra el order book real de ese instante. Funciona aunque no estés en sesión; se comprueba aproximadamente cada minuto. " +
@@ -273,18 +284,23 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "list_orders",
+    kind: "misc",
     description: "Lista tus órdenes condicionales: abiertas, cerradas (ejecutadas, fallidas, canceladas, caducadas) o todas.",
     schema: z.object({ status: z.enum(["open", "closed", "all"]).default("open") }),
     run: async ({ status }, ctx) => json(orders.listOrders(mid(ctx), status)),
   }),
   tool({
     name: "cancel_order",
+    kind: "misc",
+    journaled: true,
     description: "Cancela una orden condicional abierta.",
     schema: z.object({ id: z.number().int() }),
     run: async ({ id }, ctx) => orders.cancelOrder(mid(ctx), id, ctx.sessionId),
   }),
   tool({
     name: "record_hypothetical_action",
+    kind: "misc",
+    journaled: true,
     description:
       "Anota en el diario cualquier acción que harías pero que este simulador no puede ejecutar ni valorar " +
       "(de cualquier tipo). No cambia tu cartera. Describe con precisión qué harías, con qué parámetros y qué esperas que pase.",
@@ -309,6 +325,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "journal_history",
+    kind: "memory",
+    researchTarget: () => undefined,
     description:
       "Devuelve las últimas entradas de tu diario de operaciones. Por defecto, de la misión actual; " +
       "con mission_id, las de una misión anterior (útil para analizarla y sacar lecciones).",
@@ -323,6 +341,8 @@ export const SIM_TOOLS = [
   // ─── Memoria a largo plazo: lecciones entre misiones ──────────────────────
   tool({
     name: "recall_lessons",
+    kind: "memory",
+    researchTarget: () => undefined,
     description:
       "Tu memoria entre misiones, ordenada por parecido con la misión actual (plazo, objetivo y enfoque): historial de misiones con su " +
       "resultado, tus lecciones con su contexto y estadísticas reales de tus operaciones cerradas agrupadas por características " +
@@ -332,6 +352,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "trade_history",
+    kind: "memory",
+    researchTarget: () => undefined,
     description:
       "Tus posiciones (de la misión indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al " +
       "entrar (antigüedad, liquidez, variación, holders, riesgos) y cuánto habías investigado antes. Lo registra el simulador.",
@@ -340,6 +362,7 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "mark_mission_reviewed",
+    kind: "memory",
     description:
       "Da por revisada una misión terminada cuando, tras analizarla, no aporta ninguna lección nueva. Si aprendiste algo, usa write_lesson.",
     schema: z.object({ mission_id: z.number().int(), note: z.string().min(1).describe("Por qué no hay lecciones nuevas") }),
@@ -351,6 +374,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "write_lesson",
+    kind: "memory",
+    journaled: true,
     description:
       "Guarda una lección en tu memoria a largo plazo. Se conserva entre misiones y marca la misión como revisada. " +
       "Por defecto se vincula a la misión actual (o a la última si no hay ninguna activa); indica mission_id para otra.",
@@ -372,6 +397,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "delete_lesson",
+    kind: "memory",
+    journaled: true,
     description: "Borra una lección de tu memoria cuando los resultados la contradigan o ya no te sirva.",
     schema: z.object({ id: z.number().int() }),
     run: async ({ id }) => {
@@ -383,6 +410,8 @@ export const SIM_TOOLS = [
   // ─── Memoria entre sesiones y tiempo ──────────────────────────────────────
   tool({
     name: "write_note",
+    kind: "memory",
+    journaled: true,
     description: "Guarda una nota para ti mismo. Las notas se te muestran al empezar cada sesión futura.",
     schema: z.object({ text: z.string() }),
     run: async ({ text }, ctx) => {
@@ -392,6 +421,8 @@ export const SIM_TOOLS = [
   }),
   tool({
     name: "delete_note",
+    kind: "memory",
+    journaled: true,
     description: "Borra una nota por su id cuando ya no sea útil.",
     schema: z.object({ id: z.number().int() }),
     run: async ({ id }, ctx) => {
@@ -413,12 +444,13 @@ export async function runTool(
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
   const parsed = def.schema.safeParse(rawInput);
   if (!parsed.success) return { content: `Entrada no válida: ${parsed.error.message}`, isError: true };
+  const trading = def.kind === "trade";
   const current = ctx.missionId !== null ? mission.getMission(ctx.missionId) : undefined;
-  if (isTradingTool(name) && current?.status !== "active") {
+  if (trading && current?.status !== "active") {
     return { content: `Error: no hay ninguna misión activa. ${(await mission.missionStatus(ctx.missionId ?? undefined)).message ?? ""}`, isError: true };
   }
   // Ciclo de aprendizaje: no se opera sin haber revisado antes la misión anterior.
-  const unreviewed = isTradingTool(name) ? memory.pendingReviews() : [];
+  const unreviewed = trading ? memory.pendingReviews() : [];
   if (unreviewed.length) {
     return {
       content:
@@ -428,13 +460,12 @@ export async function runTool(
       isError: true,
     };
   }
-  if (RESEARCH_TOOLS.has(name)) {
-    const input = parsed.data as Record<string, unknown>;
-    positions.logResearch(ctx.missionId, name, String(input.mint ?? input.url ?? input.output ?? "") || undefined);
+  if (def.researchTarget) {
+    positions.logResearch(ctx.missionId, name, (def.researchTarget as (i: unknown) => string | undefined)(parsed.data)?.trim() || undefined);
   }
   try {
     const content = await (def.run as (i: unknown, c: typeof ctx) => Promise<ToolOutput>)(parsed.data, ctx);
-    if (isTradingTool(name)) {
+    if (trading) {
       // Tras cada operación se comprueba si ya se ha alcanzado el objetivo.
       const ended = await mission.checkMission(ctx.missionId ?? undefined).catch(() => []);
       if (ended.length && typeof content === "string") return { content: `${content}\n\n${ended.join("\n")}`, isError: false };
@@ -442,7 +473,7 @@ export async function runTool(
     return { content, isError: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (isTradingTool(name)) {
+    if (trading) {
       logJournal({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
     }
     return { content: `Error: ${message}`, isError: true };

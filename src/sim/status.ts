@@ -1,5 +1,6 @@
 // Resumen de la misión en texto, pensado para leerse en el chat (también desde el móvil con Remote Control).
 import { db } from "../db.js";
+import { listCapabilityRequests } from "./memory.js";
 import { getActiveMission, getLastMission, getMission } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
@@ -79,6 +80,19 @@ export async function statusReport(missionId?: number): Promise<string> {
   if (notes.length) {
     lines.push("", "Última nota del agente:");
     for (const n of notes) lines.push(`- ${hhmm(n.ts)} ${n.title.slice(0, 220)}`);
+  }
+
+  // Lo último del revisor (el agente que escribe la memoria).
+  const review = db
+    .prepare("SELECT ts, title, body FROM activity WHERE kind = 'review' AND mission_id = ? ORDER BY id DESC LIMIT 1")
+    .get(m.id) as { ts: string; title: string; body: string | null } | undefined;
+  if (review) lines.push("", `Revisor (${hhmm(review.ts)}): ${review.title}${review.body ? ` · ${review.body.slice(0, 200)}` : ""}`);
+
+  // Capacidades que el agente ha pedido y el usuario aún no ha contestado.
+  const requests = listCapabilityRequests("open");
+  if (requests.length) {
+    lines.push("", `El agente pide (${requests.length}, revísalas con /cryptoagent:peticiones):`);
+    for (const r of requests.slice(0, 3)) lines.push(`- ${r.capability}${r.times_requested > 1 ? ` (${r.times_requested} veces)` : ""}`);
   }
   return lines.join("\n");
 }

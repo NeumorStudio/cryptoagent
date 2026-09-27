@@ -24,7 +24,10 @@ export interface TradeMeta {
   /** Motivo de cierre cuando no lo decide el agente (orden condicional, fin de misión…). */
   exitReason?: string;
   thesis?: string;
+  /** Cómo aplica el agente su memoria en esta operación (texto libre). */
   lessonsApplied?: string;
+  /** Ids de las creencias que aplica: el simulador mide con ellos cómo le va a cada creencia. */
+  beliefsApplied?: number[];
 }
 
 /**

@@ -16,6 +16,7 @@ interface PositionRow {
   research: string | null;
   thesis: string | null;
   lessons_applied: string | null;
+  beliefs_applied: string | null;
 }
 
 /** Cuánto investigó el agente antes de esta entrada (solo herramientas del simulador). */
@@ -49,7 +50,7 @@ async function openOrAdd(args: {
   /** Datos del token al entrar (solo si es una posición nueva). */
   features?: () => Promise<Features>;
   /** Posición que llega de otro sitio: conserva sus datos de entrada, investigación y tesis. */
-  inherit?: Pick<PositionRow, "entry_features" | "research" | "thesis" | "lessons_applied">;
+  inherit?: Pick<PositionRow, "entry_features" | "research" | "thesis" | "lessons_applied" | "beliefs_applied">;
 }) {
   const missionId = args.missionId;
   const existing = db
@@ -68,8 +69,8 @@ async function openOrAdd(args: {
     : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
   const research = args.inherit ? args.inherit.research : JSON.stringify(researchSnapshot(missionId, args.asset));
   db.prepare(
-    `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     missionId,
     args.venue,
@@ -82,6 +83,7 @@ async function openOrAdd(args: {
     research,
     args.inherit ? args.inherit.thesis : (args.meta?.thesis ?? null),
     args.inherit ? args.inherit.lessons_applied : (args.meta?.lessonsApplied ?? null),
+    args.inherit ? args.inherit.beliefs_applied : args.meta?.beliefsApplied?.length ? JSON.stringify(args.meta.beliefsApplied) : null,
   );
 }
 
@@ -212,6 +214,7 @@ export function listPositions(missionId?: number) {
       research: JSON.parse(p.research ?? "{}"),
       thesis: p.thesis,
       lessonsApplied: p.lessons_applied,
+      beliefsApplied: JSON.parse(p.beliefs_applied ?? "[]") as number[],
     };
   });
 }

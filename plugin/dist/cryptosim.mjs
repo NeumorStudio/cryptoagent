@@ -2800,11 +2800,11 @@ var require_validate = __commonJS({
         jsonPointer = $data;
         data = names_1.default.rootData;
       } else {
-        const matches = RELATIVE_JSON_POINTER.exec($data);
-        if (!matches)
+        const matches2 = RELATIVE_JSON_POINTER.exec($data);
+        if (!matches2)
           throw new Error(`Invalid JSON-pointer: ${$data}`);
-        const up = +matches[1];
-        jsonPointer = matches[2];
+        const up = +matches2[1];
+        jsonPointer = matches2[2];
         if (jsonPointer === "#") {
           if (up >= dataLevel)
             throw new Error(errorMsg("property/index", up));
@@ -3691,11 +3691,11 @@ var require_schemes = __commonJS({
         urnComponent.error = "URN can not be parsed";
         return urnComponent;
       }
-      const matches = urnComponent.path.match(URN_REG);
-      if (matches && matches[0] === urnComponent.path) {
+      const matches2 = urnComponent.path.match(URN_REG);
+      if (matches2 && matches2[0] === urnComponent.path) {
         const scheme = options.scheme || urnComponent.scheme || "urn";
-        urnComponent.nid = matches[1].toLowerCase();
-        urnComponent.nss = matches[2];
+        urnComponent.nid = matches2[1].toLowerCase();
+        urnComponent.nss = matches2[2];
         const urnScheme = `${scheme}:${options.nid || urnComponent.nid}`;
         const schemeHandler = getSchemeHandler(urnScheme);
         urnComponent.path = void 0;
@@ -4009,8 +4009,8 @@ var require_fast_uri = __commonJS({
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
     var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
     var AUTHORITY_INTRODUCER_REGION = /^(?:[^#/:?]+:)?([/\\\t\n\r]*)/;
-    function getParseError(parsed, matches) {
-      if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
+    function getParseError(parsed, matches2) {
+      if (matches2[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
         return 'URI path must start with "/" when authority is present.';
       }
       if (typeof parsed.port === "number" && (parsed.port < 0 || parsed.port > 65535)) {
@@ -4032,9 +4032,9 @@ var require_fast_uri = __commonJS({
     function isIPLiteral(host) {
       return host[0] === "[" && host[host.length - 1] === "]";
     }
-    function hasMalformedComponentPercentEncoding(matches) {
-      const host = matches[4];
-      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
+    function hasMalformedComponentPercentEncoding(matches2) {
+      const host = matches2[4];
+      return hasMalformedPercentEncoding(matches2[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches2[6]) || hasMalformedPercentEncoding(matches2[7]) || hasMalformedPercentEncoding(matches2[8]);
     }
     function canonicalizeHost(parsed, options, schemeHandler, isIP) {
       if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && !isIPLiteral(parsed.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
@@ -4091,15 +4091,15 @@ var require_fast_uri = __commonJS({
           }
         }
       }
-      const matches = uri.match(URI_PARSE);
-      if (matches) {
-        parsed.scheme = matches[1];
-        parsed.userinfo = matches[3];
-        parsed.host = matches[4];
-        parsed.port = parseInt(matches[5], 10);
-        parsed.path = matches[6] || "";
-        parsed.query = matches[7];
-        parsed.fragment = matches[8];
+      const matches2 = uri.match(URI_PARSE);
+      if (matches2) {
+        parsed.scheme = matches2[1];
+        parsed.userinfo = matches2[3];
+        parsed.host = matches2[4];
+        parsed.port = parseInt(matches2[5], 10);
+        parsed.path = matches2[6] || "";
+        parsed.query = matches2[7];
+        parsed.fragment = matches2[8];
         if (parsed.scheme !== void 0) {
           const decodedScheme = unescape(parsed.scheme);
           if (VALID_SCHEME.test(decodedScheme)) {
@@ -4109,14 +4109,14 @@ var require_fast_uri = __commonJS({
             malformedScheme = true;
           }
         }
-        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches);
+        malformedPercentEncoding = hasMalformedComponentPercentEncoding(matches2);
         if (malformedPercentEncoding) {
           parsed.error = parsed.error || "URI contains malformed percent-encoding.";
         }
         if (isNaN(parsed.port)) {
-          parsed.port = matches[5];
+          parsed.port = matches2[5];
         }
-        const parseError = getParseError(parsed, matches);
+        const parseError = getParseError(parsed, matches2);
         if (parseError !== void 0) {
           parsed.error = parsed.error || parseError;
           malformedAuthorityOrPort = true;
@@ -6966,12 +6966,12 @@ var require_formats = __commonJS({
     var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
     var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     function date5(str) {
-      const matches = DATE.exec(str);
-      if (!matches)
+      const matches2 = DATE.exec(str);
+      if (!matches2)
         return false;
-      const year = +matches[1];
-      const month = +matches[2];
-      const day = +matches[3];
+      const year = +matches2[1];
+      const month = +matches2[2];
+      const day = +matches2[3];
       return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
     }
     function compareDate(d1, d2) {
@@ -6986,16 +6986,16 @@ var require_formats = __commonJS({
     var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
     function getTime(strictTimeZone) {
       return function time3(str) {
-        const matches = TIME.exec(str);
-        if (!matches)
+        const matches2 = TIME.exec(str);
+        if (!matches2)
           return false;
-        const hr = +matches[1];
-        const min = +matches[2];
-        const sec = +matches[3];
-        const tz = matches[4];
-        const tzSign = matches[5] === "-" ? -1 : 1;
-        const tzH = +(matches[6] || 0);
-        const tzM = +(matches[7] || 0);
+        const hr = +matches2[1];
+        const min = +matches2[2];
+        const sec = +matches2[3];
+        const tz = matches2[4];
+        const tzSign = matches2[5] === "-" ? -1 : 1;
+        const tzH = +(matches2[6] || 0);
+        const tzM = +(matches2[7] || 0);
         if (tzH > 23 || tzM > 59 || strictTimeZone && !tz)
           return false;
         if (hr <= 23 && min <= 59 && sec < 60)
@@ -14988,16 +14988,16 @@ var $ZodUnion = /* @__PURE__ */ $constructor("$ZodUnion", (inst, def) => {
   };
 });
 function handleExclusiveUnionResults(results, final, inst, ctx) {
-  const matches = [];
+  const matches2 = [];
   for (let i = 0; i < results.length; i++) {
     if (results[i].issues.length === 0)
-      matches.push(i);
+      matches2.push(i);
   }
-  if (matches.length === 1) {
-    final.value = results[matches[0]].value;
+  if (matches2.length === 1) {
+    final.value = results[matches2[0]].value;
     return final;
   }
-  if (matches.length === 0) {
+  if (matches2.length === 0) {
     final.issues.push({
       code: "invalid_union",
       input: final.value,
@@ -15011,7 +15011,7 @@ function handleExclusiveUnionResults(results, final, inst, ctx) {
       inst,
       errors: [],
       inclusive: false,
-      matches
+      matches: matches2
     });
   }
   return final;
@@ -30854,20 +30854,20 @@ function checkArrayGuards(arraySchema, guards) {
     if (guards.containsSchema) {
       const minContains = guards.minContains ?? 1;
       const ceiling = guards.maxContains !== void 0 ? guards.maxContains + 1 : Number.POSITIVE_INFINITY;
-      let matches = 0;
+      let matches2 = 0;
       for (const item of items) {
-        if (guards.containsSchema.safeParse(item).success && ++matches >= ceiling)
+        if (guards.containsSchema.safeParse(item).success && ++matches2 >= ceiling)
           break;
       }
-      if (matches < minContains) {
+      if (matches2 < minContains) {
         payload.issues.push({
           code: "custom",
-          message: `Array must contain at least ${minContains} matching ${plural(minContains)}; found ${matches}`,
+          message: `Array must contain at least ${minContains} matching ${plural(minContains)}; found ${matches2}`,
           input: items,
           continue: true
         });
       }
-      if (guards.maxContains !== void 0 && matches > guards.maxContains) {
+      if (guards.maxContains !== void 0 && matches2 > guards.maxContains) {
         payload.issues.push({
           code: "custom",
           message: `Array must contain at most ${guards.maxContains} matching ${plural(guards.maxContains)}`,
@@ -36929,13 +36929,182 @@ var config2 = {
 // src/migrations.ts
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import path3 from "node:path";
+
+// src/sim/text.ts
+var STOPWORDS = new Set(
+  "de la el en y a los las del que un una por con para se al lo como mas pero sus le ya o este esta si porque muy sin sobre tambien me hasta hay donde quien desde todo nos durante todos uno les ni contra otros ese eso ante ellos e esto mi antes algunos que unos yo otro otras otra el tanto esa estos mucho quienes nada muchos cual poco ella estar estas algunas algo nosotros es son fue ser han hace hacer cuando no su sus mas menos entre tras".split(" ")
+);
+function fingerprint(text2) {
+  const words = text2.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOPWORDS.has(w));
+  return [...new Set(words)].sort().join(" ");
+}
+function similarity(a, b) {
+  const x = new Set(a.split(" ").filter(Boolean));
+  const y = new Set(b.split(" ").filter(Boolean));
+  if (!x.size || !y.size) return 0;
+  let common = 0;
+  for (const w of x) if (y.has(w)) common++;
+  return common / (x.size + y.size - common);
+}
+var DUPLICATE_THRESHOLD = 0.6;
+function lessonRefs(text2) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const m of text2.matchAll(/lecci[oó]n(?:es)?\s*#?\s*(\d+(?:\s*(?:,|y|e|\/)\s*#?\d+)*)/gi)) {
+    for (const n2 of m[1].matchAll(/\d+/g)) ids.add(Number(n2[0]));
+  }
+  return [...ids];
+}
+
+// src/migrations.ts
 var MIGRATIONS = [
   {
     version: 1,
     description: "Cupos de peticiones por servicio (APIs con l\xEDmite por ventana de tiempo)",
     up: (db2) => db2.exec("CREATE TABLE IF NOT EXISTS http_budget (host TEXT PRIMARY KEY, window_start INTEGER NOT NULL, used INTEGER NOT NULL)")
+  },
+  {
+    version: 2,
+    description: "Memoria de tres tipos (howtos, creencias, retrospectivas) escrita por el agente revisor",
+    up: memoryV2
   }
 ];
+function memoryV2(db2) {
+  db2.exec(`
+    CREATE TABLE howtos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      scope TEXT NOT NULL,            -- cadena o exchange al que se aplica, o 'any'
+      topic TEXT NOT NULL,
+      title TEXT NOT NULL,
+      steps TEXT NOT NULL,
+      source_mission_id INTEGER,
+      fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',   -- 'active' | 'obsolete'
+      superseded_by INTEGER,
+      from_belief_id INTEGER
+    );
+    CREATE TABLE beliefs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      source_mission_id INTEGER,
+      statement TEXT NOT NULL,
+      applies_to TEXT NOT NULL,
+      expectation TEXT,               -- con condici\xF3n: 'positive' (tiende a ganar) | 'negative' (tiende a perder)
+      condition TEXT,                 -- JSON: {"all":[{"f":"ageMinutes","op":"<","v":30}]}
+      fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',   -- 'active' | 'retired' | 'converted'
+      status_reason TEXT,
+      origin TEXT NOT NULL DEFAULT 'reviewer', -- 'reviewer' | 'migrated'
+      legacy_evidence TEXT
+    );
+    CREATE TABLE mission_reviews (
+      mission_id INTEGER PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      origin TEXT NOT NULL DEFAULT 'reviewer', -- 'reviewer' | 'legacy'
+      what_was_tried TEXT NOT NULL,
+      what_happened TEXT NOT NULL,
+      surprises TEXT,
+      next_time TEXT NOT NULL
+    );
+    -- Revisiones a mitad de misi\xF3n: marcan hasta d\xF3nde ha revisado el revisor.
+    CREATE TABLE review_checkpoints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      mission_id INTEGER NOT NULL,
+      summary TEXT NOT NULL
+    );
+    -- Lo que el revisor quiere que el agente tenga presente en una misi\xF3n. seen_at: cu\xE1ndo lo recibi\xF3 el agente.
+    CREATE TABLE briefings (
+      mission_id INTEGER PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      text TEXT NOT NULL,
+      seen_at TEXT
+    );
+    -- Observaciones del agente que opera para el revisor, que decide si pasan a la memoria.
+    CREATE TABLE observations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      mission_id INTEGER,
+      session_id INTEGER,
+      kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'used' | 'dismissed'
+      resolved_at TEXT,
+      resolution TEXT
+    );
+    -- Errores de las herramientas, capturados por el simulador.
+    CREATE TABLE tool_errors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      mission_id INTEGER,
+      session_id INTEGER,
+      tool TEXT NOT NULL,
+      venue TEXT,
+      error_class TEXT NOT NULL,
+      message TEXT NOT NULL,
+      input TEXT,
+      howto_id INTEGER
+    );
+    CREATE INDEX tool_errors_class ON tool_errors (error_class, ts);
+    -- Qu\xE9 APIs responden: lo mide http_get en cada llamada del agente.
+    CREATE TABLE api_observations (
+      host TEXT NOT NULL,
+      path TEXT NOT NULL,
+      ok INTEGER NOT NULL DEFAULT 0,
+      fail INTEGER NOT NULL DEFAULT 0,
+      last_status INTEGER,
+      last_ok_at TEXT,
+      last_fail_at TEXT,
+      PRIMARY KEY (host, path)
+    );
+    -- Capacidades que el agente echa en falta (una cuenta, una herramienta, otro mercado\u2026), para que el
+    -- usuario decida si se las da. Las peticiones parecidas se agrupan y se cuentan.
+    CREATE TABLE capability_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      source TEXT NOT NULL,             -- 'trader' | 'reviewer'
+      category TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      why TEXT NOT NULL,
+      plan TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      times_requested INTEGER NOT NULL DEFAULT 1,
+      missions TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'accepted' | 'rejected' | 'done'
+      response TEXT
+    );
+    ALTER TABLE positions ADD COLUMN beliefs_applied TEXT;
+  `);
+  const lessons = db2.prepare("SELECT id, created_at, mission_id, text, applies_to, evidence, confidence FROM lessons ORDER BY id").all();
+  const insertBelief = db2.prepare(
+    `INSERT INTO beliefs (id, created_at, updated_at, source_mission_id, statement, applies_to, fingerprint, origin, legacy_evidence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'migrated', ?)`
+  );
+  for (const l of lessons) {
+    const evidence = [l.evidence, l.confidence ? `(confianza que declar\xF3 el agente: ${l.confidence})` : null].filter(Boolean).join(" ");
+    insertBelief.run(l.id, l.created_at, l.created_at, l.mission_id, l.text, l.applies_to ?? "(sin especificar)", fingerprint(l.text), evidence || null);
+  }
+  const reviewed = db2.prepare("SELECT id, reviewed_at FROM missions WHERE reviewed_at IS NOT NULL").all();
+  const insertReview = db2.prepare(
+    "INSERT INTO mission_reviews (mission_id, created_at, origin, what_was_tried, what_happened, next_time) VALUES (?, ?, 'legacy', ?, ?, ?)"
+  );
+  for (const m of reviewed) {
+    const ids = lessons.filter((l) => l.mission_id === m.id).map((l) => `#${l.id}`);
+    const note = ids.length ? `Revisada antes de existir el revisor: lo aprendido est\xE1 en las creencias ${ids.join(", ")}.` : "Revisada antes de existir el revisor, sin lecciones.";
+    insertReview.run(m.id, m.reviewed_at, note, note, ids.length ? `Ver las creencias ${ids.join(", ")}.` : "-");
+  }
+  const known = new Set(lessons.map((l) => l.id));
+  const positions = db2.prepare("SELECT id, lessons_applied FROM positions WHERE lessons_applied IS NOT NULL").all();
+  const setApplied = db2.prepare("UPDATE positions SET beliefs_applied = ? WHERE id = ?");
+  for (const p of positions) {
+    const ids = lessonRefs(p.lessons_applied).filter((id) => known.has(id));
+    if (ids.length) setApplied.run(JSON.stringify(ids), p.id);
+  }
+}
 var MAX_BACKUPS = 10;
 var schemaVersion = (db2) => db2.prepare("PRAGMA user_version").get().user_version;
 function hasUserData(db2) {
@@ -37156,7 +37325,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.8.0";
+var CODE_VERSION = "0.9.0";
 var semver = (v) => v.split(".").map((n2) => Number.parseInt(n2, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -37823,8 +37992,8 @@ async function openOrAdd(args) {
   const features = args.inherit ? args.inherit.entry_features : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
   const research = args.inherit ? args.inherit.research : JSON.stringify(researchSnapshot(missionId, args.asset));
   db.prepare(
-    `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     missionId,
     args.venue,
@@ -37836,7 +38005,8 @@ async function openOrAdd(args) {
     features,
     research,
     args.inherit ? args.inherit.thesis : args.meta?.thesis ?? null,
-    args.inherit ? args.inherit.lessons_applied : args.meta?.lessonsApplied ?? null
+    args.inherit ? args.inherit.lessons_applied : args.meta?.lessonsApplied ?? null,
+    args.inherit ? args.inherit.beliefs_applied : args.meta?.beliefsApplied?.length ? JSON.stringify(args.meta.beliefsApplied) : null
   );
 }
 function reduce(args) {
@@ -37930,7 +38100,8 @@ function listPositions(missionId) {
       entry: JSON.parse(p.entry_features ?? "{}"),
       research: JSON.parse(p.research ?? "{}"),
       thesis: p.thesis,
-      lessonsApplied: p.lessons_applied
+      lessonsApplied: p.lessons_applied,
+      beliefsApplied: JSON.parse(p.beliefs_applied ?? "[]")
     };
   });
 }
@@ -38360,7 +38531,7 @@ function activeMissions() {
 }
 function missionHistory() {
   const rows = db.prepare(
-    `SELECT m.*, (SELECT COUNT(*) FROM lessons l WHERE l.mission_id = m.id) AS lessons
+    `SELECT m.*, (SELECT r.origin FROM mission_reviews r WHERE r.mission_id = m.id) AS review_origin
        FROM missions m WHERE m.status NOT IN ('active', 'closing') ORDER BY m.id`
   ).all();
   return rows.map((m) => {
@@ -38375,7 +38546,7 @@ function missionHistory() {
       finalUsd: m.final_usd === null ? null : Number(m.final_usd.toFixed(2)),
       resultPct: m.final_usd === null ? null : Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(2)),
       outcome: m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no lleg\xF3 al objetivo" : "cancelada",
-      lessonsWritten: m.lessons
+      reviewed: m.review_origin !== null || m.reviewed_at !== null
     };
   });
 }
@@ -38501,14 +38672,6 @@ async function checkMission(missionId) {
   return results.flat();
 }
 
-// src/dashboard/timeline.ts
-import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, statSync } from "node:fs";
-import os2 from "node:os";
-import path5 from "node:path";
-
-// src/tools/index.ts
-import { readFileSync } from "node:fs";
-
 // src/sim/memory.ts
 function profile(m) {
   return {
@@ -38522,26 +38685,95 @@ function distance(a, b) {
 }
 var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
 var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
+var CONDITION_FIELDS = [
+  "venue",
+  "ageMinutes",
+  "liquidityUsd",
+  "mcapUsd",
+  "priceChange5mPct",
+  "priceChange1hPct",
+  "holders",
+  "topHoldersPct",
+  "netBuyers5m",
+  "organicScore",
+  "launchpad",
+  "rugcheckDangerRisks",
+  "rugcheckWarnRisks",
+  "buyTaxPct",
+  "sellTaxPct",
+  "honeypot",
+  "mintable",
+  "tokenReportBeforeBuying",
+  "researchCallsSinceLastTrade",
+  "minutesIntoMission"
+];
+var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
+var RESEARCH_FIELDS = /* @__PURE__ */ new Set(["tokenReportBeforeBuying", "researchCallsSinceLastTrade", "minutesIntoMission"]);
+function fieldValue(p, f) {
+  if (f === "venue") return p.entry.venue ?? p.venue;
+  return RESEARCH_FIELDS.has(f) ? p.research[f] : p.entry[f];
+}
+function matches(cond, p) {
+  return cond.all.every(({ f, op, v }) => {
+    const x = fieldValue(p, f);
+    if (x === void 0 || x === null) return false;
+    switch (op) {
+      case "=":
+        return x === v;
+      case "!=":
+        return x !== v;
+      default:
+        if (typeof x !== "number" || typeof v !== "number") return false;
+        return op === "<" ? x < v : op === "<=" ? x <= v : op === ">" ? x > v : x >= v;
+    }
+  });
+}
+var describeCondition = (c) => c.all.map(({ f, op, v }) => `${f} ${op} ${JSON.stringify(v)}`).join(" y ");
+var outcome = (p) => (p.pnlPct ?? 0) >= 1 ? "win" : (p.pnlPct ?? 0) <= -1 ? "loss" : "flat";
+function summarizeTrades(ps) {
+  if (!ps.length) return { trades: 0 };
+  const avg = ps.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / ps.length;
+  return {
+    trades: ps.length,
+    wins: ps.filter((p) => outcome(p) === "win").length,
+    losses: ps.filter((p) => outcome(p) === "loss").length,
+    avgPnlPct: Number(avg.toFixed(1)),
+    positionIds: ps.map((p) => p.id)
+  };
+}
+function beliefEvidence(b, closed) {
+  const applied = summarizeTrades(closed.filter((p) => p.beliefsApplied.includes(b.id)));
+  const cond = b.condition ? JSON.parse(b.condition) : null;
+  let matched;
+  let verdict = applied.trades ? `sin condici\xF3n; aplicada en ${applied.trades} operaciones: ${applied.wins} ganadas, ${applied.losses} perdidas (media ${applied.avgPnlPct} %)` : "sin condici\xF3n y todav\xEDa sin operaciones que la apliquen";
+  if (cond) {
+    const ps = closed.filter((p) => matches(cond, p));
+    const wins = ps.filter((p) => outcome(p) === "win").length;
+    const losses = ps.filter((p) => outcome(p) === "loss").length;
+    const [inFavor, against] = b.expectation === "negative" ? [losses, wins] : [wins, losses];
+    const decided = inFavor + against;
+    const support = decided ? Math.round(inFavor / decided * 100) : null;
+    matched = { ...summarizeTrades(ps), inFavor, against, supportPct: support };
+    verdict = decided < 3 ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)` : support >= 60 ? `se sostiene (${inFavor} a favor, ${against} en contra)` : support <= 40 ? `los datos la contradicen (${inFavor} a favor, ${against} en contra)` : `dudosa (${inFavor} a favor, ${against} en contra)`;
+  }
+  return { verdict, appliedIn: applied, ...matched ? { matchingTrades: matched } : {} };
+}
+function beliefView(b, closed) {
+  const cond = b.condition ? JSON.parse(b.condition) : null;
+  return {
+    id: b.id,
+    statement: b.statement,
+    appliesTo: b.applies_to,
+    ...cond ? { condition: describeCondition(cond), expectation: b.expectation === "negative" ? "tiende a perder" : "tiende a ganar" } : {},
+    evidence: beliefEvidence(b, closed),
+    ...b.legacy_evidence ? { evidenceWrittenByTrader: b.legacy_evidence } : {},
+    sourceMission: b.source_mission_id,
+    status: b.status,
+    ...b.status_reason ? { statusReason: b.status_reason } : {}
+  };
+}
 function finishedMissions() {
   return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
-}
-function pendingReviews() {
-  return db.prepare(
-    `SELECT m.id FROM missions m
-         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
-           AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
-         ORDER BY m.id`
-  ).all().map((r) => r.id);
-}
-function markReviewed(missionId) {
-  db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
-}
-function summarize(label, ps) {
-  const closed = ps.filter((p) => p.pnlPct !== null);
-  if (!closed.length) return null;
-  const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
-  const avg = closed.reduce((s, p) => s + (p.pnlPct ?? 0), 0) / closed.length;
-  return { group: label, trades: closed.length, winRatePct: Math.round(wins / closed.length * 100), avgPnlPct: Number(avg.toFixed(1)) };
 }
 function tradeStats(ps) {
   const groups = [
@@ -38557,49 +38789,389 @@ function tradeStats(ps) {
     ["con riesgos 'danger' en RugCheck", (p) => (p.entry.rugcheckDangerRisks ?? 0) > 0],
     ["cerradas por fin de misi\xF3n", (p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")]
   ];
-  return groups.map(([label, fn]) => summarize(label, ps.filter(fn))).filter(Boolean);
+  return groups.map(([label, fn]) => {
+    const s = summarizeTrades(ps.filter(fn));
+    return s.trades ? { group: label, trades: s.trades, wins: s.wins, losses: s.losses, avgPnlPct: s.avgPnlPct } : null;
+  }).filter(Boolean);
 }
-function recall(missionId, limitLessons) {
+var closedPositions = () => listPositions().filter((p) => p.status === "closed");
+function recall(missionId, limit) {
   const current = (missionId ? getMission(missionId) : void 0) ?? getActiveMission() ?? getLastMission();
   const curProfile = current ? profile(current) : null;
-  const history = finishedMissions().filter((m) => m.id !== current?.id || m.status !== "active").map((m) => {
+  const reviews = new Map(
+    db.prepare("SELECT mission_id, next_time, origin FROM mission_reviews").all().map((r) => [
+      r.mission_id,
+      r
+    ])
+  );
+  const history = finishedMissions().map((m) => {
     const p = profile(m);
     const d = curProfile ? distance(curProfile, p) : 0;
+    const review = reviews.get(m.id);
     return {
       missionId: m.id,
       profile: describe3(p),
       similarity: curProfile ? similarityLabel(d) : void 0,
       distance: Number(d.toFixed(2)),
       instructions: m.instructions ?? void 0,
-      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`
+      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`,
+      ...review && review.origin !== "legacy" ? { nextTime: review.next_time } : {}
     };
   }).sort((a, b) => a.distance - b.distance);
+  const closed = closedPositions();
   const distByMission = new Map(history.map((h) => [h.missionId, h.distance]));
-  const lessons = db.prepare("SELECT id, created_at, mission_id, text, applies_to, evidence, confidence FROM lessons ORDER BY id").all().map((l) => ({
-    id: l.id,
-    missionId: l.mission_id,
-    lesson: l.text,
-    appliesTo: l.applies_to ?? "(sin especificar)",
-    evidence: l.evidence ?? void 0,
-    confidence: l.confidence ?? void 0,
-    relevance: l.mission_id && distByMission.has(l.mission_id) ? similarityLabel(distByMission.get(l.mission_id)) : "sin misi\xF3n vinculada",
-    _d: l.mission_id && distByMission.has(l.mission_id) ? distByMission.get(l.mission_id) : 99
-  })).sort((a, b) => a._d - b._d).map(({ _d, ...rest }) => rest);
-  const all = listPositions();
+  const beliefs = db.prepare("SELECT * FROM beliefs WHERE status = 'active' ORDER BY id").all().map((b) => {
+    const view = beliefView(b, closed);
+    const n2 = view.evidence.matchingTrades?.trades ?? view.evidence.appliedIn.trades;
+    const score = (b.source_mission_id && distByMission.has(b.source_mission_id) ? distByMission.get(b.source_mission_id) : 3) - Math.min(n2, 10) * 0.1;
+    return { ...view, relevance: b.source_mission_id && distByMission.has(b.source_mission_id) ? similarityLabel(distByMission.get(b.source_mission_id)) : "general", _s: score };
+  }).sort((a, b) => a._s - b._s).map(({ _s, ...rest }) => rest);
+  const howtos = db.prepare("SELECT id, scope, topic, title, steps, updated_at FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all();
   const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
+  const cut = (xs) => limit ? xs.slice(0, limit) : xs;
   return {
     currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
-    pendingReview: pendingReviews(),
-    missionHistory: history,
-    lessons: limitLessons ? lessons.slice(0, limitLessons) : lessons,
-    totalLessons: lessons.length,
+    missionHistory: cut(history),
+    howtos,
+    beliefs: cut(beliefs),
+    totalBeliefs: beliefs.length,
     tradeStats: {
-      note: "Resultados reales de tus operaciones cerradas, calculados por el simulador (no por ti).",
-      allMissions: tradeStats(all),
-      similarMissions: similarIds.size ? tradeStats(all.filter((p) => p.missionId !== null && similarIds.has(p.missionId))) : []
-    }
+      note: "Resultados reales de las operaciones cerradas, calculados por el simulador. Ganada/perdida = se movi\xF3 al menos un 1 %.",
+      allMissions: tradeStats(closed),
+      similarMissions: similarIds.size ? tradeStats(closed.filter((p) => p.missionId !== null && similarIds.has(p.missionId))) : []
+    },
+    recurringErrors: recurringErrors(),
+    apis: db.prepare("SELECT host, path, ok, fail, last_status, last_ok_at, last_fail_at FROM api_observations ORDER BY COALESCE(last_ok_at, last_fail_at) DESC LIMIT 25").all()
   };
 }
+function recurringErrors() {
+  const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  return db.prepare(
+    `SELECT error_class AS errorClass, tool, COUNT(*) AS count, MAX(ts) AS lastAt, MAX(id) AS exampleId, MAX(howto_id) AS howtoId
+       FROM tool_errors WHERE ts >= ? GROUP BY error_class, tool ORDER BY count DESC, lastAt DESC LIMIT 20`
+  ).all(since);
+}
+function duplicateOf(table, fp, exceptId) {
+  const rows = db.prepare(`SELECT id, fingerprint FROM ${table} WHERE status = 'active' AND id IS NOT ?`).all(exceptId ?? null);
+  return rows.find((r) => similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD)?.id;
+}
+function writeHowto(a) {
+  const fp = fingerprint(`${a.title} ${a.steps}`);
+  const dup = duplicateOf("howtos", fp);
+  if (dup) throw new Error(`Ya hay un howto casi igual (#${dup}). Actual\xEDzalo con update_howto en lugar de crear otro.`);
+  const id = Number(
+    db.prepare(
+      "INSERT INTO howtos (created_at, updated_at, scope, topic, title, steps, source_mission_id, fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(now(), now(), a.scope, a.topic, a.title, a.steps, a.missionId, fp).lastInsertRowid
+  );
+  if (a.fixesErrorIds?.length) linkErrors(id, a.fixesErrorIds);
+  return id;
+}
+function linkErrors(howtoId, errorIds) {
+  const marks = errorIds.map(() => "?").join(",");
+  db.prepare(`UPDATE tool_errors SET howto_id = ? WHERE error_class IN (SELECT error_class FROM tool_errors WHERE id IN (${marks}))`).run(howtoId, ...errorIds);
+}
+function updateHowto(a) {
+  const h = db.prepare("SELECT * FROM howtos WHERE id = ?").get(a.id);
+  if (!h) throw new Error(`No existe el howto #${a.id}`);
+  const title = a.title ?? h.title;
+  const steps = a.steps ?? h.steps;
+  db.prepare("UPDATE howtos SET title = ?, steps = ?, fingerprint = ?, status = COALESCE(?, status), superseded_by = COALESCE(?, superseded_by), updated_at = ? WHERE id = ?").run(
+    title,
+    steps,
+    fingerprint(`${title} ${steps}`),
+    a.status ?? null,
+    a.supersededBy ?? null,
+    now(),
+    a.id
+  );
+  if (a.fixesErrorIds?.length) linkErrors(a.id, a.fixesErrorIds);
+}
+function validateCondition(cond, expectation) {
+  if (cond && !expectation) throw new Error("Una creencia con condici\xF3n necesita expectation: positive (tiende a ganar) o negative (tiende a perder)");
+}
+var sameCondition = (cond) => cond ? db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ?").get(JSON.stringify(cond))?.id : void 0;
+function writeBelief(a) {
+  validateCondition(a.condition, a.expectation);
+  const fp = fingerprint(a.statement);
+  const dup = duplicateOf("beliefs", fp) ?? sameCondition(a.condition);
+  if (dup) throw new Error(`Ya hay una creencia casi igual o con la misma condici\xF3n (#${dup}). Corr\xEDgela con revise_belief en lugar de crear otra.`);
+  const id = Number(
+    db.prepare(
+      `INSERT INTO beliefs (created_at, updated_at, source_mission_id, statement, applies_to, expectation, condition, fingerprint)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(now(), now(), a.missionId, a.statement, a.appliesTo, a.expectation ?? null, a.condition ? JSON.stringify(a.condition) : null, fp).lastInsertRowid
+  );
+  return beliefView(getBelief(id), closedPositions());
+}
+function getBelief(id) {
+  const b = db.prepare("SELECT * FROM beliefs WHERE id = ?").get(id);
+  if (!b) throw new Error(`No existe la creencia #${id}`);
+  return b;
+}
+function reviseBelief(a) {
+  const b = getBelief(a.id);
+  const statement = a.statement ?? b.statement;
+  const condition = a.clearCondition ? null : a.condition ? JSON.stringify(a.condition) : b.condition;
+  const expectation = a.expectation ?? b.expectation;
+  validateCondition(condition ? JSON.parse(condition) : void 0, expectation ?? void 0);
+  if (a.statement) {
+    const dup = duplicateOf("beliefs", fingerprint(statement), a.id);
+    if (dup) throw new Error(`Con ese texto ser\xEDa casi igual que la creencia #${dup}. Si sobran, retira una de las dos.`);
+  }
+  db.prepare(
+    `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ? WHERE id = ?`
+  ).run(statement, a.appliesTo ?? b.applies_to, expectation, condition, fingerprint(statement), a.retire ? "retired" : b.status, a.reason, now(), a.id);
+  return beliefView(getBelief(a.id), closedPositions());
+}
+function convertBeliefToHowto(a) {
+  const b = getBelief(a.id);
+  if (b.status !== "active") throw new Error(`La creencia #${a.id} ya no est\xE1 activa (${b.status})`);
+  const howtoId = writeHowto({ scope: a.scope, topic: a.topic, title: a.title, steps: a.steps, missionId: b.source_mission_id });
+  db.prepare("UPDATE howtos SET from_belief_id = ? WHERE id = ?").run(a.id, howtoId);
+  db.prepare("UPDATE beliefs SET status = 'converted', status_reason = ?, updated_at = ? WHERE id = ?").run(`convertida en el howto #${howtoId}`, now(), a.id);
+  return howtoId;
+}
+function missionStats(missionId) {
+  const ps = listPositions(missionId);
+  const closed = ps.filter((p) => p.status === "closed");
+  const count = (sql) => db.prepare(sql).get(missionId).n;
+  const m = getMission(missionId);
+  return {
+    result: m?.final_usd != null ? { initialUsd: m.initial_usd, finalUsd: Number(m.final_usd.toFixed(2)), pct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(2)), status: m.status } : { initialUsd: m?.initial_usd, status: m?.status },
+    positions: ps.length,
+    closed: summarizeTrades(closed),
+    realizedPnlUsd: Number(closed.reduce((s, p) => s + (p.pnlUsd ?? 0), 0).toFixed(2)),
+    stillOpen: ps.filter((p) => p.status === "open").length,
+    rejectedOrFailed: count("SELECT COUNT(*) AS n FROM journal WHERE mission_id = ? AND kind IN ('rejected', 'failed_tx', 'order_failed')"),
+    toolErrors: count("SELECT COUNT(*) AS n FROM tool_errors WHERE mission_id = ?"),
+    researchCalls: count("SELECT COUNT(*) AS n FROM research_log WHERE mission_id = ?"),
+    observations: count("SELECT COUNT(*) AS n FROM observations WHERE mission_id = ?")
+  };
+}
+function pendingReviews() {
+  return db.prepare(
+    `SELECT m.id FROM missions m
+         WHERE (m.status IN ('succeeded', 'expired') OR (m.status = 'cancelled' AND EXISTS (SELECT 1 FROM positions p WHERE p.mission_id = m.id)))
+           AND m.reviewed_at IS NULL AND NOT EXISTS (SELECT 1 FROM mission_reviews r WHERE r.mission_id = m.id)
+         ORDER BY m.id`
+  ).all().map((r) => r.id);
+}
+function writeMissionReview(a) {
+  const m = getMission(a.missionId);
+  if (!m) throw new Error(`No existe la misi\xF3n #${a.missionId}`);
+  if (m.status === "active" || m.status === "closing") throw new Error(`La misi\xF3n #${a.missionId} sigue activa: para revisarla a mitad usa review_checkpoint`);
+  db.prepare(
+    `INSERT INTO mission_reviews (mission_id, created_at, what_was_tried, what_happened, surprises, next_time) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(mission_id) DO UPDATE SET created_at = excluded.created_at, origin = 'reviewer', what_was_tried = excluded.what_was_tried,
+       what_happened = excluded.what_happened, surprises = excluded.surprises, next_time = excluded.next_time`
+  ).run(a.missionId, now(), a.whatWasTried, a.whatHappened, a.surprises ?? null, a.nextTime);
+  markReviewed(a.missionId);
+  logActivity({ missionId: a.missionId, sessionId: null, kind: "review", title: `Retrospectiva de la misi\xF3n #${a.missionId}`, body: a.nextTime });
+  return missionStats(a.missionId);
+}
+function markReviewed(missionId) {
+  db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
+}
+function markEmptyMissionReviewed(missionId, note) {
+  if (listPositions(missionId).length) throw new Error(`La misi\xF3n #${missionId} tuvo operaciones: escribe su retrospectiva con write_mission_review`);
+  markReviewed(missionId);
+  logActivity({ missionId, sessionId: null, kind: "review", title: `Misi\xF3n #${missionId} revisada sin operaciones`, body: note });
+}
+function lastCheckpoint(missionId) {
+  return db.prepare("SELECT MAX(ts) AS ts FROM review_checkpoints WHERE mission_id = ?").get(missionId).ts;
+}
+function reviewIntervalMinutes(m) {
+  const duration3 = (new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4;
+  return Math.round(Math.min(360, Math.max(20, duration3 / 6)));
+}
+function activitySince(missionId, since) {
+  const q = (sql) => db.prepare(sql).get(missionId, since).n;
+  return {
+    trades: q("SELECT COUNT(*) AS n FROM journal WHERE mission_id = ? AND ts > ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'rejected', 'order_placed', 'order_failed')"),
+    observations: q("SELECT COUNT(*) AS n FROM observations WHERE mission_id = ? AND ts > ?"),
+    errors: q("SELECT COUNT(*) AS n FROM tool_errors WHERE mission_id = ? AND ts > ?")
+  };
+}
+function reviewCheckpoint(missionId, summary) {
+  db.prepare("INSERT INTO review_checkpoints (ts, mission_id, summary) VALUES (?, ?, ?)").run(now(), missionId, summary);
+  logActivity({ missionId, sessionId: null, kind: "review", title: "El revisor repasa la misi\xF3n", body: summary });
+}
+function reviewQueue() {
+  const active2 = getActiveMission();
+  let activeMission = null;
+  if (active2) {
+    const since = lastCheckpoint(active2.id) ?? active2.created_at;
+    const briefing = db.prepare("SELECT updated_at, seen_at FROM briefings WHERE mission_id = ?").get(active2.id);
+    activeMission = {
+      missionId: active2.id,
+      profile: describe3(profile(active2)),
+      instructions: active2.instructions ?? void 0,
+      deadline: active2.deadline,
+      reviewIntervalMinutes: reviewIntervalMinutes(active2),
+      lastCheckpointAt: lastCheckpoint(active2.id),
+      activitySinceLastCheckpoint: activitySince(active2.id, since),
+      briefing: briefing ? { updatedAt: briefing.updated_at, seenByTraderAt: briefing.seen_at } : "todav\xEDa no tiene briefing"
+    };
+  }
+  const beliefsWithoutCondition = db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition IS NULL").all().map((r) => r.id);
+  return {
+    pendingFinalReviews: pendingReviews(),
+    activeMission,
+    pendingObservations: db.prepare("SELECT id, ts, mission_id, kind, text FROM observations WHERE status = 'pending' ORDER BY id").all(),
+    errorsWithoutHowto: recurringErrors().filter((e) => !e.howtoId),
+    beliefsWithoutCondition
+  };
+}
+function missionReviewData(missionId, since) {
+  const m = getMission(missionId);
+  if (!m) throw new Error(`No existe la misi\xF3n #${missionId}`);
+  const from = since ?? "";
+  return {
+    mission: { ...m, profile: describe3(profile(m)) },
+    stats: missionStats(missionId),
+    briefing: db.prepare("SELECT text, updated_at, seen_at FROM briefings WHERE mission_id = ?").get(missionId) ?? null,
+    checkpoints: db.prepare("SELECT ts, summary FROM review_checkpoints WHERE mission_id = ? ORDER BY id").all(missionId),
+    positions: listPositions(missionId),
+    journal: db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id LIMIT 400").all(missionId, from),
+    workLog: db.prepare("SELECT ts, kind, title FROM activity WHERE mission_id = ? AND ts > ? AND kind IN ('thought', 'text') ORDER BY id LIMIT 300").all(missionId, from),
+    notes: db.prepare("SELECT ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId),
+    observations: db.prepare("SELECT id, ts, kind, text, status FROM observations WHERE mission_id = ? ORDER BY id").all(missionId),
+    toolErrors: db.prepare("SELECT id, ts, tool, error_class, message, howto_id FROM tool_errors WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from)
+  };
+}
+async function waitForActivity(maxMinutes) {
+  const until = Date.now() + maxMinutes * 6e4;
+  for (; ; ) {
+    const m = getActiveMission();
+    if (!m) {
+      const last = getLastMission();
+      return { reason: "mission_ended", missionId: last?.id, status: last?.status, pendingFinalReviews: pendingReviews() };
+    }
+    const since = lastCheckpoint(m.id) ?? m.created_at;
+    const minutesSince = (Date.now() - new Date(since).getTime()) / 6e4;
+    const activity = activitySince(m.id, since);
+    const interval = reviewIntervalMinutes(m);
+    if (minutesSince >= interval) return { reason: "interval_due", missionId: m.id, minutesSinceLastReview: Math.round(minutesSince), activity };
+    if (minutesSince >= 10 && activity.trades + activity.observations + activity.errors >= 5) {
+      return { reason: "activity", missionId: m.id, minutesSinceLastReview: Math.round(minutesSince), activity };
+    }
+    if (Date.now() >= until) {
+      return { reason: "timeout", missionId: m.id, minutesSinceLastReview: Math.round(minutesSince), nextReviewInMinutes: Math.round(interval - minutesSince), activity };
+    }
+    await new Promise((r) => setTimeout(r, Math.min(2e4, until - Date.now())));
+  }
+}
+function writeBriefing(missionId, text2) {
+  const m = getMission(missionId);
+  if (!m) throw new Error(`No existe la misi\xF3n #${missionId}`);
+  db.prepare(
+    `INSERT INTO briefings (mission_id, created_at, updated_at, text) VALUES (?, ?, ?, ?)
+     ON CONFLICT(mission_id) DO UPDATE SET updated_at = excluded.updated_at, text = excluded.text`
+  ).run(missionId, now(), now(), text2);
+  logActivity({ missionId, sessionId: null, kind: "review", title: "El revisor actualiza el briefing del agente", body: text2 });
+}
+function getBriefing(missionId) {
+  return db.prepare("SELECT text, updated_at, seen_at FROM briefings WHERE mission_id = ?").get(missionId);
+}
+function markBriefingSeen(missionId) {
+  db.prepare("UPDATE briefings SET seen_at = ? WHERE mission_id = ?").run(now(), missionId);
+}
+function takeBriefingNews(missionId) {
+  const b = getBriefing(missionId);
+  if (!b || b.seen_at && b.seen_at >= b.updated_at) return null;
+  markBriefingSeen(missionId);
+  return b.text;
+}
+var CAPABILITY_CATEGORIES = ["cuenta", "herramienta", "datos", "mercado", "otro"];
+function requestCapability(a) {
+  const fp = fingerprint(a.capability);
+  const open2 = db.prepare("SELECT id, fingerprint, missions FROM capability_requests WHERE status = 'open'").all();
+  const same = open2.find((r) => similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD);
+  if (same) {
+    const missions = new Set(JSON.parse(same.missions));
+    if (a.missionId !== null) missions.add(a.missionId);
+    db.prepare("UPDATE capability_requests SET times_requested = times_requested + 1, missions = ?, updated_at = ? WHERE id = ?").run(
+      JSON.stringify([...missions]),
+      now(),
+      same.id
+    );
+    return { id: same.id, duplicate: true };
+  }
+  const id = Number(
+    db.prepare(
+      `INSERT INTO capability_requests (created_at, updated_at, source, category, capability, why, plan, fingerprint, missions)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(now(), now(), a.source, a.category, a.capability, a.why, a.plan, fp, JSON.stringify(a.missionId !== null ? [a.missionId] : [])).lastInsertRowid
+  );
+  logActivity({ missionId: a.missionId, sessionId: null, kind: "request", title: `Pide: ${a.capability}`, body: a.why });
+  return { id, duplicate: false };
+}
+function listCapabilityRequests(status = "open") {
+  return db.prepare(`SELECT * FROM capability_requests ${status === "open" ? "WHERE status = 'open'" : ""} ORDER BY times_requested DESC, updated_at DESC`).all().map(({ fingerprint: _fp, ...r }) => ({ ...r, missions: JSON.parse(r.missions) }));
+}
+function resolveCapabilityRequest(id, status, response) {
+  if (!db.prepare("UPDATE capability_requests SET status = ?, response = ?, updated_at = ? WHERE id = ?").run(status, response, now(), id).changes) {
+    throw new Error(`No existe la petici\xF3n #${id}`);
+  }
+}
+function reportObservation(missionId, sessionId, kind, text2) {
+  return Number(
+    db.prepare("INSERT INTO observations (ts, mission_id, session_id, kind, text) VALUES (?, ?, ?, ?, ?)").run(now(), missionId, sessionId, kind, text2).lastInsertRowid
+  );
+}
+function resolveObservation(id, status, resolution) {
+  if (!db.prepare("UPDATE observations SET status = ?, resolved_at = ?, resolution = ? WHERE id = ?").run(status, now(), resolution, id).changes) {
+    throw new Error(`No existe la observaci\xF3n #${id}`);
+  }
+}
+function errorClass(message) {
+  return message.replace(/0x[0-9a-fA-F]{6,}/g, "<direcci\xF3n>").replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, "<direcci\xF3n>").replace(/\d+([.,]\d+)?(e-?\d+)?/g, "N").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+function recordToolError(a) {
+  const input2 = a.input ?? {};
+  const venue = typeof input2.chain === "string" ? input2.chain : typeof input2.from === "string" ? input2.from : a.tool.includes("binance") ? "binance" : null;
+  db.prepare("INSERT INTO tool_errors (ts, mission_id, session_id, tool, venue, error_class, message, input) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+    now(),
+    a.missionId,
+    a.sessionId,
+    a.tool,
+    venue,
+    errorClass(a.message),
+    a.message.slice(0, 1e3),
+    JSON.stringify(a.input ?? null).slice(0, 2e3)
+  );
+}
+function recordApiCall(url2, status) {
+  let u;
+  try {
+    u = new URL(url2);
+  } catch {
+    return;
+  }
+  const path6 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
+  const ok = status >= 200 && status < 300;
+  db.prepare(
+    `INSERT INTO api_observations (host, path, ok, fail, last_status, last_ok_at, last_fail_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(host, path) DO UPDATE SET ok = ok + excluded.ok, fail = fail + excluded.fail, last_status = excluded.last_status,
+       last_ok_at = COALESCE(excluded.last_ok_at, last_ok_at), last_fail_at = COALESCE(excluded.last_fail_at, last_fail_at)`
+  ).run(u.host, path6, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
+}
+function activeBeliefIds() {
+  return db.prepare("SELECT id FROM beliefs WHERE status = 'active' ORDER BY id").all().map((r) => r.id);
+}
+function unknownBeliefs(ids) {
+  const active2 = new Set(activeBeliefIds());
+  return [...new Set(ids)].filter((id) => !active2.has(id));
+}
+
+// src/dashboard/timeline.ts
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, statSync } from "node:fs";
+import os2 from "node:os";
+import path5 from "node:path";
+
+// src/tools/index.ts
+import { readFileSync } from "node:fs";
 
 // src/tools/define.ts
 function tool(def) {
@@ -38616,20 +39188,30 @@ var MAX_WAIT_MINUTES = 10;
 var FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 var reasoning = external_exports.string().describe("Por qu\xE9 haces esto. Queda en el diario.");
 var chainParam = external_exports.enum(CHAINS).describe("Cadena en la que operas o investigas");
+var conditionSchema = external_exports.object({
+  all: external_exports.array(
+    external_exports.object({
+      f: external_exports.enum(CONDITION_FIELDS),
+      op: external_exports.enum(CONDITION_OPS),
+      v: external_exports.union([external_exports.number(), external_exports.string(), external_exports.boolean()])
+    })
+  ).min(1)
+}).describe('Todas las cl\xE1usulas deben cumplirse. Ejemplo: {"all":[{"f":"ageMinutes","op":"<","v":30},{"f":"organicScore","op":">=","v":50}]}');
 var TOKEN_ALIASES = "en Solana: SOL y USDC";
 var thesis = external_exports.object({
   why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
   evidence: external_exports.string().min(1).describe("Qu\xE9 has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
   sources: external_exports.array(external_exports.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
   exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)"),
-  lessons_applied: external_exports.string().min(1).describe("Qu\xE9 lecciones de tu memoria aplicas aqu\xED (por su id) y c\xF3mo, o por qu\xE9 ninguna aplica a esta situaci\xF3n")
+  beliefs_applied: external_exports.array(external_exports.number().int()).describe("Ids de las creencias de tu memoria que aplicas en esta operaci\xF3n (vac\xEDo si ninguna). El simulador medir\xE1 c\xF3mo le va a cada una"),
+  memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria aqu\xED (creencias, howtos, el briefing del revisor) o por qu\xE9 nada de ella aplica a esta situaci\xF3n")
 }).describe("Tesis de la operaci\xF3n. Queda en el diario y el usuario la ve en el panel.");
 var formatThesis = (t) => `Por qu\xE9: ${t.why}
 Pruebas: ${t.evidence}
 Fuentes: ${t.sources.join(" \xB7 ")}
 Plan: ${t.exit_plan}
-Lecciones: ${t.lessons_applied}`;
-var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
+Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}`;
+var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 var SIM_TOOLS = [
   tool({
     name: "scan_market",
@@ -38650,7 +39232,7 @@ var SIM_TOOLS = [
   tool({
     name: "field_guide",
     kind: "research",
-    researchTarget: () => void 0,
+    role: "both",
     description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
     schema: external_exports.object({}),
     run: async () => readFileSync(FIELD_GUIDE, "utf8")
@@ -38669,6 +39251,7 @@ var SIM_TOOLS = [
   tool({
     name: "mission_status",
     kind: "misc",
+    deliversNews: true,
     description: "Estado de tu misi\xF3n: capital inicial, objetivo, valor actual de la cartera, cu\xE1nto falta y tiempo restante. La misi\xF3n termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await missionStatus(ctx.missionId ?? void 0))
@@ -38676,6 +39259,7 @@ var SIM_TOOLS = [
   tool({
     name: "wait",
     kind: "misc",
+    deliversNews: true,
     description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus \xF3rdenes condicionales se siguen vigilando. Vuelve antes si la misi\xF3n termina. El tiempo tambi\xE9n pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.`,
     schema: external_exports.object({ minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES) }),
     run: async ({ minutes }, ctx) => {
@@ -38703,6 +39287,7 @@ ${json2(await missionStatus(m))}`;
     run: async ({ url: url2 }) => {
       if (!/^https?:\/\//i.test(url2)) throw new Error("Solo se permiten URLs http(s)");
       const { status, body } = await fetchText(url2, { timeoutMs: 2e4 });
+      recordApiCall(url2, status);
       return `HTTP ${status}
 ${body.slice(0, 2e4)}${body.length > 2e4 ? `
 \u2026 (truncado, ${body.length} caracteres en total)` : ""}`;
@@ -38712,6 +39297,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
   tool({
     name: "portfolio",
     kind: "misc",
+    deliversNews: true,
     description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n real ahora mismo, el PnL desde el inicio y lo que valdr\xEDa el capital inicial si se hubiera mantenido en SOL.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await valuation(mid(ctx)))
@@ -38896,62 +39482,255 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       return json2(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
     }
   }),
-  // ─── Memoria a largo plazo: lecciones entre misiones ──────────────────────
+  // ─── Memoria entre misiones (el agente que opera la lee; la escribe el revisor) ─
   tool({
-    name: "recall_lessons",
+    name: "recall_memory",
     kind: "memory",
+    role: "trader",
     researchTarget: () => void 0,
-    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual (plazo, objetivo y enfoque): historial de misiones con su resultado, tus lecciones con su contexto y estad\xEDsticas reales de tus operaciones cerradas agrupadas por caracter\xEDsticas (antig\xFCedad y liquidez del token, si sub\xEDa mucho al comprar, si investigaste antes\u2026), en todas las misiones y en las parecidas.",
+    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual. La escribe un agente revisor a partir de lo que pas\xF3 en tus misiones. Incluye: howtos (c\xF3mo se hace algo y qu\xE9 errores evitar), creencias sobre el mercado con su evidencia real (calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la pr\xF3xima vez, estad\xEDsticas de tus operaciones, los errores que se repiten y qu\xE9 APIs han respondido bien.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(recall(ctx.missionId))
   }),
   tool({
     name: "trade_history",
     kind: "memory",
+    role: "trader",
     researchTarget: () => void 0,
-    description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos) y cu\xE1nto hab\xEDas investigado antes. Lo registra el simulador.",
+    description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos), cu\xE1nto hab\xEDas investigado antes, tu tesis y las creencias que aplicaste.",
     schema: external_exports.object({ mission_id: external_exports.number().int().optional(), limit: external_exports.number().int().min(1).max(200).default(50) }),
     run: async ({ mission_id, limit }) => json2(listPositions(mission_id).slice(0, limit))
   }),
   tool({
+    name: "report_observation",
+    kind: "memory",
+    role: "trader",
+    journaled: true,
+    description: "Deja una observaci\xF3n para el revisor, que decidir\xE1 si pasa a tu memoria: algo que has descubierto sobre c\xF3mo se hace algo, un error y c\xF3mo lo has resuelto, un patr\xF3n del mercado que te ha llamado la atenci\xF3n\u2026 \xDAsala en cuanto lo veas, no al final.",
+    schema: external_exports.object({
+      kind: external_exports.enum(["procedimiento", "mercado", "error", "otro"]),
+      text: external_exports.string().min(1).describe("Qu\xE9 has observado, con datos concretos")
+    }),
+    run: async ({ kind, text: text2 }, ctx) => `Observaci\xF3n #${reportObservation(ctx.missionId, ctx.sessionId, kind, text2)} anotada para el revisor.`
+  }),
+  tool({
+    name: "request_capability",
+    kind: "memory",
+    role: "both",
+    journaled: true,
+    description: "Anota una capacidad que no tienes y que necesitar\xEDas para intentar algo: una cuenta (X, Instagram, Telegram, un exchange\u2026), una herramienta (navegador con sesi\xF3n iniciada, un bot, una API de pago\u2026), unos datos o un mercado que el simulador no permite. El usuario revisa estas peticiones y puede d\xE1rtelas en el futuro. Explica qu\xE9 har\xEDas exactamente con ella. No sustituye a record_hypothetical_action: esa anota lo que har\xEDas; esta, lo que te falta para poder hacerlo.",
+    schema: external_exports.object({
+      category: external_exports.enum(CAPABILITY_CATEGORIES),
+      capability: external_exports.string().min(1).describe("Qu\xE9 necesitas, en pocas palabras (p. ej. 'cuenta de X para publicar')"),
+      why: external_exports.string().min(1).describe("Por qu\xE9 lo necesitas: qu\xE9 has intentado sin ello y por qu\xE9 no basta"),
+      plan: external_exports.string().min(1).describe("Qu\xE9 har\xEDas con ello, paso a paso, y qu\xE9 esperas conseguir")
+    }),
+    run: async (i, ctx) => {
+      const r = requestCapability({ source: "trader", missionId: ctx.missionId, ...i });
+      return r.duplicate ? `Ya estaba pedida (#${r.id}): se suma tu petici\xF3n. El usuario la ver\xE1.` : `Petici\xF3n #${r.id} anotada. El usuario la ver\xE1 en el panel y en /cryptoagent:estado.`;
+    }
+  }),
+  // ─── Revisor: lee todo lo ocurrido y escribe la memoria ────────────────────
+  tool({
+    name: "review_queue",
+    kind: "memory",
+    role: "reviewer",
+    description: "Lo que tienes pendiente como revisor: misiones terminadas sin retrospectiva, la misi\xF3n activa (actividad desde tu \xFAltima revisi\xF3n, cada cu\xE1nto conviene revisarla y si tiene briefing), observaciones del agente sin procesar, errores repetidos sin howto y creencias sin condici\xF3n.",
+    schema: external_exports.object({}),
+    run: async () => json2(reviewQueue())
+  }),
+  tool({
+    name: "mission_review_data",
+    kind: "memory",
+    role: "reviewer",
+    description: "Todo lo ocurrido en una misi\xF3n en una sola llamada: misi\xF3n, estad\xEDsticas, posiciones (con tesis, creencias aplicadas, datos de entrada y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. Con since (fecha ISO) solo lo posterior a esa fecha (\xFAtil a mitad de misi\xF3n).",
+    schema: external_exports.object({ mission_id: external_exports.number().int(), since: external_exports.string().optional() }),
+    run: async ({ mission_id, since }) => json2(missionReviewData(mission_id, since))
+  }),
+  tool({
+    name: "memory_catalog",
+    kind: "memory",
+    role: "reviewer",
+    description: "La memoria completa tal como la ve el agente (howtos, creencias activas con su evidencia calculada, historial, estad\xEDsticas, errores repetidos, APIs), ordenada por parecido con la misi\xF3n indicada o la activa.",
+    schema: external_exports.object({ mission_id: external_exports.number().int().optional() }),
+    run: async ({ mission_id }, ctx) => json2(recall(mission_id ?? ctx.missionId))
+  }),
+  tool({
+    name: "wait_for_activity",
+    kind: "memory",
+    role: "reviewer",
+    description: "Espera (1-10 minutos) a que haya algo que revisar en la misi\xF3n activa. Vuelve antes si la misi\xF3n termina (reason: mission_ended), si toca la revisi\xF3n peri\xF3dica (interval_due) o si el agente ha acumulado actividad (activity). Si no, reason: timeout.",
+    schema: external_exports.object({ max_minutes: external_exports.number().min(1).max(10).default(10) }),
+    run: async ({ max_minutes }) => json2(await waitForActivity(max_minutes))
+  }),
+  tool({
+    name: "write_howto",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Guarda conocimiento procedimental: c\xF3mo se hace algo en el simulador o en el mercado, qu\xE9 falla y c\xF3mo evitarlo. scope: la cadena o exchange (solana, binance) o 'any'. Con fixes_error_ids lo vinculas a los errores que resuelve. Si ya hay uno casi igual, se rechaza: actual\xEDzalo con update_howto.",
+    schema: external_exports.object({
+      scope: external_exports.string().min(1),
+      topic: external_exports.string().min(1).describe("Tema corto: '\xF3rdenes condicionales', 'transferencias', 'comisiones'\u2026"),
+      title: external_exports.string().min(1),
+      steps: external_exports.string().min(1).describe("Pasos concretos o regla pr\xE1ctica, con los datos que la respaldan"),
+      mission_id: external_exports.number().int().optional().describe("Misi\xF3n de la que sale"),
+      fixes_error_ids: external_exports.array(external_exports.number().int()).optional()
+    }),
+    run: async (i) => {
+      const id = writeHowto({ scope: i.scope, topic: i.topic, title: i.title, steps: i.steps, missionId: i.mission_id ?? null, fixesErrorIds: i.fixes_error_ids });
+      return `Howto #${id} guardado.`;
+    }
+  }),
+  tool({
+    name: "update_howto",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Corrige un howto, o m\xE1rcalo obsoleto (status: obsolete, con superseded_by si otro lo sustituye).",
+    schema: external_exports.object({
+      id: external_exports.number().int(),
+      title: external_exports.string().optional(),
+      steps: external_exports.string().optional(),
+      status: external_exports.enum(["active", "obsolete"]).optional(),
+      superseded_by: external_exports.number().int().optional(),
+      fixes_error_ids: external_exports.array(external_exports.number().int()).optional()
+    }),
+    run: async (i) => {
+      updateHowto({ id: i.id, title: i.title, steps: i.steps, status: i.status, supersededBy: i.superseded_by, fixesErrorIds: i.fixes_error_ids });
+      return `Howto #${i.id} actualizado.`;
+    }
+  }),
+  tool({
+    name: "write_belief",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: `Guarda una creencia sobre el mercado (una hip\xF3tesis, no un hecho). Si puedes expresarla como condici\xF3n sobre los datos de entrada de las posiciones, a\xF1\xE1dela: el simulador la contrastar\xE1 con todas las operaciones pasadas y futuras (devuelve el resultado al momento). Campos de la condici\xF3n: ${CONDITION_FIELDS.join(", ")}. Con condici\xF3n, expectation dice si cumplirla tiende a ganar (positive) o a perder (negative). Si ya hay una casi igual o con la misma condici\xF3n, se rechaza: corr\xEDgela con revise_belief.`,
+    schema: external_exports.object({
+      statement: external_exports.string().min(1).describe("La creencia, con los datos que la originan"),
+      applies_to: external_exports.string().min(1).describe("A qu\xE9 misiones o situaciones se aplica"),
+      expectation: external_exports.enum(["positive", "negative"]).optional(),
+      condition: conditionSchema.optional(),
+      mission_id: external_exports.number().int().optional().describe("Misi\xF3n de la que sale")
+    }),
+    run: async (i) => json2(writeBelief({ statement: i.statement, appliesTo: i.applies_to, expectation: i.expectation, condition: i.condition, missionId: i.mission_id ?? null }))
+  }),
+  tool({
+    name: "revise_belief",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Corrige una creencia (texto, alcance, condici\xF3n o expectativa) o ret\xEDrala (retire: true) cuando los datos la contradigan. No se borra: queda retirada con su motivo. Devuelve su evidencia recalculada.",
+    schema: external_exports.object({
+      id: external_exports.number().int(),
+      statement: external_exports.string().optional(),
+      applies_to: external_exports.string().optional(),
+      expectation: external_exports.enum(["positive", "negative"]).optional(),
+      condition: conditionSchema.optional(),
+      clear_condition: external_exports.boolean().optional(),
+      retire: external_exports.boolean().optional(),
+      reason: external_exports.string().min(1).describe("Por qu\xE9 la cambias")
+    }),
+    run: async (i) => json2(
+      reviseBelief({
+        id: i.id,
+        statement: i.statement,
+        appliesTo: i.applies_to,
+        expectation: i.expectation,
+        condition: i.condition,
+        clearCondition: i.clear_condition,
+        retire: i.retire,
+        reason: i.reason
+      })
+    )
+  }),
+  tool({
+    name: "convert_belief_to_howto",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Convierte en howto una creencia que en realidad es conocimiento procedimental (c\xF3mo funciona algo), no una hip\xF3tesis de mercado.",
+    schema: external_exports.object({ id: external_exports.number().int(), scope: external_exports.string().min(1), topic: external_exports.string().min(1), title: external_exports.string().min(1), steps: external_exports.string().min(1) }),
+    run: async (i) => `Creencia #${i.id} convertida en el howto #${convertBeliefToHowto(i)}.`
+  }),
+  tool({
+    name: "resolve_observation",
+    kind: "memory",
+    role: "reviewer",
+    description: "Marca una observaci\xF3n del agente como usada (pas\xF3 a la memoria) o descartada, con una nota.",
+    schema: external_exports.object({ id: external_exports.number().int(), status: external_exports.enum(["used", "dismissed"]), note: external_exports.string().min(1) }),
+    run: async ({ id, status, note }) => {
+      resolveObservation(id, status, note);
+      return `Observaci\xF3n #${id}: ${status}.`;
+    }
+  }),
+  tool({
+    name: "write_mission_review",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Retrospectiva de una misi\xF3n terminada: qu\xE9 se intent\xF3, qu\xE9 pas\xF3 (con cifras), qu\xE9 sorprendi\xF3 y qu\xE9 conviene hacer la pr\xF3xima vez. Devuelve las estad\xEDsticas de la misi\xF3n calculadas por el simulador.",
+    schema: external_exports.object({
+      mission_id: external_exports.number().int(),
+      what_was_tried: external_exports.string().min(1),
+      what_happened: external_exports.string().min(1),
+      surprises: external_exports.string().optional(),
+      next_time: external_exports.string().min(1)
+    }),
+    run: async (i) => json2(writeMissionReview({ missionId: i.mission_id, whatWasTried: i.what_was_tried, whatHappened: i.what_happened, surprises: i.surprises, nextTime: i.next_time }))
+  }),
+  tool({
     name: "mark_mission_reviewed",
     kind: "memory",
-    description: "Da por revisada una misi\xF3n terminada cuando, tras analizarla, no aporta ninguna lecci\xF3n nueva. Si aprendiste algo, usa write_lesson.",
-    schema: external_exports.object({ mission_id: external_exports.number().int(), note: external_exports.string().min(1).describe("Por qu\xE9 no hay lecciones nuevas") }),
-    run: async ({ mission_id, note }, ctx) => {
-      markReviewed(mission_id);
-      logJournal({ missionId: mission_id, sessionId: ctx.sessionId, kind: "mission", summary: `Misi\xF3n #${mission_id} revisada sin lecciones nuevas: ${note}` });
+    role: "reviewer",
+    description: "Da por revisada una misi\xF3n terminada que no lleg\xF3 a tener operaciones (no hay nada que analizar).",
+    schema: external_exports.object({ mission_id: external_exports.number().int(), note: external_exports.string().min(1) }),
+    run: async ({ mission_id, note }) => {
+      markEmptyMissionReviewed(mission_id, note);
       return `Misi\xF3n #${mission_id} marcada como revisada.`;
     }
   }),
   tool({
-    name: "write_lesson",
+    name: "review_checkpoint",
     kind: "memory",
-    journaled: true,
-    description: "Guarda una lecci\xF3n en tu memoria a largo plazo. Se conserva entre misiones y marca la misi\xF3n como revisada. Por defecto se vincula a la misi\xF3n actual (o a la \xFAltima si no hay ninguna activa); indica mission_id para otra.",
-    schema: external_exports.object({
-      lesson: external_exports.string().min(1).describe("Qu\xE9 aprendiste: qu\xE9 hiciste, qu\xE9 pas\xF3 y qu\xE9 har\xEDas distinto"),
-      applies_to: external_exports.string().min(1).describe("A qu\xE9 tipo de misi\xF3n o situaci\xF3n se aplica (plazo, objetivo, enfoque, tipo de token\u2026)"),
-      evidence: external_exports.string().min(1).describe("En qu\xE9 te basas: misiones y operaciones concretas, con sus cifras"),
-      confidence: external_exports.enum(["baja", "media", "alta"]).describe("Cu\xE1nto conf\xEDas en ella seg\xFAn la cantidad de pruebas"),
-      mission_id: external_exports.number().int().optional()
-    }),
-    run: async ({ lesson, applies_to, evidence, confidence, mission_id }, ctx) => {
-      const missionId = mission_id ?? ctx.missionId;
-      const id = db.prepare("INSERT INTO lessons (created_at, mission_id, text, applies_to, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)").run(now(), missionId, lesson, applies_to, evidence, confidence).lastInsertRowid;
-      if (missionId) markReviewed(missionId);
-      return `Lecci\xF3n #${id} guardada${missionId ? ` (misi\xF3n #${missionId})` : ""}.`;
+    role: "reviewer",
+    description: "Marca que has revisado la misi\xF3n activa hasta ahora, con un resumen breve de lo que has visto y hecho. La siguiente revisi\xF3n partir\xE1 de aqu\xED (mission_review_data con since).",
+    schema: external_exports.object({ mission_id: external_exports.number().int(), summary: external_exports.string().min(1) }),
+    run: async ({ mission_id, summary }) => {
+      reviewCheckpoint(mission_id, summary);
+      return "Revisi\xF3n anotada.";
     }
   }),
   tool({
-    name: "delete_lesson",
+    name: "write_briefing",
     kind: "memory",
-    journaled: true,
-    description: "Borra una lecci\xF3n de tu memoria cuando los resultados la contradigan o ya no te sirva.",
-    schema: external_exports.object({ id: external_exports.number().int() }),
-    run: async ({ id }) => {
-      if (!db.prepare("DELETE FROM lessons WHERE id = ?").run(id).changes) throw new Error(`No existe la lecci\xF3n #${id}`);
-      return `Lecci\xF3n #${id} borrada.`;
+    role: "reviewer",
+    description: "Escribe (o reescribe) el briefing de una misi\xF3n: lo que el agente debe tener presente de su memoria para esa misi\xF3n en concreto, citando los ids de howtos y creencias. El agente lo recibe al empezar cada sesi\xF3n y, si lo cambias a mitad de misi\xF3n, en su siguiente acci\xF3n.",
+    schema: external_exports.object({ mission_id: external_exports.number().int(), text: external_exports.string().min(1) }),
+    run: async ({ mission_id, text: text2 }) => {
+      writeBriefing(mission_id, text2);
+      return `Briefing de la misi\xF3n #${mission_id} guardado.`;
+    }
+  }),
+  // ─── Usuario: peticiones de capacidades ───────────────────────────────────
+  tool({
+    name: "capability_requests",
+    kind: "misc",
+    role: "user",
+    description: "[Solo para el usuario] Capacidades que el agente ha pedido (cuentas, herramientas, datos, mercados), con cu\xE1ntas veces y en qu\xE9 misiones.",
+    schema: external_exports.object({ status: external_exports.enum(["open", "all"]).default("open") }),
+    run: async ({ status }) => json2(listCapabilityRequests(status))
+  }),
+  tool({
+    name: "resolve_capability_request",
+    kind: "misc",
+    role: "user",
+    description: "[Solo para el usuario] Responde a una petici\xF3n del agente: aceptada, rechazada o hecha, con una nota.",
+    schema: external_exports.object({ id: external_exports.number().int(), status: external_exports.enum(["accepted", "rejected", "done"]), response: external_exports.string().min(1) }),
+    run: async ({ id, status, response }) => {
+      resolveCapabilityRequest(id, status, response);
+      return `Petici\xF3n #${id}: ${status}.`;
     }
   }),
   // ─── Memoria entre sesiones y tiempo ──────────────────────────────────────
@@ -38978,41 +39757,52 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }
   })
 ];
+function withNews(content, missionId) {
+  if (missionId === null || typeof content !== "string") return content;
+  const news = takeBriefingNews(missionId);
+  return news ? `${content}
+
+\u{1F4CC} El revisor ha actualizado tu briefing para esta misi\xF3n:
+${news}` : content;
+}
 async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   const def = tools.find((t) => t.name === name);
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
+  const fail = (message) => {
+    recordToolError({ missionId: ctx.missionId, sessionId: ctx.sessionId, tool: name, input: rawInput, message });
+    return { content: `Error: ${message}`, isError: true };
+  };
   const parsed = def.schema.safeParse(rawInput);
-  if (!parsed.success) return { content: `Entrada no v\xE1lida: ${parsed.error.message}`, isError: true };
+  if (!parsed.success) return fail(`Entrada no v\xE1lida: ${parsed.error.message}`);
   const trading = def.kind === "trade";
   const current = ctx.missionId !== null ? getMission(ctx.missionId) : void 0;
   if (trading && current?.status !== "active") {
     return { content: `Error: no hay ninguna misi\xF3n activa. ${(await missionStatus(ctx.missionId ?? void 0)).message ?? ""}`, isError: true };
   }
-  const unreviewed = trading ? pendingReviews() : [];
-  if (unreviewed.length) {
-    return {
-      content: `Error: antes de operar tienes que revisar ${unreviewed.length > 1 ? "las misiones" : "la misi\xF3n"} #${unreviewed.join(", #")}. Analiza qu\xE9 pas\xF3 (trade_history y journal_history con su mission_id) y guarda lo aprendido con write_lesson, o usa mark_mission_reviewed si no aporta nada nuevo.`,
-      isError: true
-    };
+  const beliefs = parsed.data.thesis?.beliefs_applied;
+  if (beliefs?.length) {
+    const unknown2 = unknownBeliefs(beliefs);
+    if (unknown2.length) return fail(`Las creencias #${unknown2.join(", #")} no existen o ya no est\xE1n activas. Activas: ${activeBeliefIds().map((id) => `#${id}`).join(", ") || "ninguna"}`);
   }
   if (def.researchTarget) {
     logResearch(ctx.missionId, name, def.researchTarget(parsed.data)?.trim() || void 0);
   }
   try {
-    const content = await def.run(parsed.data, ctx);
+    let content = await def.run(parsed.data, ctx);
     if (trading) {
       const ended = await checkMission(ctx.missionId ?? void 0).catch(() => []);
-      if (ended.length && typeof content === "string") return { content: `${content}
+      if (ended.length && typeof content === "string") content = `${content}
 
-${ended.join("\n")}`, isError: false };
+${ended.join("\n")}`;
     }
+    if (trading || def.deliversNews) content = withNews(content, ctx.missionId);
     return { content, isError: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (trading) {
       logJournal({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
     }
-    return { content: `Error: ${message}`, isError: true };
+    return fail(message);
   }
 }
 
@@ -39040,7 +39830,7 @@ function describeToolUse(rawName, input2) {
   if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input2.url}` };
   if (name === "mcp__cryptosim__start_session") return { kind: "session", title: "Empieza una sesi\xF3n de trabajo" };
   if (name === "mcp__cryptosim__end_session") return { kind: "session", title: "Cierra la sesi\xF3n" };
-  if (name === "mcp__cryptosim__recall_lessons") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
+  if (name === "mcp__cryptosim__recall_memory") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
   if (name === "mcp__cryptosim__wait") return { kind: "tool", title: `Espera ${input2.minutes} min` };
   if (name.startsWith("mcp__cryptosim__")) return { kind: "tool", title: `Consulta ${name.replace("mcp__cryptosim__", "").replace(/_/g, " ")}` };
   const browser = name.match(/^mcp__Claude_Browser__(.+)$/)?.[1];
@@ -39167,8 +39957,11 @@ function dbEvents(missionId) {
       body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : void 0
     });
   }
-  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons WHERE mission_id = ?").all(missionId)) {
-    events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lecci\xF3n #${l.id}, de la misi\xF3n #${l.mission_id}` : void 0 });
+  for (const b of db.prepare("SELECT id, created_at, statement FROM beliefs WHERE source_mission_id = ? AND origin = 'reviewer'").all(missionId)) {
+    events.push({ id: `b${b.id}`, ts: b.created_at, kind: "lesson", title: b.statement, body: `Creencia #${b.id} (la escribe el revisor)` });
+  }
+  for (const h of db.prepare("SELECT id, created_at, title, steps FROM howtos WHERE source_mission_id = ?").all(missionId)) {
+    events.push({ id: `h${h.id}`, ts: h.created_at, kind: "lesson", title: h.title, body: `Howto #${h.id}: ${h.steps}` });
   }
   for (const n2 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
     events.push({ id: `n${n2.id}`, ts: n2.ts, kind: "note", title: n2.text });
@@ -39198,6 +39991,21 @@ async function refreshValuation(log) {
     log(`Error valorando la cartera: ${err.message}`);
   }
 }
+var memoryCache = null;
+function buildMemory(missionId) {
+  const mem = recall(missionId, 12);
+  return {
+    howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
+    beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: b.statement, verdict: b.evidence.verdict })),
+    requests: listCapabilityRequests("open").map((r) => ({ id: r.id, capability: r.capability, why: r.why, times_requested: r.times_requested }))
+  };
+}
+function memorySummary(missionId) {
+  if (!memoryCache || memoryCache.missionId !== missionId || Date.now() - memoryCache.at > 3e4) {
+    memoryCache = { at: Date.now(), missionId, value: buildMemory(missionId) };
+  }
+  return memoryCache.value;
+}
 function state() {
   const mission = getActiveMission() ?? getLastMission();
   const snapshots = mission ? db.prepare("SELECT ts, total_usd FROM snapshots WHERE mission_id = ? ORDER BY ts").all(mission.id) : [];
@@ -39210,7 +40018,7 @@ function state() {
     orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
-    lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all()
+    memory: memorySummary(mission?.id ?? null)
   };
 }
 function send(res, status, type, body) {
@@ -39282,16 +40090,21 @@ async function sessionBriefing(sessionId, missionId) {
   const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15").all(missionId);
   const memoryLines = [];
   {
-    const mem = recall(missionId, 8);
-    if (mem.pendingReview.length) {
-      memoryLines.push(
-        `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misi\xF3n"} #${mem.pendingReview.join(", #")} (trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.`,
-        ""
-      );
+    const briefing = getBriefing(missionId);
+    if (briefing) {
+      memoryLines.push("Briefing del revisor para esta misi\xF3n (lo prepara otro agente a partir de tu memoria):", briefing.text, "");
+      markBriefingSeen(missionId);
     }
+    const mem = recall(missionId, 6);
+    const clip = (t, n2 = 300) => t.length > n2 ? t.slice(0, n2) + "\u2026" : t;
     memoryLines.push(
-      mem.missionHistory.length ? "Tu memoria, ordenada por parecido con esta misi\xF3n (recall_lessons tiene el detalle completo):\n" + JSON.stringify(
-        { missionHistory: mem.missionHistory.slice(0, 6), lessons: mem.lessons, totalLessons: mem.totalLessons, tradeStats: mem.tradeStats },
+      mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length ? "Tu memoria, resumida y ordenada por parecido con esta misi\xF3n (recall_memory tiene el detalle completo):\n" + JSON.stringify(
+        {
+          missionHistory: mem.missionHistory,
+          howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
+          beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
+          totalBeliefs: mem.totalBeliefs
+        },
         null,
         2
       ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
@@ -39381,6 +40194,13 @@ async function statusReport(missionId) {
   if (notes.length) {
     lines.push("", "\xDAltima nota del agente:");
     for (const n2 of notes) lines.push(`- ${hhmm(n2.ts)} ${n2.title.slice(0, 220)}`);
+  }
+  const review = db.prepare("SELECT ts, title, body FROM activity WHERE kind = 'review' AND mission_id = ? ORDER BY id DESC LIMIT 1").get(m.id);
+  if (review) lines.push("", `Revisor (${hhmm(review.ts)}): ${review.title}${review.body ? ` \xB7 ${review.body.slice(0, 200)}` : ""}`);
+  const requests = listCapabilityRequests("open");
+  if (requests.length) {
+    lines.push("", `El agente pide (${requests.length}, rev\xEDsalas con /cryptoagent:peticiones):`);
+    for (const r of requests.slice(0, 3)) lines.push(`- ${r.capability}${r.times_requested > 1 ? ` (${r.times_requested} veces)` : ""}`);
   }
   return lines.join("\n");
 }

@@ -1,5 +1,5 @@
 import { db, now } from "../db.js";
-import { recall } from "./memory.js";
+import { getBriefing, markBriefingSeen, recall } from "./memory.js";
 import { getMission, missionStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
@@ -23,19 +23,23 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
 
   const memoryLines: string[] = [];
   {
-    const mem = recall(missionId, 8);
-    if (mem.pendingReview.length) {
-      memoryLines.push(
-        `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misión"} #${mem.pendingReview.join(", #")} ` +
-          "(trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.",
-        "",
-      );
+    const briefing = getBriefing(missionId);
+    if (briefing) {
+      memoryLines.push("Briefing del revisor para esta misión (lo prepara otro agente a partir de tu memoria):", briefing.text, "");
+      markBriefingSeen(missionId);
     }
+    const mem = recall(missionId, 6);
+    const clip = (t: string, n = 300) => (t.length > n ? t.slice(0, n) + "…" : t);
     memoryLines.push(
-      mem.missionHistory.length
-        ? "Tu memoria, ordenada por parecido con esta misión (recall_lessons tiene el detalle completo):\n" +
+      mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length
+        ? "Tu memoria, resumida y ordenada por parecido con esta misión (recall_memory tiene el detalle completo):\n" +
             JSON.stringify(
-              { missionHistory: mem.missionHistory.slice(0, 6), lessons: mem.lessons, totalLessons: mem.totalLessons, tradeStats: mem.tradeStats },
+              {
+                missionHistory: mem.missionHistory,
+                howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
+                beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
+                totalBeliefs: mem.totalBeliefs,
+              },
               null,
               2,
             )

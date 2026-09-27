@@ -33,10 +33,16 @@ const NOT_TOOLS = new Set([
   "reserve_in_usd",
   "price_change_percentage",
   "pool_created_at",
+  "beliefs_applied",
+  "memory_note",
+  "fixes_error_ids",
+  "interval_due",
+  "mission_ended",
 ]);
 
 const docs = [
   "plugin/agents/trader.md",
+  "plugin/agents/reviewer.md",
   "knowledge/guia-del-terreno.md",
   ...readdirSync(path.join(root, "plugin/skills")).map((d) => `plugin/skills/${d}/SKILL.md`),
 ];

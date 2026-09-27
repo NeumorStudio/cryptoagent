@@ -1,11 +1,11 @@
 ---
 name: trading
-description: Configura y lanza una misión del agente trader. Pregunta capital, objetivo y tiempo, abre el panel en directo si el usuario quiere y pone al agente a trabajar en segundo plano.
+description: Configura y lanza una misión del agente trader. Pregunta capital, objetivo y tiempo, abre el panel en directo si el usuario quiere y pone a trabajar en segundo plano al agente y a su revisor.
 disable-model-invocation: true
-allowed-tools: mcp__plugin_cryptoagent_cryptosim__mission_status, mcp__plugin_cryptoagent_cryptosim__create_mission, mcp__plugin_cryptoagent_cryptosim__start_dashboard, mcp__plugin_cryptoagent_cryptosim__stop_mission, mcp__plugin_cryptoagent_cryptosim__status_report
+allowed-tools: Agent, mcp__plugin_cryptoagent_cryptosim__mission_status, mcp__plugin_cryptoagent_cryptosim__create_mission, mcp__plugin_cryptoagent_cryptosim__start_dashboard, mcp__plugin_cryptoagent_cryptosim__stop_mission, mcp__plugin_cryptoagent_cryptosim__status_report
 ---
 
-Vas a preparar y lanzar una misión del agente `cryptoagent:trader`. Habla con el usuario en español. Sigue estos pasos en orden.
+Vas a preparar y lanzar una misión del agente `cryptoagent:trader`, con su revisor `cryptoagent:reviewer` (analiza lo que hace el trader y escribe su memoria). Habla con el usuario en español. Sigue estos pasos en orden.
 
 ## 1. Comprobar el simulador
 
@@ -18,7 +18,7 @@ Llama a `mission_status`.
 ## 2. Misión activa
 
 Si hay una misión activa, pregunta con AskUserQuestion qué quiere hacer. En la descripción de las opciones incluye el objetivo, el valor actual y el tiempo restante:
-- "Continuar la misión activa": pregunta solo si quiere abrir el panel (Sí / No) y salta al paso 4.
+- "Continuar la misión activa": pregunta solo si quiere abrir el panel (Sí / No) y salta al paso 4. En el paso 5, lanza el trader y el revisor en segundo plano (5.2 y 5.3), sin la preparación.
 - "Empezar una nueva": la actual se cancelará. Sigue en el paso 3 y crea la misión con `replace: true`.
 - "Detenerla": pregunta con AskUserQuestion si cerrar las posiciones a mercado o dejar la cartera como está, llama a `stop_mission` con `close_positions` según la respuesta, resume el valor final y para aquí.
 
@@ -47,20 +47,26 @@ Llama a `start_dashboard` con `open_in_system_browser: true`: el panel se abre e
 
 Si falla, díselo al usuario con el motivo y sigue: el agente puede trabajar sin panel.
 
-## 5. Lanzar el agente
+## 5. Lanzar los agentes
 
-Lanza el subagente con la herramienta Agent:
-- `subagent_type`: `cryptoagent:trader`
-- `description`: `Misión de trading`
-- `run_in_background`: `true`
-- `prompt`: exactamente `Trabaja en tu misión.`
+Con la herramienta Agent, en este orden:
 
-No añadas nada más al prompt: ni ideas, ni estrategias, ni contexto de esta conversación. El agente decide solo; todo lo que necesita está en su propia configuración y en el simulador.
+1. **Preparación** (en primer plano, espera a que termine): `subagent_type` `cryptoagent:reviewer`, `description` `Preparar la misión`, `prompt` exactamente `Prepara la misión.` El revisor repasa las misiones anteriores y escribe un briefing para esta. Si falla, díselo al usuario en una línea y sigue: el trader puede trabajar sin briefing.
+2. **Trader** (en segundo plano): `subagent_type` `cryptoagent:trader`, `description` `Misión de trading`, `run_in_background` `true`, `prompt` exactamente `Trabaja en tu misión.`
+3. **Revisor durante la misión** (en segundo plano): `subagent_type` `cryptoagent:reviewer`, `description` `Revisor de la misión`, `run_in_background` `true`, `prompt` exactamente `Vigila la misión.`
+
+No añadas nada más a los prompts: ni ideas, ni estrategias, ni contexto de esta conversación. Todo lo que necesitan está en su propia configuración y en el simulador.
 
 ## 6. Avisar al usuario
 
-Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
+Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
 
-Cuando el agente termine, llama a `status_report`:
+## 7. Mientras dura la misión
+
+Cuando termine un **revisor** en segundo plano:
+- Si su respuesta empieza por "Misión terminada:", no lo relances.
+- Si no, y la misión sigue activa (compruébalo con `mission_status`), vuelve a lanzarlo igual que en el paso 5.3. No se lo cuentes al usuario más allá de una línea breve: es rutina.
+
+Cuando termine el **trader**, llama a `status_report`:
 - Si la misión sigue activa (el agente se detuvo antes de tiempo), díselo al usuario y ofrécele relanzarlo con el mismo prompt.
-- Si ha terminado, resume el resultado y envía una notificación con PushNotification (`status: "proactive"`), en una línea de menos de 200 caracteres y sin formato, empezando por el resultado. Por ejemplo: "Misión #4 conseguida: 100 $ → 111,20 $ (+11,2 %) en 38 min". Si la herramienta no existe o no se envía, no pasa nada: el resumen ya está en el chat.
+- Si ha terminado, resume el resultado y envía una notificación con PushNotification (`status: "proactive"`), en una línea de menos de 200 caracteres y sin formato, empezando por el resultado. Por ejemplo: "Misión #4 conseguida: 100 $ → 111,20 $ (+11,2 %) en 38 min". Si la herramienta no existe o no se envía, no pasa nada: el resumen ya está en el chat. El revisor hará la retrospectiva de la misión; si no hay ninguno trabajando en segundo plano, lánzalo como en el paso 5.3.

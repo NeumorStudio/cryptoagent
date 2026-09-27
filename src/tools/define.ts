@@ -15,9 +15,23 @@ export interface ToolCtx {
  */
 export type ToolKind = "trade" | "research" | "memory" | "misc";
 
+/**
+ * Quién puede usarla. trader: el agente que opera. reviewer: el agente revisor, que escribe la memoria.
+ * user: la sesión del usuario (comandos). both: los dos agentes. Por defecto, el trader.
+ * Los dos agentes comparten el servidor MCP: el reparto se aplica en su configuración (disallowedTools),
+ * y un test comprueba que coincide con este campo.
+ */
+export type ToolRole = "trader" | "reviewer" | "user" | "both";
+
 export interface ToolDef<S extends z.ZodObject> {
   name: string;
   kind: ToolKind;
+  role?: ToolRole;
+  /**
+   * Al responder, añade el briefing del revisor si ha cambiado desde la última vez que lo vio el agente.
+   * Solo en herramientas del agente que opera (el revisor no debe "consumir" sus propias novedades).
+   */
+  deliversNews?: boolean;
   description: string;
   schema: S;
   run: (input: z.infer<S>, ctx: ToolCtx) => Promise<ToolOutput>;

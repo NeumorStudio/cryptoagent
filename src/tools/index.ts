@@ -28,6 +28,21 @@ const reasoning = z.string().describe("Por qué haces esto. Queda en el diario."
 
 const chainParam = z.enum(CHAINS as [ChainId, ...ChainId[]]).describe("Cadena en la que operas o investigas");
 
+// Condición de una creencia sobre los datos de entrada de las posiciones.
+const conditionSchema = z
+  .object({
+    all: z
+      .array(
+        z.object({
+          f: z.enum(memory.CONDITION_FIELDS),
+          op: z.enum(memory.CONDITION_OPS),
+          v: z.union([z.number(), z.string(), z.boolean()]),
+        }),
+      )
+      .min(1),
+  })
+  .describe('Todas las cláusulas deben cumplirse. Ejemplo: {"all":[{"f":"ageMinutes","op":"<","v":30},{"f":"organicScore","op":">=","v":50}]}');
+
 // Alias de tokens que entiende cada cadena, para las descripciones.
 const TOKEN_ALIASES = "en Solana: SOL y USDC";
 
@@ -41,17 +56,20 @@ const thesis = z
       .string()
       .min(1)
       .describe("Cuándo cerrarías con beneficio y cuándo la darías por fallida (si es una venta: qué harás después)"),
-    lessons_applied: z
+    beliefs_applied: z
+      .array(z.number().int())
+      .describe("Ids de las creencias de tu memoria que aplicas en esta operación (vacío si ninguna). El simulador medirá cómo le va a cada una"),
+    memory_note: z
       .string()
       .min(1)
-      .describe("Qué lecciones de tu memoria aplicas aquí (por su id) y cómo, o por qué ninguna aplica a esta situación"),
+      .describe("Cómo aplicas tu memoria aquí (creencias, howtos, el briefing del revisor) o por qué nada de ella aplica a esta situación"),
   })
   .describe("Tesis de la operación. Queda en el diario y el usuario la ve en el panel.");
 
 const formatThesis = (t: z.infer<typeof thesis>) =>
-  `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}\nLecciones: ${t.lessons_applied}`;
+  `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}\nMemoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}`;
 
-const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.lessons_applied });
+const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 
 
 // Herramientas del simulador: las comparten el runner por API y el servidor MCP.
@@ -81,7 +99,7 @@ export const SIM_TOOLS = [
   tool({
     name: "field_guide",
     kind: "research",
-    researchTarget: () => undefined,
+    role: "both",
     description:
       "Guía del terreno: qué mercados puede ejecutar el simulador y cómo los simula, cómo funciona pump.fun " +
       "(curva, comisiones, graduación) y qué APIs públicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
@@ -104,6 +122,7 @@ export const SIM_TOOLS = [
   tool({
     name: "mission_status",
     kind: "misc",
+    deliversNews: true,
     description:
       "Estado de tu misión: capital inicial, objetivo, valor actual de la cartera, cuánto falta y tiempo restante. " +
       "La misión termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
@@ -113,6 +132,7 @@ export const SIM_TOOLS = [
   tool({
     name: "wait",
     kind: "misc",
+    deliversNews: true,
     description:
       `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus órdenes condicionales se siguen vigilando. ` +
       "Vuelve antes si la misión termina. El tiempo también pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.",
@@ -140,6 +160,7 @@ export const SIM_TOOLS = [
     run: async ({ url }) => {
       if (!/^https?:\/\//i.test(url)) throw new Error("Solo se permiten URLs http(s)");
       const { status, body } = await fetchText(url, { timeoutMs: 20_000 });
+      memory.recordApiCall(url, status);
       return `HTTP ${status}\n${body.slice(0, 20000)}${body.length > 20000 ? `\n… (truncado, ${body.length} caracteres en total)` : ""}`;
     },
   }),
@@ -148,6 +169,7 @@ export const SIM_TOOLS = [
   tool({
     name: "portfolio",
     kind: "misc",
+    deliversNews: true,
     description:
       "Muestra tu cartera simulada y su valor en USD a precio de liquidación real ahora mismo, " +
       "el PnL desde el inicio y lo que valdría el capital inicial si se hubiera mantenido en SOL.",
@@ -361,72 +383,298 @@ export const SIM_TOOLS = [
     },
   }),
 
-  // ─── Memoria a largo plazo: lecciones entre misiones ──────────────────────
+  // ─── Memoria entre misiones (el agente que opera la lee; la escribe el revisor) ─
   tool({
-    name: "recall_lessons",
+    name: "recall_memory",
     kind: "memory",
+    role: "trader",
     researchTarget: () => undefined,
     description:
-      "Tu memoria entre misiones, ordenada por parecido con la misión actual (plazo, objetivo y enfoque): historial de misiones con su " +
-      "resultado, tus lecciones con su contexto y estadísticas reales de tus operaciones cerradas agrupadas por características " +
-      "(antigüedad y liquidez del token, si subía mucho al comprar, si investigaste antes…), en todas las misiones y en las parecidas.",
+      "Tu memoria entre misiones, ordenada por parecido con la misión actual. La escribe un agente revisor a partir de lo que pasó " +
+      "en tus misiones. Incluye: howtos (cómo se hace algo y qué errores evitar), creencias sobre el mercado con su evidencia real " +
+      "(calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la próxima vez, " +
+      "estadísticas de tus operaciones, los errores que se repiten y qué APIs han respondido bien.",
     schema: z.object({}),
     run: async (_i, ctx) => json(memory.recall(ctx.missionId)),
   }),
   tool({
     name: "trade_history",
     kind: "memory",
+    role: "trader",
     researchTarget: () => undefined,
     description:
       "Tus posiciones (de la misión indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al " +
-      "entrar (antigüedad, liquidez, variación, holders, riesgos) y cuánto habías investigado antes. Lo registra el simulador.",
+      "entrar (antigüedad, liquidez, variación, holders, riesgos), cuánto habías investigado antes, tu tesis y las creencias que aplicaste.",
     schema: z.object({ mission_id: z.number().int().optional(), limit: z.number().int().min(1).max(200).default(50) }),
     run: async ({ mission_id, limit }) => json(positions.listPositions(mission_id).slice(0, limit)),
   }),
   tool({
+    name: "report_observation",
+    kind: "memory",
+    role: "trader",
+    journaled: true,
+    description:
+      "Deja una observación para el revisor, que decidirá si pasa a tu memoria: algo que has descubierto sobre cómo se hace algo, " +
+      "un error y cómo lo has resuelto, un patrón del mercado que te ha llamado la atención… Úsala en cuanto lo veas, no al final.",
+    schema: z.object({
+      kind: z.enum(["procedimiento", "mercado", "error", "otro"]),
+      text: z.string().min(1).describe("Qué has observado, con datos concretos"),
+    }),
+    run: async ({ kind, text }, ctx) => `Observación #${memory.reportObservation(ctx.missionId, ctx.sessionId, kind, text)} anotada para el revisor.`,
+  }),
+  tool({
+    name: "request_capability",
+    kind: "memory",
+    role: "both",
+    journaled: true,
+    description:
+      "Anota una capacidad que no tienes y que necesitarías para intentar algo: una cuenta (X, Instagram, Telegram, un exchange…), " +
+      "una herramienta (navegador con sesión iniciada, un bot, una API de pago…), unos datos o un mercado que el simulador no permite. " +
+      "El usuario revisa estas peticiones y puede dártelas en el futuro. Explica qué harías exactamente con ella. No sustituye a " +
+      "record_hypothetical_action: esa anota lo que harías; esta, lo que te falta para poder hacerlo.",
+    schema: z.object({
+      category: z.enum(memory.CAPABILITY_CATEGORIES),
+      capability: z.string().min(1).describe("Qué necesitas, en pocas palabras (p. ej. 'cuenta de X para publicar')"),
+      why: z.string().min(1).describe("Por qué lo necesitas: qué has intentado sin ello y por qué no basta"),
+      plan: z.string().min(1).describe("Qué harías con ello, paso a paso, y qué esperas conseguir"),
+    }),
+    run: async (i, ctx) => {
+      const r = memory.requestCapability({ source: "trader", missionId: ctx.missionId, ...i });
+      return r.duplicate
+        ? `Ya estaba pedida (#${r.id}): se suma tu petición. El usuario la verá.`
+        : `Petición #${r.id} anotada. El usuario la verá en el panel y en /cryptoagent:estado.`;
+    },
+  }),
+
+  // ─── Revisor: lee todo lo ocurrido y escribe la memoria ────────────────────
+  tool({
+    name: "review_queue",
+    kind: "memory",
+    role: "reviewer",
+    description:
+      "Lo que tienes pendiente como revisor: misiones terminadas sin retrospectiva, la misión activa (actividad desde tu última revisión, " +
+      "cada cuánto conviene revisarla y si tiene briefing), observaciones del agente sin procesar, errores repetidos sin howto y creencias sin condición.",
+    schema: z.object({}),
+    run: async () => json(memory.reviewQueue()),
+  }),
+  tool({
+    name: "mission_review_data",
+    kind: "memory",
+    role: "reviewer",
+    description:
+      "Todo lo ocurrido en una misión en una sola llamada: misión, estadísticas, posiciones (con tesis, creencias aplicadas, datos de entrada " +
+      "y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. " +
+      "Con since (fecha ISO) solo lo posterior a esa fecha (útil a mitad de misión).",
+    schema: z.object({ mission_id: z.number().int(), since: z.string().optional() }),
+    run: async ({ mission_id, since }) => json(memory.missionReviewData(mission_id, since)),
+  }),
+  tool({
+    name: "memory_catalog",
+    kind: "memory",
+    role: "reviewer",
+    description:
+      "La memoria completa tal como la ve el agente (howtos, creencias activas con su evidencia calculada, historial, estadísticas, errores " +
+      "repetidos, APIs), ordenada por parecido con la misión indicada o la activa.",
+    schema: z.object({ mission_id: z.number().int().optional() }),
+    run: async ({ mission_id }, ctx) => json(memory.recall(mission_id ?? ctx.missionId)),
+  }),
+  tool({
+    name: "wait_for_activity",
+    kind: "memory",
+    role: "reviewer",
+    description:
+      "Espera (1-10 minutos) a que haya algo que revisar en la misión activa. Vuelve antes si la misión termina (reason: mission_ended), " +
+      "si toca la revisión periódica (interval_due) o si el agente ha acumulado actividad (activity). Si no, reason: timeout.",
+    schema: z.object({ max_minutes: z.number().min(1).max(10).default(10) }),
+    run: async ({ max_minutes }) => json(await memory.waitForActivity(max_minutes)),
+  }),
+  tool({
+    name: "write_howto",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description:
+      "Guarda conocimiento procedimental: cómo se hace algo en el simulador o en el mercado, qué falla y cómo evitarlo. " +
+      "scope: la cadena o exchange (solana, binance) o 'any'. Con fixes_error_ids lo vinculas a los errores que resuelve. " +
+      "Si ya hay uno casi igual, se rechaza: actualízalo con update_howto.",
+    schema: z.object({
+      scope: z.string().min(1),
+      topic: z.string().min(1).describe("Tema corto: 'órdenes condicionales', 'transferencias', 'comisiones'…"),
+      title: z.string().min(1),
+      steps: z.string().min(1).describe("Pasos concretos o regla práctica, con los datos que la respaldan"),
+      mission_id: z.number().int().optional().describe("Misión de la que sale"),
+      fixes_error_ids: z.array(z.number().int()).optional(),
+    }),
+    run: async (i) => {
+      const id = memory.writeHowto({ scope: i.scope, topic: i.topic, title: i.title, steps: i.steps, missionId: i.mission_id ?? null, fixesErrorIds: i.fixes_error_ids });
+      return `Howto #${id} guardado.`;
+    },
+  }),
+  tool({
+    name: "update_howto",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Corrige un howto, o márcalo obsoleto (status: obsolete, con superseded_by si otro lo sustituye).",
+    schema: z.object({
+      id: z.number().int(),
+      title: z.string().optional(),
+      steps: z.string().optional(),
+      status: z.enum(["active", "obsolete"]).optional(),
+      superseded_by: z.number().int().optional(),
+      fixes_error_ids: z.array(z.number().int()).optional(),
+    }),
+    run: async (i) => {
+      memory.updateHowto({ id: i.id, title: i.title, steps: i.steps, status: i.status, supersededBy: i.superseded_by, fixesErrorIds: i.fixes_error_ids });
+      return `Howto #${i.id} actualizado.`;
+    },
+  }),
+  tool({
+    name: "write_belief",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description:
+      "Guarda una creencia sobre el mercado (una hipótesis, no un hecho). Si puedes expresarla como condición sobre los datos de entrada " +
+      "de las posiciones, añádela: el simulador la contrastará con todas las operaciones pasadas y futuras (devuelve el resultado al momento). " +
+      `Campos de la condición: ${memory.CONDITION_FIELDS.join(", ")}. Con condición, expectation dice si cumplirla tiende a ganar (positive) o a perder (negative). ` +
+      "Si ya hay una casi igual o con la misma condición, se rechaza: corrígela con revise_belief.",
+    schema: z.object({
+      statement: z.string().min(1).describe("La creencia, con los datos que la originan"),
+      applies_to: z.string().min(1).describe("A qué misiones o situaciones se aplica"),
+      expectation: z.enum(["positive", "negative"]).optional(),
+      condition: conditionSchema.optional(),
+      mission_id: z.number().int().optional().describe("Misión de la que sale"),
+    }),
+    run: async (i) =>
+      json(memory.writeBelief({ statement: i.statement, appliesTo: i.applies_to, expectation: i.expectation, condition: i.condition, missionId: i.mission_id ?? null })),
+  }),
+  tool({
+    name: "revise_belief",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description:
+      "Corrige una creencia (texto, alcance, condición o expectativa) o retírala (retire: true) cuando los datos la contradigan. " +
+      "No se borra: queda retirada con su motivo. Devuelve su evidencia recalculada.",
+    schema: z.object({
+      id: z.number().int(),
+      statement: z.string().optional(),
+      applies_to: z.string().optional(),
+      expectation: z.enum(["positive", "negative"]).optional(),
+      condition: conditionSchema.optional(),
+      clear_condition: z.boolean().optional(),
+      retire: z.boolean().optional(),
+      reason: z.string().min(1).describe("Por qué la cambias"),
+    }),
+    run: async (i) =>
+      json(
+        memory.reviseBelief({
+          id: i.id,
+          statement: i.statement,
+          appliesTo: i.applies_to,
+          expectation: i.expectation,
+          condition: i.condition,
+          clearCondition: i.clear_condition,
+          retire: i.retire,
+          reason: i.reason,
+        }),
+      ),
+  }),
+  tool({
+    name: "convert_belief_to_howto",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Convierte en howto una creencia que en realidad es conocimiento procedimental (cómo funciona algo), no una hipótesis de mercado.",
+    schema: z.object({ id: z.number().int(), scope: z.string().min(1), topic: z.string().min(1), title: z.string().min(1), steps: z.string().min(1) }),
+    run: async (i) => `Creencia #${i.id} convertida en el howto #${memory.convertBeliefToHowto(i)}.`,
+  }),
+  tool({
+    name: "resolve_observation",
+    kind: "memory",
+    role: "reviewer",
+    description: "Marca una observación del agente como usada (pasó a la memoria) o descartada, con una nota.",
+    schema: z.object({ id: z.number().int(), status: z.enum(["used", "dismissed"]), note: z.string().min(1) }),
+    run: async ({ id, status, note }) => {
+      memory.resolveObservation(id, status, note);
+      return `Observación #${id}: ${status}.`;
+    },
+  }),
+  tool({
+    name: "write_mission_review",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description:
+      "Retrospectiva de una misión terminada: qué se intentó, qué pasó (con cifras), qué sorprendió y qué conviene hacer la próxima vez. " +
+      "Devuelve las estadísticas de la misión calculadas por el simulador.",
+    schema: z.object({
+      mission_id: z.number().int(),
+      what_was_tried: z.string().min(1),
+      what_happened: z.string().min(1),
+      surprises: z.string().optional(),
+      next_time: z.string().min(1),
+    }),
+    run: async (i) =>
+      json(memory.writeMissionReview({ missionId: i.mission_id, whatWasTried: i.what_was_tried, whatHappened: i.what_happened, surprises: i.surprises, nextTime: i.next_time })),
+  }),
+  tool({
     name: "mark_mission_reviewed",
     kind: "memory",
-    description:
-      "Da por revisada una misión terminada cuando, tras analizarla, no aporta ninguna lección nueva. Si aprendiste algo, usa write_lesson.",
-    schema: z.object({ mission_id: z.number().int(), note: z.string().min(1).describe("Por qué no hay lecciones nuevas") }),
-    run: async ({ mission_id, note }, ctx) => {
-      memory.markReviewed(mission_id);
-      logJournal({ missionId: mission_id, sessionId: ctx.sessionId, kind: "mission", summary: `Misión #${mission_id} revisada sin lecciones nuevas: ${note}` });
+    role: "reviewer",
+    description: "Da por revisada una misión terminada que no llegó a tener operaciones (no hay nada que analizar).",
+    schema: z.object({ mission_id: z.number().int(), note: z.string().min(1) }),
+    run: async ({ mission_id, note }) => {
+      memory.markEmptyMissionReviewed(mission_id, note);
       return `Misión #${mission_id} marcada como revisada.`;
     },
   }),
   tool({
-    name: "write_lesson",
+    name: "review_checkpoint",
     kind: "memory",
-    journaled: true,
+    role: "reviewer",
     description:
-      "Guarda una lección en tu memoria a largo plazo. Se conserva entre misiones y marca la misión como revisada. " +
-      "Por defecto se vincula a la misión actual (o a la última si no hay ninguna activa); indica mission_id para otra.",
-    schema: z.object({
-      lesson: z.string().min(1).describe("Qué aprendiste: qué hiciste, qué pasó y qué harías distinto"),
-      applies_to: z.string().min(1).describe("A qué tipo de misión o situación se aplica (plazo, objetivo, enfoque, tipo de token…)"),
-      evidence: z.string().min(1).describe("En qué te basas: misiones y operaciones concretas, con sus cifras"),
-      confidence: z.enum(["baja", "media", "alta"]).describe("Cuánto confías en ella según la cantidad de pruebas"),
-      mission_id: z.number().int().optional(),
-    }),
-    run: async ({ lesson, applies_to, evidence, confidence, mission_id }, ctx) => {
-      const missionId = mission_id ?? ctx.missionId;
-      const id = db
-        .prepare("INSERT INTO lessons (created_at, mission_id, text, applies_to, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(now(), missionId, lesson, applies_to, evidence, confidence).lastInsertRowid;
-      if (missionId) memory.markReviewed(missionId);
-      return `Lección #${id} guardada${missionId ? ` (misión #${missionId})` : ""}.`;
+      "Marca que has revisado la misión activa hasta ahora, con un resumen breve de lo que has visto y hecho. " +
+      "La siguiente revisión partirá de aquí (mission_review_data con since).",
+    schema: z.object({ mission_id: z.number().int(), summary: z.string().min(1) }),
+    run: async ({ mission_id, summary }) => {
+      memory.reviewCheckpoint(mission_id, summary);
+      return "Revisión anotada.";
     },
   }),
   tool({
-    name: "delete_lesson",
+    name: "write_briefing",
     kind: "memory",
-    journaled: true,
-    description: "Borra una lección de tu memoria cuando los resultados la contradigan o ya no te sirva.",
-    schema: z.object({ id: z.number().int() }),
-    run: async ({ id }) => {
-      if (!db.prepare("DELETE FROM lessons WHERE id = ?").run(id).changes) throw new Error(`No existe la lección #${id}`);
-      return `Lección #${id} borrada.`;
+    role: "reviewer",
+    description:
+      "Escribe (o reescribe) el briefing de una misión: lo que el agente debe tener presente de su memoria para esa misión en concreto, " +
+      "citando los ids de howtos y creencias. El agente lo recibe al empezar cada sesión y, si lo cambias a mitad de misión, en su siguiente acción.",
+    schema: z.object({ mission_id: z.number().int(), text: z.string().min(1) }),
+    run: async ({ mission_id, text }) => {
+      memory.writeBriefing(mission_id, text);
+      return `Briefing de la misión #${mission_id} guardado.`;
+    },
+  }),
+
+  // ─── Usuario: peticiones de capacidades ───────────────────────────────────
+  tool({
+    name: "capability_requests",
+    kind: "misc",
+    role: "user",
+    description: "[Solo para el usuario] Capacidades que el agente ha pedido (cuentas, herramientas, datos, mercados), con cuántas veces y en qué misiones.",
+    schema: z.object({ status: z.enum(["open", "all"]).default("open") }),
+    run: async ({ status }) => json(memory.listCapabilityRequests(status)),
+  }),
+  tool({
+    name: "resolve_capability_request",
+    kind: "misc",
+    role: "user",
+    description: "[Solo para el usuario] Responde a una petición del agente: aceptada, rechazada o hecha, con una nota.",
+    schema: z.object({ id: z.number().int(), status: z.enum(["accepted", "rejected", "done"]), response: z.string().min(1) }),
+    run: async ({ id, status, response }) => {
+      memory.resolveCapabilityRequest(id, status, response);
+      return `Petición #${id}: ${status}.`;
     },
   }),
 
@@ -457,6 +705,13 @@ export const SIM_TOOLS = [
 
 type AnyTool = (typeof SIM_TOOLS)[number];
 
+/** Añade al resultado el briefing del revisor si ha cambiado desde la última vez que lo vio el agente. */
+function withNews(content: ToolOutput, missionId: number | null): ToolOutput {
+  if (missionId === null || typeof content !== "string") return content;
+  const news = memory.takeBriefingNews(missionId);
+  return news ? `${content}\n\n📌 El revisor ha actualizado tu briefing para esta misión:\n${news}` : content;
+}
+
 export async function runTool(
   name: string,
   rawInput: unknown,
@@ -465,41 +720,40 @@ export async function runTool(
 ): Promise<{ content: ToolOutput; isError: boolean }> {
   const def = (tools as readonly AnyTool[]).find((t) => t.name === name);
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
+  const fail = (message: string) => {
+    // Los errores se guardan para que el revisor detecte los que se repiten y escriba cómo evitarlos.
+    memory.recordToolError({ missionId: ctx.missionId, sessionId: ctx.sessionId, tool: name, input: rawInput, message });
+    return { content: `Error: ${message}`, isError: true };
+  };
   const parsed = def.schema.safeParse(rawInput);
-  if (!parsed.success) return { content: `Entrada no válida: ${parsed.error.message}`, isError: true };
+  if (!parsed.success) return fail(`Entrada no válida: ${parsed.error.message}`);
   const trading = def.kind === "trade";
   const current = ctx.missionId !== null ? mission.getMission(ctx.missionId) : undefined;
   if (trading && current?.status !== "active") {
     return { content: `Error: no hay ninguna misión activa. ${(await mission.missionStatus(ctx.missionId ?? undefined)).message ?? ""}`, isError: true };
   }
-  // Ciclo de aprendizaje: no se opera sin haber revisado antes la misión anterior.
-  const unreviewed = trading ? memory.pendingReviews() : [];
-  if (unreviewed.length) {
-    return {
-      content:
-        `Error: antes de operar tienes que revisar ${unreviewed.length > 1 ? "las misiones" : "la misión"} #${unreviewed.join(", #")}. ` +
-        "Analiza qué pasó (trade_history y journal_history con su mission_id) y guarda lo aprendido con write_lesson, " +
-        "o usa mark_mission_reviewed si no aporta nada nuevo.",
-      isError: true,
-    };
+  const beliefs = (parsed.data as { thesis?: { beliefs_applied?: number[] } }).thesis?.beliefs_applied;
+  if (beliefs?.length) {
+    const unknown = memory.unknownBeliefs(beliefs);
+    if (unknown.length) return fail(`Las creencias #${unknown.join(", #")} no existen o ya no están activas. Activas: ${memory.activeBeliefIds().map((id) => `#${id}`).join(", ") || "ninguna"}`);
   }
   if (def.researchTarget) {
     positions.logResearch(ctx.missionId, name, (def.researchTarget as (i: unknown) => string | undefined)(parsed.data)?.trim() || undefined);
   }
   try {
-    const content = await (def.run as (i: unknown, c: typeof ctx) => Promise<ToolOutput>)(parsed.data, ctx);
+    let content = await (def.run as (i: unknown, c: typeof ctx) => Promise<ToolOutput>)(parsed.data, ctx);
     if (trading) {
       // Tras cada operación se comprueba si ya se ha alcanzado el objetivo.
       const ended = await mission.checkMission(ctx.missionId ?? undefined).catch(() => []);
-      if (ended.length && typeof content === "string") return { content: `${content}\n\n${ended.join("\n")}`, isError: false };
+      if (ended.length && typeof content === "string") content = `${content}\n\n${ended.join("\n")}`;
     }
+    if (trading || def.deliversNews) content = withNews(content, ctx.missionId);
     return { content, isError: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (trading) {
       logJournal({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
     }
-    return { content: `Error: ${message}`, isError: true };
+    return fail(message);
   }
 }
-

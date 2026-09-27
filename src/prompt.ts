@@ -5,6 +5,7 @@ import path from "node:path";
 import { projectRoot } from "./paths.js";
 
 export const TRADER_PROMPT_PATH = path.join(projectRoot, "plugin", "agents", "trader.md");
+export const REVIEWER_PROMPT_PATH = path.join(projectRoot, "plugin", "agents", "reviewer.md");
 
 const PLUGIN_ONLY = "<!-- solo-plugin -->";
 
@@ -18,8 +19,9 @@ export function buildPrompt(markdown: string, variant: "plugin" | "api"): string
   return kept.join("\n").trim();
 }
 
-/** Prompt del agente para el runner por API. */
-export function apiSystemPrompt(): string {
+/** Prompts de los agentes para el runner por API. */
+export function apiSystemPrompt(role: "trader" | "reviewer" = "trader"): string {
+  if (role === "reviewer") return buildPrompt(readFileSync(REVIEWER_PROMPT_PATH, "utf8"), "api");
   return (
     buildPrompt(readFileSync(TRADER_PROMPT_PATH, "utf8"), "api") +
     "\n\nCuando la misión haya terminado, responde sin usar herramientas: tu última respuesta cierra la sesión."

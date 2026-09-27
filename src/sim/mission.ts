@@ -43,10 +43,10 @@ export function activeMissions(): Mission[] {
 export function missionHistory() {
   const rows = db
     .prepare(
-      `SELECT m.*, (SELECT COUNT(*) FROM lessons l WHERE l.mission_id = m.id) AS lessons
+      `SELECT m.*, (SELECT r.origin FROM mission_reviews r WHERE r.mission_id = m.id) AS review_origin
        FROM missions m WHERE m.status NOT IN ('active', 'closing') ORDER BY m.id`,
     )
-    .all() as unknown as Array<Mission & { lessons: number }>;
+    .all() as unknown as Array<Mission & { review_origin: string | null }>;
   return rows.map((m) => {
     const minutes = Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 60_000);
     return {
@@ -59,7 +59,7 @@ export function missionHistory() {
       finalUsd: m.final_usd === null ? null : Number(m.final_usd.toFixed(2)),
       resultPct: m.final_usd === null ? null : Number((((m.final_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(2)),
       outcome: m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no llegó al objetivo" : "cancelada",
-      lessonsWritten: m.lessons,
+      reviewed: m.review_origin !== null || m.reviewed_at !== null,
     };
   });
 }

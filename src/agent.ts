@@ -4,10 +4,10 @@ import { logActivity } from "./db.js";
 import { apiSystemPrompt } from "./prompt.js";
 import { getActiveMission, getLastMission } from "./sim/mission.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
-import { runTool, toolDefinitions } from "./tools/runner.js";
+import { runTool, toolDefinitions, type AgentRole } from "./tools/runner.js";
 
-// El prompt se lee de plugin/agents/trader.md (una sola fuente para el plugin y el runner por API).
-const SYSTEM_PROMPT = apiSystemPrompt();
+// Los prompts se leen de plugin/agents/*.md (una sola fuente para el plugin y el runner por API).
+const SYSTEM_PROMPTS: Record<AgentRole, string> = { trader: apiSystemPrompt("trader"), reviewer: apiSystemPrompt("reviewer") };
 
 const FALLBACK_MODELS = new Set(["claude-opus-5", "claude-fable-5-1"]);
 
@@ -18,14 +18,21 @@ function log(tag: string, text: string) {
   console.log(`[${time}] ${tag} ${text}`);
 }
 
-/** Una sesión del agente sobre una misión (por defecto, la principal activa). */
-export async function runSession(missionId = (getActiveMission() ?? getLastMission())?.id ?? null): Promise<void> {
+/**
+ * Una sesión de un agente sobre una misión (por defecto, la activa o la última).
+ * El trader empieza con su briefing; el revisor, con la tarea que se le pida ("Prepara la misión.", "Vigila la misión.").
+ */
+export async function runSession(opts: { role?: AgentRole; missionId?: number | null; task?: string } = {}): Promise<void> {
+  const role = opts.role ?? "trader";
+  const missionId = opts.missionId !== undefined ? opts.missionId : ((getActiveMission() ?? getLastMission())?.id ?? null);
   const sessionId = startSession(missionId);
-  log("▶", `Sesión #${sessionId} iniciada`);
+  log("▶", `Sesión #${sessionId} (${role === "trader" ? "trader" : "revisor"}) iniciada`);
 
-  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: await sessionBriefing(sessionId, missionId) }];
+  const first = role === "trader" ? await sessionBriefing(sessionId, missionId) : (opts.task ?? "Prepara la misión.");
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: first }];
   const useFallbacks = FALLBACK_MODELS.has(config.model);
-  const tools = toolDefinitions.map((t) => ("input_schema" in t ? { ...t, eager_input_streaming: true } : t));
+  const tools = toolDefinitions(role).map((t) => ("input_schema" in t ? { ...t, eager_input_streaming: true } : t));
+  const SYSTEM_PROMPT = SYSTEM_PROMPTS[role];
 
   let inputTokens = 0;
   let outputTokens = 0;
@@ -98,7 +105,7 @@ export async function runSession(missionId = (getActiveMission() ?? getLastMissi
       toolUses.map(async (use) => {
         log("🛠", `${use.name} ${JSON.stringify(use.input).slice(0, 300)}`);
         if (use.name !== "log_progress") logActivity({ missionId, sessionId, kind: "tool", title: use.name, body: JSON.stringify(use.input) });
-        const { content, isError } = await runTool(use.name, use.input, { sessionId, missionId });
+        const { content, isError } = await runTool(role, use.name, use.input, { sessionId, missionId });
         if (isError) log("✖", String(content).slice(0, 300));
         if (use.name !== "log_progress") {
           const text = typeof content === "string" ? content : "[contenido no textual]";

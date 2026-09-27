@@ -26,6 +26,8 @@ export type EventKind =
   | "mission"
   | "note"
   | "lesson"
+  | "review"
+  | "request"
   | "session";
 
 export interface TimelineEvent {
@@ -71,7 +73,7 @@ function describeToolUse(rawName: string, input: any): { kind: EventKind; title:
   if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input.url}` };
   if (name === "mcp__cryptosim__start_session") return { kind: "session", title: "Empieza una sesión de trabajo" };
   if (name === "mcp__cryptosim__end_session") return { kind: "session", title: "Cierra la sesión" };
-  if (name === "mcp__cryptosim__recall_lessons") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
+  if (name === "mcp__cryptosim__recall_memory") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
   if (name === "mcp__cryptosim__wait") return { kind: "tool", title: `Espera ${input.minutes} min` };
   if (name.startsWith("mcp__cryptosim__")) return { kind: "tool", title: `Consulta ${name.replace("mcp__cryptosim__", "").replace(/_/g, " ")}` };
 
@@ -205,8 +207,12 @@ function dbEvents(missionId: number | null): TimelineEvent[] {
       body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : undefined,
     });
   }
-  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons WHERE mission_id = ?").all(missionId) as any[]) {
-    events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lección #${l.id}, de la misión #${l.mission_id}` : undefined });
+  // Lo que el revisor ha guardado en la memoria a partir de esta misión.
+  for (const b of db.prepare("SELECT id, created_at, statement FROM beliefs WHERE source_mission_id = ? AND origin = 'reviewer'").all(missionId) as any[]) {
+    events.push({ id: `b${b.id}`, ts: b.created_at, kind: "lesson", title: b.statement, body: `Creencia #${b.id} (la escribe el revisor)` });
+  }
+  for (const h of db.prepare("SELECT id, created_at, title, steps FROM howtos WHERE source_mission_id = ?").all(missionId) as any[]) {
+    events.push({ id: `h${h.id}`, ts: h.created_at, kind: "lesson", title: h.title, body: `Howto #${h.id}: ${h.steps}` });
   }
   for (const n of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId) as any[]) {
     events.push({ id: `n${n.id}`, ts: n.ts, kind: "note", title: n.text });

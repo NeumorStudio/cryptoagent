@@ -7,7 +7,12 @@ Solana a través de Jupiter (incluidos los tokens de pump.fun) y Binance spot. N
 - **Misiones**: capital inicial, objetivo y plazo real. La misión termina sola al alcanzar el objetivo
   o al acabarse el tiempo, y entonces se venden todas las posiciones a mercado.
 - **Agente libre**: decide qué investigar y qué hacer. Opcionalmente le das instrucciones por misión.
-- **Memoria entre misiones**: historial objetivo de resultados y lecciones que escribe el propio agente.
+- **Memoria entre misiones, escrita por un revisor**: un segundo agente analiza lo que hace el que opera y escribe su memoria.
+  Tiene tres partes: howtos (cómo se hace algo y qué errores evitar), creencias sobre el mercado cuya evidencia calcula el
+  simulador con las operaciones reales, y la retrospectiva de cada misión. Antes de cada misión, el revisor le prepara un briefing;
+  en misiones largas, revisa también a mitad y le avisa si hay algo importante.
+- **Peticiones**: si el agente necesita algo que no tiene (una cuenta en una red social, otro exchange, una herramienta…),
+  lo anota y tú decides si se lo das.
 - **Panel en directo** (localhost): progreso, gráfico, posiciones, órdenes, memoria y una transcripción
   de lo que hace el agente.
 
@@ -38,6 +43,7 @@ este repositorio es su código fuente.
 - `/cryptoagent:estado`: resumen de la misión en el chat (progreso, posiciones, últimos movimientos con su motivo
   y la última nota del agente). Pensado también para consultarlo desde el móvil con Remote Control.
 - `/cryptoagent:parar`: detiene la misión activa (cerrando posiciones o no).
+- `/cryptoagent:peticiones`: lo que el agente ha pedido y no tiene; puedes aceptarlo, rechazarlo o marcarlo como hecho.
 
 Al terminar una misión, Claude te avisa con una notificación; con Remote Control conectado, también en el móvil.
 
@@ -77,8 +83,9 @@ El agente tiene una guía con estos detalles y las APIs de datos disponibles: [k
 plugin/                           el plugin que se instala
   .claude-plugin/plugin.json      manifiesto y versión
   .mcp.json                       servidor MCP del simulador
-  agents/trader.md                el agente
-  skills/trading, skills/parar    los comandos
+  agents/trader.md                el agente que opera
+  agents/reviewer.md              el revisor: escribe la memoria y prepara cada misión
+  skills/                         los comandos (trading, estado, parar, peticiones)
   dist/                           servidor MCP empaquetado (generado, se sube al repo)
 src/                              código fuente del simulador, el panel y el runner por API
 knowledge/                        guía del terreno
@@ -98,7 +105,7 @@ npx tsx scripts/smoke.ts         # recorrido contra las APIs reales en una base 
 Los cambios de esquema van en `src/migrations.ts`, como un paso nuevo al final de la lista. Antes de migrar una
 base de datos con datos se guarda una copia en `~/.cryptoagent/backups`.
 
-El prompt del agente está solo en `plugin/agents/trader.md`. El runner por API lo lee de ahí y quita las líneas
+Los prompts de los agentes están solo en `plugin/agents/`. El runner por API los lee de ahí y quita las líneas
 marcadas con `<!-- solo-plugin -->`.
 
 Para probar tus cambios, clona `NeumorStudio/claude-plugins` junto a este repositorio (`../claude-plugins`),

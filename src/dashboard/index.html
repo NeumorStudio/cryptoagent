@@ -160,7 +160,8 @@
   .ko { color: var(--loss); }
   .lesson { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
   .lesson .when { color: var(--muted); font-size: 12px; }
-  #lessons { margin-top: 12px; }
+  #lessons { margin-top: 4px; }
+  h3.sub { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 0; font-weight: 600; }
 
   /* ── Transcripción ────────────────────────────────────────────────── */
   .transcript { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -214,7 +215,7 @@
 
   .k-thought, .k-thinking { background: var(--think-bg); }
   .k-thought .what p, .k-thinking .what p { font-size: 16px; line-height: 1.55; }
-  .k-thought .who, .k-thinking .who, .k-note .who, .k-lesson .who { color: var(--think); }
+  .k-thought .who, .k-thinking .who, .k-note .who, .k-lesson .who, .k-review .who, .k-request .who { color: var(--think); }
   .k-lesson .what p { font-weight: 500; }
   .k-search .who, .k-browse .who, .k-fetch .who, .k-tool .who, .k-result .who { color: var(--research); }
   .k-trade .who { color: var(--trade); }
@@ -313,7 +314,10 @@
         <thead><tr><th>Misión</th><th class="r">Objetivo</th><th class="r">Resultado</th></tr></thead>
         <tbody id="history"></tbody>
       </table>
+      <h3 class="sub">Lo que ha aprendido</h3>
       <div id="lessons"></div>
+      <h3 class="sub">Lo que pide</h3>
+      <div id="requests"></div>
     </section>
   </aside>
 
@@ -445,13 +449,26 @@ function renderState() {
   }
   const lessons = $("lessons");
   lessons.replaceChildren();
-  if (!state.lessons.length) lessons.append(el("p", { class: "empty" }, "Todavía no ha guardado ninguna lección."));
-  for (const l of state.lessons) {
-    const meta = [`Lección #${l.id}`, l.mission_id ? `misión #${l.mission_id}` : null, l.confidence ? `confianza ${l.confidence}` : null].filter(Boolean).join(" · ");
+  const mem = state.memory;
+  if (!mem.beliefs.length && !mem.howtos.length) lessons.append(el("p", { class: "empty" }, "Todavía no hay nada en su memoria."));
+  for (const h of mem.howtos) {
     lessons.append(el("div", { class: "lesson" },
-      el("div", {}, l.text),
-      l.applies_to ? el("div", { class: "when" }, `Aplica a: ${l.applies_to}`) : null,
-      el("div", { class: "when" }, meta)));
+      el("div", {}, h.title),
+      el("div", { class: "when" }, `Howto #${h.id} · ${h.topic} · ${VENUE_LABELS[h.scope] ?? (h.scope === "any" ? "general" : h.scope)}`)));
+  }
+  for (const b of mem.beliefs) {
+    lessons.append(el("div", { class: "lesson" },
+      el("div", {}, b.statement.length > 260 ? b.statement.slice(0, 260) + "…" : b.statement),
+      el("div", { class: "when" }, `Creencia #${b.id} · ${b.verdict}`)));
+  }
+  const requests = $("requests");
+  requests.replaceChildren();
+  if (!mem.requests.length) requests.append(el("p", { class: "empty" }, "No ha pedido nada que no tenga."));
+  for (const r of mem.requests) {
+    requests.append(el("div", { class: "lesson" },
+      el("div", {}, r.capability),
+      el("div", { class: "when" }, r.why),
+      el("div", { class: "when" }, `Petición #${r.id}${r.times_requested > 1 ? ` · ${r.times_requested} veces` : ""} · responde con /cryptoagent:peticiones`)));
   }
 
   renderChart();
@@ -526,13 +543,13 @@ new ResizeObserver(() => state && renderChart()).observe($("chartWrap"));
 
 // ── Transcripción ──────────────────────────────────────────────────────
 const WHO = {
-  thought: "ANOTA", thinking: "RAZONA", text: "DICE", note: "APUNTA", lesson: "APRENDE",
+  thought: "ANOTA", thinking: "RAZONA", text: "DICE", note: "APUNTA", lesson: "APRENDE", review: "REVISOR", request: "PIDE",
   search: "BUSCA", browse: "NAVEGA", fetch: "CONSULTA", tool: "HERRAMIENTA", result: "RESULTADO",
   trade: "OPERA", order: "ORDEN", hypothetical: "HIPÓTESIS",
   mission: "MISIÓN", session: "SESIÓN", error: "ERROR",
 };
 const GROUPS = {
-  mind: ["thought", "thinking", "text", "note", "lesson"],
+  mind: ["thought", "thinking", "text", "note", "lesson", "review", "request"],
   research: ["search", "browse", "fetch", "tool", "result"],
   trades: ["trade", "order", "hypothetical"],
   system: ["mission", "session", "error"],

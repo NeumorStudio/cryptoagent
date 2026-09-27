@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import { asset } from "../paths.js";
 import { db } from "../db.js";
+import { listCapabilityRequests, recall } from "../sim/memory.js";
 import { getActiveMission, getLastMission, missionHistory, type Mission } from "../sim/mission.js";
 import { listOrders } from "../sim/orders.js";
 import { valuation } from "../sim/portfolio.js";
@@ -33,6 +34,25 @@ async function refreshValuation(log: (msg: string) => void) {
   }
 }
 
+// La memoria se recalcula como mucho cada 30 s: la evidencia de las creencias se calcula con todas las posiciones.
+let memoryCache: { at: number; missionId: number | null; value: ReturnType<typeof buildMemory> } | null = null;
+
+function buildMemory(missionId: number | null) {
+  const mem = recall(missionId, 12);
+  return {
+    howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
+    beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: b.statement, verdict: b.evidence.verdict })),
+    requests: listCapabilityRequests("open").map((r) => ({ id: r.id, capability: r.capability, why: r.why, times_requested: r.times_requested })),
+  };
+}
+
+function memorySummary(missionId: number | null) {
+  if (!memoryCache || memoryCache.missionId !== missionId || Date.now() - memoryCache.at > 30_000) {
+    memoryCache = { at: Date.now(), missionId, value: buildMemory(missionId) };
+  }
+  return memoryCache.value;
+}
+
 function state() {
   const mission: Mission | undefined = getActiveMission() ?? getLastMission();
   const snapshots = mission
@@ -47,7 +67,7 @@ function state() {
     orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
-    lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all(),
+    memory: memorySummary(mission?.id ?? null),
   };
 }
 

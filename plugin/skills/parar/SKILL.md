@@ -20,6 +20,6 @@ Vas a detener la misión activa. Habla con el usuario en español.
 
 3. Llama a `stop_mission` con `close_positions` según la respuesta.
 
-4. Si en esta sesión hay un agente `cryptoagent:trader` trabajando en segundo plano, detenlo con TaskStop.
+4. Si en esta sesión hay un agente `cryptoagent:trader` trabajando en segundo plano, detenlo con TaskStop. No detengas al revisor (`cryptoagent:reviewer`): verá que la misión ha terminado y hará su retrospectiva. Si no hay ningún revisor trabajando y la misión llegó a operar, lánzalo en segundo plano con la herramienta Agent (`subagent_type` `cryptoagent:reviewer`, `description` `Revisor de la misión`, `run_in_background` `true`, `prompt` exactamente `Vigila la misión.`).
 
 5. Resume en una o dos líneas el valor final y cómo quedó la misión. Recuerda que con `/cryptoagent:trading` puede empezar otra.

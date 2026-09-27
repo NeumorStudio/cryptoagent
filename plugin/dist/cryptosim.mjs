@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.13.1";
+var CODE_VERSION = "0.13.2";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -39547,7 +39547,7 @@ function startMissionClock(missionId) {
 }
 async function missionStatus(missionId) {
   const mission = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
-  if (!mission) return { active: false, message: "No hay ninguna misi\xF3n. El usuario debe crear una con /trading en Claude Code (o `npm run mission`)." };
+  if (!mission) return { active: false, message: "No hay ninguna misi\xF3n. El usuario debe crear una (/cryptoagent:trading en Claude Code, /cryptoagent-trading en OpenCode)." };
   if (mission.status !== "active") {
     return {
       active: false,
@@ -40156,6 +40156,7 @@ function unknownBeliefs(ids) {
 import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, statSync } from "node:fs";
 import os2 from "node:os";
 import path5 from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/tools/index.ts
 import { readFileSync } from "node:fs";
@@ -40939,13 +40940,13 @@ var short = (s, n3 = 140) => {
 function describeToolUse(rawName, input2) {
   const name = normalizeTool(rawName);
   if (name === "ToolSearch" || name === "SubagentHandback" || COVERED_BY_DB.has(name)) return null;
-  if (name === "WebSearch") return { kind: "search", title: `Busca en internet: \xAB${input2.query}\xBB` };
-  if (name === "WebFetch") return { kind: "fetch", title: `Lee ${input2.url}` };
-  if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input2.url}` };
+  if (name === "WebSearch") return { kind: "search", title: input2.query ? `Busca en internet: \xAB${input2.query}\xBB` : "Busca en internet" };
+  if (name === "WebFetch") return { kind: "fetch", title: input2.url ? `Lee ${input2.url}` : "Lee una p\xE1gina" };
+  if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: input2.url ? `Consulta ${input2.url}` : "Consulta una API" };
   if (name === "mcp__cryptosim__start_session") return { kind: "session", title: "Empieza una sesi\xF3n de trabajo" };
   if (name === "mcp__cryptosim__end_session") return { kind: "session", title: "Cierra la sesi\xF3n" };
   if (name === "mcp__cryptosim__recall_memory") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
-  if (name === "mcp__cryptosim__wait") return { kind: "tool", title: `Espera ${input2.minutes} min` };
+  if (name === "mcp__cryptosim__wait") return { kind: "tool", title: input2.minutes ? `Espera ${input2.minutes} min` : "Espera" };
   if (name.startsWith("mcp__cryptosim__")) return { kind: "tool", title: `Consulta ${name.replace("mcp__cryptosim__", "").replace(/_/g, " ")}` };
   const browser = name.match(/^mcp__Claude_Browser__(.+)$/)?.[1];
   if (browser) {
@@ -41005,6 +41006,57 @@ function parseTranscript(file2) {
   }
   return events;
 }
+var OPENCODE_DB = process.env.OPENCODE_DB ?? path5.join(os2.homedir(), ".local", "share", "opencode", "opencode.db");
+var opencodeDb = null;
+function argsFromCode(code, tool2) {
+  const m = code.match(new RegExp(`cryptosim\\.${tool2}\\(\\s*(\\{[\\s\\S]*?\\})\\s*\\)`));
+  if (!m) return {};
+  try {
+    return JSON.parse(m[1].replace(/'/g, '"').replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":').replace(/,\s*}/g, "}"));
+  } catch {
+    return {};
+  }
+}
+function opencodeEvents(since) {
+  if (!existsSync2(OPENCODE_DB)) return [];
+  try {
+    opencodeDb ??= new DatabaseSync2(OPENCODE_DB, { readOnly: true });
+    const rows = opencodeDb.prepare(
+      `SELECT m.id, m.time_created, m.data FROM session_message m JOIN session_v2 s ON s.id = m.session_id
+         WHERE s.agent = 'trader' AND m.type = 'assistant' AND m.time_created >= ? ORDER BY m.time_created, m.seq`
+    ).all(new Date(since).getTime());
+    const events = [];
+    for (const row of rows) {
+      const ts = new Date(row.time_created).toISOString();
+      const content = JSON.parse(row.data).content ?? [];
+      content.forEach((part, i) => {
+        const id = `oc:${row.id}:${i}`;
+        if (part.type === "text" && part.text?.trim()) {
+          events.push({ id, ts, kind: "text", title: part.text.trim() });
+          return;
+        }
+        if (part.type !== "tool") return;
+        const input2 = part.state?.input ?? {};
+        const result = resultText(part.state?.content ?? "").trim();
+        const body = result ? result.length > 3e3 ? result.slice(0, 3e3) + "\n\u2026" : result : void 0;
+        const failed = part.state?.status === "error";
+        const calls = part.name === "execute" ? (part.state?.metadata?.toolCalls ?? []).map((c) => {
+          const tool2 = c.tool.replace(/^cryptosim\./, "");
+          return { name: c.tool.startsWith("cryptosim.") ? `mcp__cryptosim__${tool2}` : c.tool, input: argsFromCode(String(input2.code ?? ""), tool2) };
+        }) : [{ name: part.name === "webfetch" ? "WebFetch" : part.name === "websearch" ? "WebSearch" : part.name, input: input2 }];
+        calls.forEach((c, j) => {
+          const d = describeToolUse(c.name, c.input);
+          if (!d) return;
+          events.push({ id: `${id}:${j}`, ts, ...d, ...failed ? { kind: "error" } : {}, ...j === calls.length - 1 && body ? { body } : {} });
+        });
+      });
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+var agentEvents = (since) => process.env.CRYPTOAGENT_HOST === "opencode" ? opencodeEvents(since) : transcriptEvents(since);
 function transcriptEvents(since) {
   if (!existsSync2(projectsDir)) return [];
   const sinceMs = new Date(since).getTime();
@@ -41084,7 +41136,7 @@ function dbEvents(missionId) {
   return events;
 }
 function timeline(since, missionId) {
-  return [...transcriptEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+  return [...agentEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
 }
 
 // src/dashboard/server.ts

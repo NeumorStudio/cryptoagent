@@ -37,7 +37,7 @@ const config = existsSync(configFile) ? (JSON.parse(readFileSync(configFile, "ut
 // (así se puede comparar cómo aprende con cada modelo), y el panel no choca con el de Claude Code (4321).
 const dataDir = path.join(home, ".cryptoagent", "opencode-data");
 const DASHBOARD_PORT = "4322";
-const server = { type: "local", command: [process.execPath, serverFile], environment: { DATA_DIR: dataDir, DASHBOARD_PORT } };
+const server = { type: "local", command: [process.execPath, serverFile], environment: { DATA_DIR: dataDir, DASHBOARD_PORT, CRYPTOAGENT_HOST: "opencode" } };
 // OpenCode 2 entiende los dos formatos: el clásico (mcp.<nombre> con enabled) y el nuevo (mcp.servers.<nombre> con
 // disabled). Se respeta el que ya tenga el archivo.
 if (config.mcp?.servers) config.mcp.servers = { ...config.mcp.servers, [MCP]: { ...server, disabled: false } };
@@ -60,8 +60,9 @@ const deniedFor = (agent: "trader" | "reviewer") =>
 
 const ENV = (agent: "trader" | "reviewer") =>
   [
-    "Estás en OpenCode. Tus herramientas del simulador vienen del servidor MCP `cryptosim` y llevan ese prefijo: cuando este texto nombra una",
-    "herramienta (por ejemplo `mission_status`), úsala como `cryptosim_mission_status`. No escribas archivos ni ejecutes comandos: trabajas solo con esas herramientas.",
+    "Estás en OpenCode. Tus herramientas del simulador vienen del servidor MCP `cryptosim`: cuando este texto nombra una herramienta (por ejemplo",
+    "`mission_status`), es la de ese servidor (según tu entorno, `cryptosim_mission_status` o `tools.cryptosim.mission_status(...)` dentro de `execute`).",
+    "No escribas archivos ni ejecutes comandos del sistema: trabajas solo con esas herramientas.",
     agent === "trader"
       ? "Empieza llamando a `cryptosim_start_session`. Trabaja en bucle hasta que `cryptosim_mission_status` diga que la misión ya no está activa: investiga, opera, anota, y usa `cryptosim_wait` solo cuando no te quede nada útil por hacer. No termines antes. Al acabar la misión, llama a `cryptosim_end_session` y responde con un resumen breve."
       : "Haz exactamente lo que te pida el mensaje (\"Prepara la misión.\" o \"Vigila la misión.\") y termina con un resumen breve.",

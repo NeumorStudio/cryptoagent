@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { db } from "../db.js";
 import { SIM_TOOLS } from "../tools/index.js";
 
@@ -68,13 +69,13 @@ const short = (s: unknown, n = 140) => {
 function describeToolUse(rawName: string, input: any): { kind: EventKind; title: string } | null {
   const name = normalizeTool(rawName);
   if (name === "ToolSearch" || name === "SubagentHandback" || COVERED_BY_DB.has(name)) return null;
-  if (name === "WebSearch") return { kind: "search", title: `Busca en internet: «${input.query}»` };
-  if (name === "WebFetch") return { kind: "fetch", title: `Lee ${input.url}` };
-  if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: `Consulta ${input.url}` };
+  if (name === "WebSearch") return { kind: "search", title: input.query ? `Busca en internet: «${input.query}»` : "Busca en internet" };
+  if (name === "WebFetch") return { kind: "fetch", title: input.url ? `Lee ${input.url}` : "Lee una página" };
+  if (name === "mcp__cryptosim__http_get") return { kind: "fetch", title: input.url ? `Consulta ${input.url}` : "Consulta una API" };
   if (name === "mcp__cryptosim__start_session") return { kind: "session", title: "Empieza una sesión de trabajo" };
   if (name === "mcp__cryptosim__end_session") return { kind: "session", title: "Cierra la sesión" };
   if (name === "mcp__cryptosim__recall_memory") return { kind: "tool", title: "Repasa su memoria de misiones anteriores" };
-  if (name === "mcp__cryptosim__wait") return { kind: "tool", title: `Espera ${input.minutes} min` };
+  if (name === "mcp__cryptosim__wait") return { kind: "tool", title: input.minutes ? `Espera ${input.minutes} min` : "Espera" };
   if (name.startsWith("mcp__cryptosim__")) return { kind: "tool", title: `Consulta ${name.replace("mcp__cryptosim__", "").replace(/_/g, " ")}` };
 
   const browser = name.match(/^mcp__Claude_Browser__(.+)$/)?.[1];
@@ -138,6 +139,73 @@ function parseTranscript(file: string): TimelineEvent[] {
   }
   return events;
 }
+
+// ── OpenCode ────────────────────────────────────────────────────────────────
+// OpenCode guarda sus sesiones en SQLite (session_v2 con el agente de cada sesión, session_message con
+// los mensajes). En OpenCode 2 los modelos llaman a las herramientas MCP escribiendo código en su
+// herramienta `execute` (tools.cryptosim.scan_market({...})); el nombre real queda en metadata.toolCalls.
+const OPENCODE_DB = process.env.OPENCODE_DB ?? path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
+let opencodeDb: DatabaseSync | null = null;
+
+/** Argumentos de una llamada escrita como código (best effort: objetos literales sencillos). */
+function argsFromCode(code: string, tool: string): Record<string, unknown> {
+  const m = code.match(new RegExp(`cryptosim\\.${tool}\\(\\s*(\\{[\\s\\S]*?\\})\\s*\\)`));
+  if (!m) return {};
+  try {
+    return JSON.parse(m[1]!.replace(/'/g, '"').replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":').replace(/,\s*}/g, "}"));
+  } catch {
+    return {};
+  }
+}
+
+function opencodeEvents(since: string): TimelineEvent[] {
+  if (!existsSync(OPENCODE_DB)) return [];
+  try {
+    opencodeDb ??= new DatabaseSync(OPENCODE_DB, { readOnly: true });
+    const rows = opencodeDb
+      .prepare(
+        `SELECT m.id, m.time_created, m.data FROM session_message m JOIN session_v2 s ON s.id = m.session_id
+         WHERE s.agent = 'trader' AND m.type = 'assistant' AND m.time_created >= ? ORDER BY m.time_created, m.seq`,
+      )
+      .all(new Date(since).getTime()) as Array<{ id: string; time_created: number; data: string }>;
+    const events: TimelineEvent[] = [];
+    for (const row of rows) {
+      const ts = new Date(row.time_created).toISOString();
+      const content = (JSON.parse(row.data).content ?? []) as any[];
+      content.forEach((part, i) => {
+        const id = `oc:${row.id}:${i}`;
+        if (part.type === "text" && part.text?.trim()) {
+          events.push({ id, ts, kind: "text", title: part.text.trim() });
+          return;
+        }
+        if (part.type !== "tool") return;
+        const input = part.state?.input ?? {};
+        const result = resultText(part.state?.content ?? "").trim();
+        const body = result ? (result.length > 3000 ? result.slice(0, 3000) + "\n…" : result) : undefined;
+        const failed = part.state?.status === "error";
+        const calls: Array<{ name: string; input: Record<string, unknown> }> =
+          part.name === "execute"
+            ? ((part.state?.metadata?.toolCalls ?? []) as Array<{ tool: string }>).map((c) => {
+                const tool = c.tool.replace(/^cryptosim\./, "");
+                return { name: c.tool.startsWith("cryptosim.") ? `mcp__cryptosim__${tool}` : c.tool, input: argsFromCode(String(input.code ?? ""), tool) };
+              })
+            : [{ name: part.name === "webfetch" ? "WebFetch" : part.name === "websearch" ? "WebSearch" : part.name, input }];
+        calls.forEach((c, j) => {
+          const d = describeToolUse(c.name, c.input);
+          if (!d) return;
+          // El resultado de un execute es el de todo el bloque: se adjunta a su última llamada.
+          events.push({ id: `${id}:${j}`, ts, ...d, ...(failed ? { kind: "error" as EventKind } : {}), ...(j === calls.length - 1 && body ? { body } : {}) });
+        });
+      });
+    }
+    return events;
+  } catch {
+    return []; // formato distinto u OpenCode ocupado: el resto del panel sigue funcionando
+  }
+}
+
+/** Qué registro de sesiones leer: el del entorno en el que corre este servidor. */
+const agentEvents = (since: string) => (process.env.CRYPTOAGENT_HOST === "opencode" ? opencodeEvents(since) : transcriptEvents(since));
 
 function transcriptEvents(since: string): TimelineEvent[] {
   if (!existsSync(projectsDir)) return [];
@@ -223,7 +291,7 @@ function dbEvents(missionId: number | null): TimelineEvent[] {
 
 /** Eventos desde `since` (ISO), ordenados del más antiguo al más reciente. */
 export function timeline(since: string, missionId: number | null): TimelineEvent[] {
-  return [...transcriptEvents(since), ...dbEvents(missionId)]
+  return [...agentEvents(since), ...dbEvents(missionId)]
     .filter((e) => e.ts && e.ts >= since)
     .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
 }

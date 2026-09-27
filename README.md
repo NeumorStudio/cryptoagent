@@ -11,6 +11,8 @@ Solana a través de Jupiter (incluidos los tokens de pump.fun), Base y BNB Chain
   Tiene tres partes: howtos (cómo se hace algo y qué errores evitar), creencias sobre el mercado cuya evidencia calcula el
   simulador con las operaciones reales, y la retrospectiva de cada misión. Antes de cada misión, el revisor le prepara un briefing;
   en misiones largas, revisa también a mitad y le avisa si hay algo importante.
+- **Multicadena**: Solana, Base y BNB Chain (con un monedero tipo MetaMask) y Binance, con depósitos, retiradas y puentes
+  entre ellos que tardan lo que tardarían de verdad. También puede estimar lo que costaría lanzar su propio token.
 - **Peticiones**: si el agente necesita algo que no tiene (una cuenta en una red social, otro exchange, una herramienta…),
   lo anota y tú decides si se lo das.
 - **Panel en directo** (localhost): progreso, gráfico, posiciones, órdenes, memoria y una transcripción

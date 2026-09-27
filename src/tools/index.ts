@@ -10,6 +10,7 @@ import * as orders from "../sim/orders.js";
 import * as positions from "../sim/positions.js";
 import * as sim from "../sim/portfolio.js";
 import * as transfers from "../sim/transfers.js";
+import { estimateTokenLaunch } from "../sim/launch.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 
@@ -394,6 +395,19 @@ export const SIM_TOOLS = [
     description: "Cancela una orden condicional abierta.",
     schema: z.object({ id: z.number().int() }),
     run: async ({ id }, ctx) => orders.cancelOrder(mid(ctx), id, ctx.sessionId),
+  }),
+  tool({
+    name: "estimate_token_launch",
+    kind: "research",
+    description:
+      "Cuánto costaría lanzar un token propio en una cadena, con el gas y los precios de ahora: en Solana con pump.fun; en Base " +
+      "y BNB Chain, desplegando un ERC-20 y creando su pool con la liquidez que indiques. El simulador no crea tokens (su mercado " +
+      "depende de otras personas): si decides hacerlo, anótalo con record_hypothetical_action incluyendo esta estimación.",
+    schema: z.object({
+      chain: chainParam,
+      initial_liquidity_usd: z.number().min(0).optional().describe("Liquidez inicial (o primera compra en pump.fun), en USD"),
+    }),
+    run: async (i) => json(await estimateTokenLaunch({ chain: i.chain, initialLiquidityUsd: i.initial_liquidity_usd })),
   }),
   tool({
     name: "record_hypothetical_action",

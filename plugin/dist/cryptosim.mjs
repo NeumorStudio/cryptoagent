@@ -37369,7 +37369,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.11.0";
+var CODE_VERSION = "0.12.0";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -40099,6 +40099,54 @@ import path5 from "node:path";
 // src/tools/index.ts
 import { readFileSync } from "node:fs";
 
+// src/sim/launch.ts
+var DEPLOY_ERC20_GAS = 1200000n;
+var CREATE_POOL_GAS = 3000000n;
+var PUMPFUN_FEE = 0.0125;
+async function estimateTokenLaunch(a) {
+  const chain = getChain(a.chain);
+  const nativeUsd = (await chain.priceUsd([chain.native.address]))[chain.native.address];
+  if (!nativeUsd) throw new Error(`Sin precio de ${chain.native.symbol}`);
+  const usd2 = (native2) => Number((native2 * nativeUsd).toFixed(4));
+  const liquidity = a.initialLiquidityUsd ?? 0;
+  if (a.chain === "solana") {
+    const fee = config2.solanaTxFeeSol;
+    return {
+      chain: chain.label,
+      platform: "pump.fun (curva de precios; se grad\xFAa a PumpSwap al llegar a su umbral)",
+      steps: [
+        { step: "crear el token en pump.fun", costNative: `0 SOL de comisi\xF3n + ${fee} SOL de red`, costUsd: usd2(fee) },
+        ...liquidity ? [{ step: `primera compra del creador (${liquidity} $)`, costNative: "-", costUsd: Number((liquidity * PUMPFUN_FEE).toFixed(4)), note: "comisi\xF3n del 1,25 % de la curva; el resto sigue siendo tuyo en tokens" }] : []
+      ],
+      capitalCommittedUsd: liquidity,
+      notes: [
+        "En pump.fun no hace falta poner liquidez: la curva la pone la plataforma. La primera compra es opcional.",
+        "No se incluye la renta de las cuentas del token (pump.fun no la publica).",
+        "Se grad\xFAa (y paga 0,015 SOL) al llegar al umbral de la curva: seg\xFAn fuentes secundarias, menos del 2 % de los tokens lo consigue."
+      ]
+    };
+  }
+  const gasPrice = await gasPriceWei(a.chain);
+  const native = (gas) => Number(gas * gasPrice) / 1e18;
+  const deploy = native(DEPLOY_ERC20_GAS);
+  const pool = native(CREATE_POOL_GAS);
+  return {
+    chain: chain.label,
+    platform: "contrato ERC-20 propio + pool en un DEX",
+    gasPriceGwei: Number(gasPrice) / 1e9,
+    steps: [
+      { step: "desplegar el contrato del token", gasUnits: Number(DEPLOY_ERC20_GAS), costNative: `${deploy.toPrecision(3)} ${chain.native.symbol}`, costUsd: usd2(deploy) },
+      { step: "crear el pool y a\xF1adir la primera liquidez", gasUnits: Number(CREATE_POOL_GAS), costNative: `${pool.toPrecision(3)} ${chain.native.symbol}`, costUsd: usd2(pool) }
+    ],
+    totalGasUsd: usd2(deploy + pool),
+    capitalCommittedUsd: liquidity,
+    notes: [
+      "El gas es el de contratos est\xE1ndar con el precio del gas de ahora; un contrato con m\xE1s funciones cuesta m\xE1s.",
+      liquidity ? `La liquidez (${liquidity} $, mitad en tu token y mitad en ${chain.native.symbol} o una stablecoin) no es un coste, pero queda en el pool y cualquiera puede comprarte o venderte contra ella.` : "Sin liquidez inicial nadie puede comprar el token: indica initial_liquidity_usd para estimarla."
+    ]
+  };
+}
+
 // src/tools/define.ts
 function tool(def) {
   return def;
@@ -40414,6 +40462,16 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     description: "Cancela una orden condicional abierta.",
     schema: external_exports.object({ id: external_exports.number().int() }),
     run: async ({ id }, ctx) => cancelOrder(mid(ctx), id, ctx.sessionId)
+  }),
+  tool({
+    name: "estimate_token_launch",
+    kind: "research",
+    description: "Cu\xE1nto costar\xEDa lanzar un token propio en una cadena, con el gas y los precios de ahora: en Solana con pump.fun; en Base y BNB Chain, desplegando un ERC-20 y creando su pool con la liquidez que indiques. El simulador no crea tokens (su mercado depende de otras personas): si decides hacerlo, an\xF3talo con record_hypothetical_action incluyendo esta estimaci\xF3n.",
+    schema: external_exports.object({
+      chain: chainParam,
+      initial_liquidity_usd: external_exports.number().min(0).optional().describe("Liquidez inicial (o primera compra en pump.fun), en USD")
+    }),
+    run: async (i) => json2(await estimateTokenLaunch({ chain: i.chain, initialLiquidityUsd: i.initial_liquidity_usd }))
   }),
   tool({
     name: "record_hypothetical_action",
@@ -40906,6 +40964,7 @@ var JOURNAL_KIND = {
   order_cancelled: "order",
   order_expired: "order",
   order_failed: "error",
+  transfer_arrived: "trade",
   failed_tx: "error",
   rejected: "error",
   hypothetical: "hypothetical",

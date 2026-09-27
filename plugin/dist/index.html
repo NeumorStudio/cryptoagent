@@ -153,6 +153,7 @@
   td { padding: 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
   td.r, th.r { text-align: right; }
   .venue { color: var(--muted); font-size: 12px; }
+  tr.transit td { font-style: italic; opacity: .8; }
   .order { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
   .order .when { color: var(--muted); font-size: 12px; }
   .empty { font-size: 14px; color: var(--muted); margin: 0; }
@@ -421,6 +422,13 @@ function renderState() {
       el("td", {}, h.symbol, el("div", { class: "venue" }, VENUE_LABELS[h.venue] ?? h.venue)),
       el("td", { class: "r num" }, qty(h.amount)),
       el("td", { class: "r num" }, usd(h.usd))));
+  }
+  // Transferencias y puentes en camino: ya cuentan en el valor de la cartera.
+  for (const t of v?.inTransit ?? []) {
+    holdings.append(el("tr", { class: "transit" },
+      el("td", {}, t.symbol, el("div", { class: "venue" }, `en tránsito a ${VENUE_LABELS[t.to] ?? t.to} · llega ${time(t.arrivesAt)}`)),
+      el("td", { class: "r num" }, qty(t.amount)),
+      el("td", { class: "r num" }, usd(t.usd))));
   }
 
   // Órdenes

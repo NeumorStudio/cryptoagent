@@ -20,6 +20,15 @@ Datos verificados el 27 de septiembre de 2026; las plataformas cambian, así que
 otras blockchains (Ethereum, Arbitrum…), futuros, préstamos, staking, airdrops. Si necesitas algo que no
 tienes para intentarlo, pídelo con `request_capability`.
 
+**Lanzar un token propio**: `estimate_token_launch` calcula lo que costaría con el gas y los precios de ahora
+(en Solana con pump.fun; en Base y BNB Chain, desplegando un ERC-20 y creando su pool). El lanzamiento en sí
+no se simula, porque su mercado depende de otras personas: si decides hacerlo, anótalo con
+`record_hypothetical_action` junto con la estimación.
+
+**Límites de las fuentes**: las APIs gratuitas tienen límites de peticiones. El simulador reparte el ritmo
+(Jupiter, KyberSwap, GoPlus) y el cupo de Li.Fi (75 cada 2 horas; si se agota, los puentes usan una
+estimación). Si una fuente devuelve 429, espera o usa otra.
+
 Para saber si un token concreto es operable, pide una cotización con `quote_swap` en su cadena: si no hay ruta, no se puede.
 
 Tus monederos: uno en Solana y uno tipo MetaMask (la misma dirección en Base y en BNB Chain, cada cadena con

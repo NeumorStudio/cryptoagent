@@ -185,6 +185,7 @@ const JOURNAL_KIND: Record<string, EventKind> = {
   order_cancelled: "order",
   order_expired: "order",
   order_failed: "error",
+  transfer_arrived: "trade",
   failed_tx: "error",
   rejected: "error",
   hypothetical: "hypothetical",

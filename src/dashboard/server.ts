@@ -88,9 +88,10 @@ function missionDetail(missionId: number) {
     const venue = j.kind === "cex_order" ? "binance" : String(d.chain ?? d.from ?? "solana");
     return { id: j.id, ts: j.ts, kind: j.kind, summary: j.summary, venue };
   });
+  // Todas las compras de la misión (abiertas y cerradas), de la más reciente a la más antigua.
   const positions = listPositions(missionId)
-    .filter((p) => p.status === "open")
-    .map((p) => ({ venue: p.venue, asset: p.asset, symbol: p.symbol, openCostUsd: p.openCostUsd }));
+    .filter((p) => p.status !== "moved")
+    .map((p) => ({ venue: p.venue, asset: p.asset, symbol: p.symbol, status: p.status, openCostUsd: p.openCostUsd, costUsd: p.costUsd, pnlUsd: p.pnlUsd, pnlPct: p.pnlPct, openedAt: p.openedAt }));
   const lastNote = db.prepare("SELECT ts, title FROM activity WHERE mission_id = ? AND kind = 'thought' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
   const lastReview = db.prepare("SELECT ts, title, body FROM activity WHERE mission_id = ? AND kind = 'review' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
   return { trades, positions, lastNote, lastReview };

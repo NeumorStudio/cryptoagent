@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.13.0";
+var CODE_VERSION = "0.13.1";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -41146,7 +41146,7 @@ function missionDetail(missionId) {
     const venue = j.kind === "cex_order" ? "binance" : String(d.chain ?? d.from ?? "solana");
     return { id: j.id, ts: j.ts, kind: j.kind, summary: j.summary, venue };
   });
-  const positions = listPositions(missionId).filter((p) => p.status === "open").map((p) => ({ venue: p.venue, asset: p.asset, symbol: p.symbol, openCostUsd: p.openCostUsd }));
+  const positions = listPositions(missionId).filter((p) => p.status !== "moved").map((p) => ({ venue: p.venue, asset: p.asset, symbol: p.symbol, status: p.status, openCostUsd: p.openCostUsd, costUsd: p.costUsd, pnlUsd: p.pnlUsd, pnlPct: p.pnlPct, openedAt: p.openedAt }));
   const lastNote = db.prepare("SELECT ts, title FROM activity WHERE mission_id = ? AND kind = 'thought' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
   const lastReview = db.prepare("SELECT ts, title, body FROM activity WHERE mission_id = ? AND kind = 'review' ORDER BY id DESC LIMIT 1").get(missionId) ?? null;
   return { trades, positions, lastNote, lastReview };

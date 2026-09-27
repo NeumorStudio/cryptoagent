@@ -142,11 +142,14 @@
   .legend { margin-top: 14px; display: grid; gap: 6px; }
   .legend li, .bets li { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; font-size: 15px; }
   .key { width: 12px; height: 12px; border-radius: 3px; }
+  .seg.cash, .key.cash { background: #8A8D93; }
+  .seg.gas, .key.gas { background: #5E6168; }
+  .bets li.open { font-weight: 600; }
   .key.transit { background: repeating-linear-gradient(45deg, var(--muted) 0 2px, transparent 2px 4px); }
   .legend .amt { color: var(--muted); }
   .sub { font-size: 13px; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
   .bets li { grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
-  .bets .chain { color: var(--muted); font-size: 13px; margin-left: 6px; }
+  .legend .chain, .bets .chain { color: var(--muted); font-size: 13px; margin-left: 6px; }
   .bets .pl.up { color: var(--up); } .bets .pl.down { color: var(--down); }
   .quiet { color: var(--muted); font-size: 15px; }
 
@@ -273,7 +276,7 @@
       <h2 id="h-money">Dónde está el dinero</h2>
       <div class="stack" id="stack" role="img" aria-label="Reparto de la cartera por cadena"></div>
       <ul class="legend" id="legend"></ul>
-      <p class="sub">En juego</p>
+      <p class="sub">Operaciones de esta misión</p>
       <ul class="bets" id="bets"></ul>
     </section>
 
@@ -576,15 +579,40 @@ function renderMoney(v) {
   const stack = $("stack"), legend = $("legend"), bets = $("bets");
   stack.replaceChildren(); legend.replaceChildren(); bets.replaceChildren();
   if (!v) { legend.append(el("li", { class: "quiet" }, "Valorando la cartera…")); return; }
-  const byVenue = Object.fromEntries(VENUES.map((x) => [x, 0]));
-  for (const h of v.holdings) byVenue[h.venue] = (byVenue[h.venue] ?? 0) + h.usd;
-  const transit = (v.inTransit ?? []).reduce((s, t) => s + t.usd, 0);
-  const total = VENUES.reduce((s, x) => s + byVenue[x], 0) + transit || 1;
-  for (const x of VENUES) {
-    if (byVenue[x] < 0.005) continue;
-    stack.append(el("div", { class: "seg", style: `flex-grow:${byVenue[x]};background:${COLOR[x]}`, title: `${LABEL[x]}: ${usd(byVenue[x])}` }));
-    legend.append(el("li", {}, el("span", { class: "key", style: `background:${COLOR[x]}` }), el("span", {}, LABEL[x]),
-      el("span", { class: "amt tab" }, `${usd(byVenue[x])} · ${Math.round((byVenue[x] / total) * 100)} %`)));
+
+  // Cada moneda comprada es un tramo del color de su cadena; el efectivo y el gas van en gris,
+  // para que destaque lo que ha comprado el agente.
+  const bought = new Set(state.positions.filter((p) => p.status === "open").map((p) => `${p.venue}:${p.asset}`));
+  const GAS = new Set(["SOL", "ETH", "BNB"]);
+  const tokens = [], cash = [], gas = [];
+  for (const h of v.holdings) {
+    if (h.usd < 0.005) continue;
+    if (bought.has(`${h.venue}:${h.asset}`)) tokens.push(h);
+    else if (CASH.has(h.symbol)) cash.push(h);
+    else if (GAS.has(h.symbol)) gas.push(h);
+    else tokens.push(h);
+  }
+  tokens.sort((a, b) => b.usd - a.usd);
+  const sum = (xs) => xs.reduce((t, x) => t + x.usd, 0);
+  const transit = (v.inTransit ?? []).reduce((t, x) => t + x.usd, 0);
+  const total = sum(tokens) + sum(cash) + sum(gas) + transit || 1;
+  const share = (x) => `${usd(x)} · ${Math.round((x / total) * 100)} %`;
+  const where = (xs) => [...new Set(xs.map((h) => LABEL[h.venue] ?? h.venue))].join(", ");
+
+  for (const h of tokens) {
+    stack.append(el("div", { class: "seg", style: `flex-grow:${h.usd};background:${COLOR[h.venue] ?? "var(--muted)"}`, title: `${h.symbol} (${LABEL[h.venue] ?? h.venue}): ${usd(h.usd)}` }));
+    legend.append(el("li", {}, el("span", { class: "key", style: `background:${COLOR[h.venue] ?? "var(--muted)"}` }),
+      el("span", {}, h.symbol, el("span", { class: "chain" }, LABEL[h.venue] ?? h.venue)), el("span", { class: "amt tab" }, share(h.usd))));
+  }
+  if (cash.length) {
+    stack.append(el("div", { class: "seg cash", style: `flex-grow:${sum(cash)}`, title: `Efectivo: ${usd(sum(cash))}` }));
+    legend.append(el("li", {}, el("span", { class: "key cash" }), el("span", {}, "Efectivo", el("span", { class: "chain" }, `${[...new Set(cash.map((h) => h.symbol))].join(", ")} · ${where(cash)}`)),
+      el("span", { class: "amt tab" }, share(sum(cash)))));
+  }
+  if (gas.length) {
+    stack.append(el("div", { class: "seg gas", style: `flex-grow:${sum(gas)}`, title: `Gas: ${usd(sum(gas))}` }));
+    legend.append(el("li", {}, el("span", { class: "key gas" }), el("span", {}, "Gas", el("span", { class: "chain" }, `${[...new Set(gas.map((h) => h.symbol))].join(", ")} para pagar la red`)),
+      el("span", { class: "amt tab" }, share(sum(gas)))));
   }
   if (transit > 0) {
     stack.append(el("div", { class: "seg transit", style: `flex-grow:${transit}`, title: `En camino: ${usd(transit)}` }));
@@ -592,16 +620,25 @@ function renderMoney(v) {
     legend.append(el("li", {}, el("span", { class: "key transit" }), el("span", {}, `En camino a ${LABEL[t.to] ?? t.to}`),
       el("span", { class: "amt tab" }, `${usd(transit)} · llega ${hm(t.arrivesAt)}`)));
   }
-  // Lo que ha comprado el agente, con cómo le va respecto a lo que pagó.
-  const open = state.positions.map((p) => {
-    const h = v.holdings.find((x) => x.venue === p.venue && x.asset === p.asset);
-    return { ...p, now: h?.usd ?? 0 };
-  }).filter((p) => p.now > 0.005 && !CASH.has(p.symbol)).sort((a, b) => b.now - a.now);
-  if (!open.length) { bets.append(el("li", { class: "quiet" }, "Nada: todo está en efectivo y en el gas de cada cadena.")); return; }
-  for (const p of open.slice(0, 5)) {
-    const pl = p.openCostUsd ? ((p.now - p.openCostUsd) / p.openCostUsd) * 100 : 0;
-    bets.append(el("li", {}, el("span", {}, p.symbol, el("span", { class: "chain" }, LABEL[p.venue] ?? p.venue)),
-      el("span", { class: "tab" }, usd(p.now)), el("span", { class: `pl tab ${pl >= 0 ? "up" : "down"}` }, signed(pl, " %"))));
+
+  // Todas las compras de la misión: las abiertas con su valor de ahora, las cerradas con su resultado.
+  const ops = state.positions.filter((p) => !CASH.has(p.symbol));
+  if (!ops.length) { bets.append(el("li", { class: "quiet" }, "Todavía no ha comprado nada en esta misión.")); return; }
+  for (const p of ops.slice(0, 6)) {
+    let value, pl, state_;
+    if (p.status === "open") {
+      const h = v.holdings.find((x) => x.venue === p.venue && x.asset === p.asset);
+      value = h?.usd ?? p.openCostUsd;
+      pl = p.openCostUsd ? ((value - p.openCostUsd) / p.openCostUsd) * 100 : 0;
+      state_ = "abierta";
+    } else {
+      value = p.costUsd + (p.pnlUsd ?? 0);
+      pl = p.pnlPct ?? 0;
+      state_ = "cerrada";
+    }
+    bets.append(el("li", { class: p.status === "open" ? "open" : "" },
+      el("span", {}, p.symbol, el("span", { class: "chain" }, `${LABEL[p.venue] ?? p.venue} · ${state_} · ${hm(p.openedAt)}`)),
+      el("span", { class: "tab" }, usd(value)), el("span", { class: `pl tab ${pl >= 0 ? "up" : "down"}` }, signed(pl, " %"))));
   }
 }
 

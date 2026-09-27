@@ -20,8 +20,13 @@ let running: { url: string } | null = null;
 // La valoración consulta precios reales, así que se refresca en segundo plano y no en cada petición.
 async function refreshValuation(log: (msg: string) => void) {
   try {
-    const record = !!getActiveMission() && Date.now() - lastSnapshot >= 60_000;
-    cached = { at: new Date().toISOString(), value: await valuation(record) };
+    const mission = getActiveMission() ?? getLastMission();
+    if (!mission) {
+      cached = null;
+      return;
+    }
+    const record = mission.status === "active" && Date.now() - lastSnapshot >= 60_000;
+    cached = { at: new Date().toISOString(), value: await valuation(mission.id, record) };
     if (record) lastSnapshot = Date.now();
   } catch (err) {
     log(`Error valorando la cartera: ${(err as Error).message}`);
@@ -30,14 +35,16 @@ async function refreshValuation(log: (msg: string) => void) {
 
 function state() {
   const mission: Mission | undefined = getActiveMission() ?? getLastMission();
-  const since = mission?.created_at ?? "1970";
-  const snapshots = db.prepare("SELECT ts, total_usd FROM snapshots WHERE ts >= ? ORDER BY ts").all(since) as Array<{ ts: string; total_usd: number }>;
+  const snapshots = mission
+    ? (db.prepare("SELECT ts, total_usd FROM snapshots WHERE mission_id = ? ORDER BY ts").all(mission.id) as Array<{ ts: string; total_usd: number }>)
+    : [];
   return {
     now: new Date().toISOString(),
     mission: mission ?? null,
-    valuation: cached?.value ?? null,
+    // La valoración en caché puede ser de la misión anterior justo después de crear otra.
+    valuation: cached && mission && cached.value.missionId === mission.id ? cached.value : null,
     valuedAt: cached?.at ?? null,
-    orders: listOrders("open"),
+    orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
     lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all(),
@@ -61,7 +68,7 @@ function handler(port: number) {
       if (url.pathname === "/api/events") {
         const mission = getActiveMission() ?? getLastMission();
         const since = url.searchParams.get("all") ? "1970" : (mission?.created_at ?? "1970");
-        return send(res, 200, "application/json", JSON.stringify(timeline(since)));
+        return send(res, 200, "application/json", JSON.stringify(timeline(since, mission?.id ?? null)));
       }
       send(res, 404, "text/plain", "No encontrado");
     } catch (err) {

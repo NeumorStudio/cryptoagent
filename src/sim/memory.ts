@@ -1,7 +1,7 @@
 // Memoria entre misiones: lecciones con contexto, similitud entre misiones y estadísticas
 // objetivas de las operaciones. Lo que el agente recuerda se ordena por parecido a la misión actual.
 import { db, now } from "../db.js";
-import { getActiveMission, getLastMission, type Mission } from "./mission.js";
+import { getActiveMission, getLastMission, getMission, type Mission } from "./mission.js";
 import { listPositions } from "./positions.js";
 
 interface Profile {
@@ -28,7 +28,7 @@ const similarityLabel = (d: number) => (d <= 0.6 ? "muy parecida" : d <= 1.5 ? "
 const describe = (p: Profile) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
 
 function finishedMissions() {
-  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all() as unknown as Mission[] &
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND lab_run_id IS NULL ORDER BY id").all() as unknown as Mission[] &
     Array<{ reviewed_at: string | null }>;
 }
 
@@ -38,7 +38,7 @@ export function pendingReviews() {
     db
       .prepare(
         `SELECT m.id FROM missions m
-         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
+         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL AND m.lab_run_id IS NULL
            AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
          ORDER BY m.id`,
       )
@@ -82,8 +82,8 @@ function tradeStats(ps: Pos[]) {
  * Lo que el agente recuerda, ordenado por relevancia para la misión actual (o la última).
  * `limitLessons` recorta la lista para el resumen de inicio de sesión.
  */
-export function recall(limitLessons?: number) {
-  const current = getActiveMission() ?? getLastMission();
+export function recall(missionId?: number | null, limitLessons?: number) {
+  const current = (missionId ? getMission(missionId) : undefined) ?? getActiveMission() ?? getLastMission();
   const curProfile = current ? profile(current) : null;
 
   const history = finishedMissions()
@@ -125,7 +125,7 @@ export function recall(limitLessons?: number) {
     .sort((a, b) => a._d - b._d)
     .map(({ _d, ...rest }) => rest);
 
-  const all = listPositions();
+  const all = listPositions({ scope: "main" });
   const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
   return {
     currentMission: current && curProfile ? { missionId: current.id, profile: describe(curProfile) } : null,

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { db, logActivity, logJournal, now } from "../db.js";
+import { fetchText } from "../market/http.js";
 import * as research from "../market/research.js";
 import * as mission from "../sim/mission.js";
 import * as memory from "../sim/memory.js";
@@ -8,7 +9,13 @@ import * as orders from "../sim/orders.js";
 import * as positions from "../sim/positions.js";
 import * as sim from "../sim/portfolio.js";
 import { asset } from "../paths.js";
-import { json, tool, type ToolOutput } from "./define.js";
+import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
+
+/** Misión del contexto; las herramientas que la necesitan solo se ejecutan si existe. */
+const mid = (ctx: ToolCtx): number => {
+  if (ctx.missionId === null) throw new Error("No hay ninguna misión");
+  return ctx.missionId;
+};
 
 
 // Límite prudente para que una llamada MCP no se alargue demasiado.
@@ -89,7 +96,7 @@ export const SIM_TOOLS = [
       "Se muestra en el panel del usuario.",
     schema: z.object({ entry: z.string() }),
     run: async ({ entry }, ctx) => {
-      logActivity({ sessionId: ctx.sessionId, kind: "thought", title: entry });
+      logActivity({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "thought", title: entry });
       return "Anotado.";
     },
   }),
@@ -99,7 +106,7 @@ export const SIM_TOOLS = [
       "Estado de tu misión: capital inicial, objetivo, valor actual de la cartera, cuánto falta y tiempo restante. " +
       "La misión termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
     schema: z.object({}),
-    run: async () => json(await mission.missionStatus()),
+    run: async (_i, ctx) => json(await mission.missionStatus(ctx.missionId ?? undefined)),
   }),
   tool({
     name: "wait",
@@ -107,19 +114,18 @@ export const SIM_TOOLS = [
       `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus órdenes condicionales se siguen vigilando. ` +
       "Vuelve antes si la misión termina. El tiempo también pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.",
     schema: z.object({ minutes: z.number().min(1).max(MAX_WAIT_MINUTES) }),
-    run: async ({ minutes }) => {
+    run: async ({ minutes }, ctx) => {
+      const m = mid(ctx);
       const until = Date.now() + minutes * 60_000;
       while (Date.now() < until) {
         await new Promise((r) => setTimeout(r, Math.min(20_000, until - Date.now())));
         await orders.checkOrders().catch(() => []);
-        const ended = await mission.checkMission().catch(() => []);
-        if (ended.length || !mission.getActiveMission()) {
-          return `La misión ha terminado mientras esperabas. Hora: ${now()}
-${json(await mission.missionStatus())}`;
+        await mission.checkMission(m).catch(() => []);
+        if (mission.getMission(m)?.status !== "active") {
+          return `La misión ha terminado mientras esperabas. Hora: ${now()}\n${json(await mission.missionStatus(m))}`;
         }
       }
-      return `Han pasado ${minutes} minutos. Hora actual: ${now()}
-${json(await mission.missionStatus())}`;
+      return `Han pasado ${minutes} minutos. Hora actual: ${now()}\n${json(await mission.missionStatus(m))}`;
     },
   }),
   tool({
@@ -128,9 +134,8 @@ ${json(await mission.missionStatus())}`;
     schema: z.object({ url: z.string() }),
     run: async ({ url }) => {
       if (!/^https?:\/\//i.test(url)) throw new Error("Solo se permiten URLs http(s)");
-      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-      const body = await res.text();
-      return `HTTP ${res.status}\n${body.slice(0, 20000)}${body.length > 20000 ? `\n… (truncado, ${body.length} caracteres en total)` : ""}`;
+      const { status, body } = await fetchText(url, { timeoutMs: 20_000 });
+      return `HTTP ${status}\n${body.slice(0, 20000)}${body.length > 20000 ? `\n… (truncado, ${body.length} caracteres en total)` : ""}`;
     },
   }),
 
@@ -141,7 +146,7 @@ ${json(await mission.missionStatus())}`;
       "Muestra tu cartera simulada y su valor en USD a precio de liquidación real ahora mismo, " +
       "el PnL desde el inicio y lo que valdría el capital inicial si se hubiera mantenido en SOL.",
     schema: z.object({}),
-    run: async () => json(await sim.valuation()),
+    run: async (_i, ctx) => json(await sim.valuation(mid(ctx))),
   }),
   tool({
     name: "quote_solana_swap",
@@ -172,6 +177,7 @@ ${json(await mission.missionStatus())}`;
     run: async (i, ctx) =>
       json(
         await sim.swapSolana({
+          missionId: mid(ctx),
           sessionId: ctx.sessionId,
           input: i.input,
           output: i.output,
@@ -190,7 +196,7 @@ ${json(await mission.missionStatus())}`;
       "symbol: par de Binance, p. ej. BTCUSDC.",
     schema: z.object({ symbol: z.string(), side: z.enum(["BUY", "SELL"]), amount: z.number().positive(), thesis }),
     run: async (i, ctx) =>
-      json(await sim.binanceMarketOrder({ sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis), meta: tradeMeta(i.thesis) })),
+      json(await sim.binanceMarketOrder({ missionId: mid(ctx), sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis), meta: tradeMeta(i.thesis) })),
   }),
   tool({
     name: "simulate_transfer",
@@ -198,7 +204,7 @@ ${json(await mission.missionStatus())}`;
       "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulación. " +
       "De Solana a Binance se paga la fee de red; de Binance a Solana, la comisión de retirada de Binance.",
     schema: z.object({ asset: z.enum(["USDC", "SOL"]), from: z.enum(["solana", "binance"]), amount: z.number().positive(), reasoning }),
-    run: async (i, ctx) => json(await sim.transfer({ sessionId: ctx.sessionId, ...i })),
+    run: async (i, ctx) => json(await sim.transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i })),
   }),
   tool({
     name: "place_solana_trigger_order",
@@ -221,6 +227,7 @@ ${json(await mission.missionStatus())}`;
     run: async (i, ctx) =>
       json(
         await orders.placeOrder({
+          missionId: mid(ctx),
           sessionId: ctx.sessionId,
           venue: "solana",
           triggerAsset: i.trigger_asset,
@@ -251,6 +258,7 @@ ${json(await mission.missionStatus())}`;
     run: async (i, ctx) =>
       json(
         await orders.placeOrder({
+          missionId: mid(ctx),
           sessionId: ctx.sessionId,
           venue: "binance",
           triggerAsset: i.trigger_symbol,
@@ -266,13 +274,13 @@ ${json(await mission.missionStatus())}`;
     name: "list_orders",
     description: "Lista tus órdenes condicionales: abiertas, cerradas (ejecutadas, fallidas, canceladas, caducadas) o todas.",
     schema: z.object({ status: z.enum(["open", "closed", "all"]).default("open") }),
-    run: async ({ status }) => json(orders.listOrders(status)),
+    run: async ({ status }, ctx) => json(orders.listOrders(mid(ctx), status)),
   }),
   tool({
     name: "cancel_order",
     description: "Cancela una orden condicional abierta.",
     schema: z.object({ id: z.number().int() }),
-    run: async ({ id }, ctx) => orders.cancelOrder(id, ctx.sessionId),
+    run: async ({ id }, ctx) => orders.cancelOrder(mid(ctx), id, ctx.sessionId),
   }),
   tool({
     name: "record_hypothetical_action",
@@ -288,6 +296,7 @@ ${json(await mission.missionStatus())}`;
     }),
     run: async (i, ctx) => {
       logJournal({
+        missionId: ctx.missionId,
         sessionId: ctx.sessionId,
         kind: "hypothetical",
         summary: `[${i.action_type}] ${i.description}`,
@@ -303,15 +312,10 @@ ${json(await mission.missionStatus())}`;
       "Devuelve las últimas entradas de tu diario de operaciones. Por defecto, de la misión actual; " +
       "con mission_id, las de una misión anterior (útil para analizarla y sacar lecciones).",
     schema: z.object({ limit: z.number().int().min(1).max(200).default(30), mission_id: z.number().int().optional() }),
-    run: async ({ limit, mission_id }) => {
-      const missions = db.prepare("SELECT id, created_at, ended_at FROM missions ORDER BY id").all() as Array<{ id: number; created_at: string; ended_at: string | null }>;
-      const target = mission_id === undefined ? missions.at(-1) : missions.find((m) => m.id === mission_id);
-      if (!target) throw new Error(mission_id === undefined ? "No hay misiones" : `No existe la misión #${mission_id}`);
-      const next = missions.find((m) => m.id > target.id);
-      const until = next?.created_at ?? "9999";
-      return json(
-        db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE ts >= ? AND ts < ? ORDER BY id DESC LIMIT ?").all(target.created_at, until, limit),
-      );
+    run: async ({ limit, mission_id }, ctx) => {
+      const target = mission_id ?? ctx.missionId;
+      if (target === null || !mission.getMission(target)) throw new Error(mission_id === undefined ? "No hay misiones" : `No existe la misión #${mission_id}`);
+      return json(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
     },
   }),
 
@@ -323,7 +327,7 @@ ${json(await mission.missionStatus())}`;
       "resultado, tus lecciones con su contexto y estadísticas reales de tus operaciones cerradas agrupadas por características " +
       "(antigüedad y liquidez del token, si subía mucho al comprar, si investigaste antes…), en todas las misiones y en las parecidas.",
     schema: z.object({}),
-    run: async () => json(memory.recall()),
+    run: async (_i, ctx) => json(memory.recall(ctx.missionId)),
   }),
   tool({
     name: "trade_history",
@@ -340,7 +344,7 @@ ${json(await mission.missionStatus())}`;
     schema: z.object({ mission_id: z.number().int(), note: z.string().min(1).describe("Por qué no hay lecciones nuevas") }),
     run: async ({ mission_id, note }, ctx) => {
       memory.markReviewed(mission_id);
-      logJournal({ sessionId: ctx.sessionId, kind: "mission", summary: `Misión #${mission_id} revisada sin lecciones nuevas: ${note}` });
+      logJournal({ missionId: mission_id, sessionId: ctx.sessionId, kind: "mission", summary: `Misión #${mission_id} revisada sin lecciones nuevas: ${note}` });
       return `Misión #${mission_id} marcada como revisada.`;
     },
   }),
@@ -356,8 +360,8 @@ ${json(await mission.missionStatus())}`;
       confidence: z.enum(["baja", "media", "alta"]).describe("Cuánto confías en ella según la cantidad de pruebas"),
       mission_id: z.number().int().optional(),
     }),
-    run: async ({ lesson, applies_to, evidence, confidence, mission_id }) => {
-      const missionId = mission_id ?? mission.getActiveMission()?.id ?? mission.getLastMission()?.id ?? null;
+    run: async ({ lesson, applies_to, evidence, confidence, mission_id }, ctx) => {
+      const missionId = mission_id ?? ctx.missionId;
       const id = db
         .prepare("INSERT INTO lessons (created_at, mission_id, text, applies_to, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)")
         .run(now(), missionId, lesson, applies_to, evidence, confidence).lastInsertRowid;
@@ -381,7 +385,7 @@ ${json(await mission.missionStatus())}`;
     description: "Guarda una nota para ti mismo. Las notas se te muestran al empezar cada sesión futura.",
     schema: z.object({ text: z.string() }),
     run: async ({ text }, ctx) => {
-      db.prepare("INSERT INTO notes (ts, session_id, text) VALUES (?, ?, ?)").run(now(), ctx.sessionId, text);
+      db.prepare("INSERT INTO notes (ts, mission_id, session_id, text) VALUES (?, ?, ?, ?)").run(now(), mid(ctx), ctx.sessionId, text);
       return "Nota guardada.";
     },
   }),
@@ -389,8 +393,8 @@ ${json(await mission.missionStatus())}`;
     name: "delete_note",
     description: "Borra una nota por su id cuando ya no sea útil.",
     schema: z.object({ id: z.number().int() }),
-    run: async ({ id }) => {
-      db.prepare("DELETE FROM notes WHERE id = ?").run(id);
+    run: async ({ id }, ctx) => {
+      db.prepare("DELETE FROM notes WHERE id = ? AND mission_id = ?").run(id, mid(ctx));
       return "Nota borrada.";
     },
   }),
@@ -401,18 +405,19 @@ type AnyTool = (typeof SIM_TOOLS)[number];
 export async function runTool(
   name: string,
   rawInput: unknown,
-  ctx: { sessionId: number },
+  ctx: ToolCtx,
   tools: readonly AnyTool[] | readonly { name: string }[] = SIM_TOOLS,
 ): Promise<{ content: ToolOutput; isError: boolean }> {
   const def = (tools as readonly AnyTool[]).find((t) => t.name === name);
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
   const parsed = def.schema.safeParse(rawInput);
   if (!parsed.success) return { content: `Entrada no válida: ${parsed.error.message}`, isError: true };
-  if (isTradingTool(name) && !mission.getActiveMission()) {
-    return { content: `Error: no hay ninguna misión activa. ${(await mission.missionStatus()).message ?? ""}`, isError: true };
+  const current = ctx.missionId !== null ? mission.getMission(ctx.missionId) : undefined;
+  if (isTradingTool(name) && current?.status !== "active") {
+    return { content: `Error: no hay ninguna misión activa. ${(await mission.missionStatus(ctx.missionId ?? undefined)).message ?? ""}`, isError: true };
   }
-  // Ciclo de aprendizaje: no se opera sin haber revisado antes la misión anterior.
-  const unreviewed = isTradingTool(name) ? memory.pendingReviews() : [];
+  // Ciclo de aprendizaje (misión principal): no se opera sin haber revisado antes la misión anterior.
+  const unreviewed = isTradingTool(name) && current?.lab_run_id === null ? memory.pendingReviews() : [];
   if (unreviewed.length) {
     return {
       content:
@@ -424,20 +429,20 @@ export async function runTool(
   }
   if (RESEARCH_TOOLS.has(name)) {
     const input = parsed.data as Record<string, unknown>;
-    positions.logResearch(name, String(input.mint ?? input.url ?? input.output ?? "") || undefined);
+    positions.logResearch(ctx.missionId, name, String(input.mint ?? input.url ?? input.output ?? "") || undefined);
   }
   try {
     const content = await (def.run as (i: unknown, c: typeof ctx) => Promise<ToolOutput>)(parsed.data, ctx);
     if (isTradingTool(name)) {
       // Tras cada operación se comprueba si ya se ha alcanzado el objetivo.
-      const ended = await mission.checkMission().catch(() => []);
+      const ended = await mission.checkMission(ctx.missionId ?? undefined).catch(() => []);
       if (ended.length && typeof content === "string") return { content: `${content}\n\n${ended.join("\n")}`, isError: false };
     }
     return { content, isError: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isTradingTool(name)) {
-      logJournal({ sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
+      logJournal({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
     }
     return { content: `Error: ${message}`, isError: true };
   }

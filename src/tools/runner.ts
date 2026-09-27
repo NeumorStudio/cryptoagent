@@ -3,6 +3,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { BROWSER_TOOLS, closeBrowser } from "./browser-tools.js";
+import type { ToolCtx } from "./define.js";
 import { runTool as runSimTool, SIM_TOOLS } from "./index.js";
 
 const TOOLS = [...BROWSER_TOOLS, ...SIM_TOOLS];
@@ -18,6 +19,6 @@ export const toolDefinitions: Anthropic.Beta.BetaToolUnion[] = [
   ),
 ];
 
-export const runTool = (name: string, rawInput: unknown, ctx: { sessionId: number }) => runSimTool(name, rawInput, ctx, TOOLS as never);
+export const runTool = (name: string, rawInput: unknown, ctx: ToolCtx) => runSimTool(name, rawInput, ctx, TOOLS as never);
 
 export const closeTools = closeBrowser;

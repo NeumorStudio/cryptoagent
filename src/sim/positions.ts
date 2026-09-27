@@ -23,13 +23,6 @@ interface PositionRow {
   realized_proceeds_usd: number;
 }
 
-function currentMissionId(): number | null {
-  const row = db.prepare("SELECT id FROM missions WHERE status IN ('active', 'closing') ORDER BY id DESC LIMIT 1").get() as
-    | { id: number }
-    | undefined;
-  return row?.id ?? null;
-}
-
 async function usdPrices(mints: string[]): Promise<Record<string, number>> {
   const need = mints.filter((m) => !CASH_MINTS.has(m));
   const prices: Record<string, number> = {};
@@ -67,8 +60,7 @@ async function entryFeatures(mint: string) {
 }
 
 /** Cuánto investigó el agente antes de esta entrada (solo herramientas del simulador). */
-function researchSnapshot(missionId: number | null, mint: string) {
-  if (missionId === null) return {};
+function researchSnapshot(missionId: number, mint: string) {
   const mission = db.prepare("SELECT created_at FROM missions WHERE id = ?").get(missionId) as { created_at: string };
   const lastTrade = db
     .prepare("SELECT MAX(COALESCE(closed_at, opened_at)) AS ts FROM positions WHERE mission_id = ?")
@@ -87,8 +79,17 @@ function researchSnapshot(missionId: number | null, mint: string) {
   };
 }
 
-async function openOrAdd(args: { venue: string; asset: string; symbol: string; qty: number; costUsd: number; meta?: TradeMeta; mint?: string }) {
-  const missionId = currentMissionId();
+async function openOrAdd(args: {
+  missionId: number;
+  venue: string;
+  asset: string;
+  symbol: string;
+  qty: number;
+  costUsd: number;
+  meta?: TradeMeta;
+  mint?: string;
+}) {
+  const missionId = args.missionId;
   const existing = db
     .prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'")
     .get(missionId, args.venue, args.asset) as PositionRow | undefined;
@@ -120,8 +121,8 @@ async function openOrAdd(args: { venue: string; asset: string; symbol: string; q
   );
 }
 
-function reduce(args: { venue: string; asset: string; qty: number; proceedsUsd: number; meta?: TradeMeta }) {
-  const missionId = currentMissionId();
+function reduce(args: { missionId: number; venue: string; asset: string; qty: number; proceedsUsd: number; meta?: TradeMeta }) {
+  const missionId = args.missionId;
   const p = db
     .prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'")
     .get(missionId, args.venue, args.asset) as PositionRow | undefined;
@@ -146,6 +147,7 @@ function reduce(args: { venue: string; asset: string; qty: number; proceedsUsd: 
 }
 
 export async function recordSolanaSwap(args: {
+  missionId: number;
   inputMint: string;
   outputMint: string;
   inputSymbol: string;
@@ -160,10 +162,11 @@ export async function recordSolanaSwap(args: {
   // El valor de la operación: preferimos el lado estable si lo hay (es exacto).
   const valueUsd = CASH_MINTS.has(args.inputMint) ? args.inAmount : CASH_MINTS.has(args.outputMint) ? args.outAmount : inUsd || outUsd;
   if (!CASH_MINTS.has(args.inputMint)) {
-    reduce({ venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
+    reduce({ missionId: args.missionId, venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
   }
   if (!CASH_MINTS.has(args.outputMint)) {
     await openOrAdd({
+      missionId: args.missionId,
       venue: "solana",
       asset: args.outputMint,
       symbol: args.outputSymbol,
@@ -176,6 +179,7 @@ export async function recordSolanaSwap(args: {
 }
 
 export async function recordBinanceTrade(args: {
+  missionId: number;
   baseAsset: string;
   quoteAsset: string;
   side: "BUY" | "SELL";
@@ -188,6 +192,7 @@ export async function recordBinanceTrade(args: {
   const quoteUsd = CASH_TICKERS.has(args.quoteAsset) ? 1 : 0;
   if (args.side === "BUY") {
     await openOrAdd({
+      missionId: args.missionId,
       venue: "binance",
       asset: args.baseAsset,
       symbol: args.baseAsset,
@@ -196,16 +201,23 @@ export async function recordBinanceTrade(args: {
       meta: args.meta,
     });
   } else {
-    reduce({ venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
+    reduce({ missionId: args.missionId, venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
   }
 }
 
 /** Posiciones con su resultado, para el propio agente y para las estadísticas de memoria. */
-export function listPositions(missionId?: number) {
+export function listPositions(filter?: number | { scope: "main" | "lab" }) {
   const rows = (
-    missionId === undefined
+    filter === undefined
       ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all()
-      : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId)
+      : typeof filter === "number"
+        ? db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(filter)
+        : db
+            .prepare(
+              `SELECT p.* FROM positions p JOIN missions m ON m.id = p.mission_id
+               WHERE m.lab_run_id IS ${filter.scope === "main" ? "" : "NOT "}NULL ORDER BY p.id DESC`,
+            )
+            .all()
   ) as any[];
   return rows.map((p) => {
     const pnlUsd = p.status === "closed" ? p.realized_proceeds_usd - p.realized_cost_usd : null;
@@ -232,6 +244,6 @@ export function listPositions(missionId?: number) {
   });
 }
 
-export function logResearch(tool: string, target?: string) {
-  db.prepare("INSERT INTO research_log (ts, mission_id, tool, target) VALUES (?, ?, ?, ?)").run(now(), currentMissionId(), tool, target ?? null);
+export function logResearch(missionId: number | null, tool: string, target?: string) {
+  db.prepare("INSERT INTO research_log (ts, mission_id, tool, target) VALUES (?, ?, ?, ?)").run(now(), missionId, tool, target ?? null);
 }

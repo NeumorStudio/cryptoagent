@@ -1,49 +1,57 @@
 import { db, now } from "../db.js";
 import { recall } from "./memory.js";
-import { missionStatus } from "./mission.js";
+import { getMission, missionStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
 
-export function startSession(): number {
-  return Number(db.prepare("INSERT INTO sessions (started_at) VALUES (?)").run(now()).lastInsertRowid);
+export function startSession(missionId: number | null): number {
+  return Number(db.prepare("INSERT INTO sessions (started_at, mission_id) VALUES (?, ?)").run(now(), missionId).lastInsertRowid);
 }
 
-/** Lo que el agente ve al empezar cada sesión: cartera, sus notas y el diario reciente. */
-export async function sessionBriefing(sessionId: number): Promise<string> {
-  const portfolio = await valuation(true);
-  const notes = db.prepare("SELECT id, ts, text FROM notes ORDER BY id").all() as Array<{ id: number; ts: string; text: string }>;
-  const openOrders = listOrders("open");
-  const mem = recall(8);
-  const missionStart = (db.prepare("SELECT created_at FROM missions ORDER BY id DESC LIMIT 1").get() as { created_at: string } | undefined)?.created_at ?? "1970";
-  const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE ts >= ? ORDER BY id DESC LIMIT 15").all(missionStart) as Array<{ ts: string; kind: string; summary: string }>;
+/** Lo que el agente ve al empezar cada sesión: su misión, su memoria, su cartera, sus notas y su diario reciente. */
+export async function sessionBriefing(sessionId: number, missionId: number | null): Promise<string> {
+  const header = `Sesión #${sessionId}. Fecha y hora actual: ${now()}.`;
+  if (missionId === null) return [header, "", JSON.stringify(await missionStatus(), null, 2)].join("\n");
+
+  const mission = getMission(missionId)!;
+  const portfolio = await valuation(missionId, true);
+  const notes = db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId) as Array<{ id: number; ts: string; text: string }>;
+  const openOrders = listOrders(missionId, "open");
+  const recent = db
+    .prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15")
+    .all(missionId) as Array<{ ts: string; kind: string; summary: string }>;
+
+  // La memoria entre misiones es de la misión principal; la del laboratorio llega en su propia fase.
+  const memoryLines: string[] = [];
+  if (mission.lab_run_id === null) {
+    const mem = recall(missionId, 8);
+    if (mem.pendingReview.length) {
+      memoryLines.push(
+        `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misión"} #${mem.pendingReview.join(", #")} ` +
+          "(trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.",
+        "",
+      );
+    }
+    memoryLines.push(
+      mem.missionHistory.length
+        ? "Tu memoria, ordenada por parecido con esta misión (recall_lessons tiene el detalle completo):\n" +
+            JSON.stringify(
+              { missionHistory: mem.missionHistory.slice(0, 6), lessons: mem.lessons, totalLessons: mem.totalLessons, tradeStats: mem.tradeStats },
+              null,
+              2,
+            )
+        : "Es tu primera misión: todavía no tienes memoria.",
+      "",
+    );
+  }
 
   return [
-    `Sesión #${sessionId}. Fecha y hora actual: ${now()}.`,
+    header,
     "",
     "Misión:",
-    JSON.stringify(await missionStatus(), null, 2),
+    JSON.stringify(await missionStatus(missionId), null, 2),
     "",
-    ...(mem.pendingReview.length
-      ? [
-          `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misión"} #${mem.pendingReview.join(", #")} ` +
-            "(trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.",
-          "",
-        ]
-      : []),
-    mem.missionHistory.length
-      ? "Tu memoria, ordenada por parecido con esta misión (recall_lessons tiene el detalle completo):\n" +
-        JSON.stringify(
-          {
-            missionHistory: mem.missionHistory.slice(0, 6),
-            lessons: mem.lessons,
-            totalLessons: mem.totalLessons,
-            tradeStats: mem.tradeStats,
-          },
-          null,
-          2,
-        )
-      : "Es tu primera misión: todavía no tienes memoria.",
-    "",
+    ...memoryLines,
     "Cartera:",
     JSON.stringify(portfolio, null, 2),
     "",
@@ -57,8 +65,8 @@ export async function sessionBriefing(sessionId: number): Promise<string> {
   ].join("\n");
 }
 
-export async function endSession(sessionId: number, finalText: string, tokens?: { input: number; output: number }) {
-  const end = await valuation(true);
+export async function endSession(sessionId: number, missionId: number | null, finalText: string, tokens?: { input: number; output: number }) {
+  const end = missionId !== null ? await valuation(missionId, true) : null;
   db.prepare("UPDATE sessions SET ended_at = ?, final_text = ?, input_tokens = ?, output_tokens = ? WHERE id = ?").run(
     now(),
     finalText,

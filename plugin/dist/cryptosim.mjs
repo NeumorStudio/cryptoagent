@@ -1876,8 +1876,8 @@ var require_keyword = __commonJS({
       var _a3;
       const { gen, keyword, schema, parentSchema, $data, it } = cxt;
       checkAsyncKeyword(it, def);
-      const validate2 = !$data && def.compile ? def.compile.call(it.self, schema, parentSchema, it) : def.validate;
-      const validateRef = useKeyword(gen, keyword, validate2);
+      const validate3 = !$data && def.compile ? def.compile.call(it.self, schema, parentSchema, it) : def.validate;
+      const validateRef = useKeyword(gen, keyword, validate3);
       const valid = gen.let("valid");
       cxt.block$data(valid, validateKeyword);
       cxt.ok((_a3 = def.valid) !== null && _a3 !== void 0 ? _a3 : valid);
@@ -2950,28 +2950,28 @@ var require_compile = __commonJS({
         if (this.opts.code.process)
           sourceCode = this.opts.code.process(sourceCode, sch);
         const makeValidate = new Function(`${names_1.default.self}`, `${names_1.default.scope}`, sourceCode);
-        const validate2 = makeValidate(this, this.scope.get());
-        this.scope.value(validateName, { ref: validate2 });
-        validate2.errors = null;
-        validate2.schema = sch.schema;
-        validate2.schemaEnv = sch;
+        const validate3 = makeValidate(this, this.scope.get());
+        this.scope.value(validateName, { ref: validate3 });
+        validate3.errors = null;
+        validate3.schema = sch.schema;
+        validate3.schemaEnv = sch;
         if (sch.$async)
-          validate2.$async = true;
+          validate3.$async = true;
         if (this.opts.code.source === true) {
-          validate2.source = { validateName, validateCode, scopeValues: gen._values };
+          validate3.source = { validateName, validateCode, scopeValues: gen._values };
         }
         if (this.opts.unevaluated) {
           const { props, items } = schemaCxt;
-          validate2.evaluated = {
+          validate3.evaluated = {
             props: props instanceof codegen_1.Name ? void 0 : props,
             items: items instanceof codegen_1.Name ? void 0 : items,
             dynamicProps: props instanceof codegen_1.Name,
             dynamicItems: items instanceof codegen_1.Name
           };
-          if (validate2.source)
-            validate2.source.evaluated = (0, codegen_1.stringify)(validate2.evaluated);
+          if (validate3.source)
+            validate3.source.evaluated = (0, codegen_1.stringify)(validate3.evaluated);
         }
-        sch.validate = validate2;
+        sch.validate = validate3;
         return sch;
       } catch (e) {
         delete sch.validate;
@@ -6894,8 +6894,8 @@ var require_formats = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
-    function fmtDef(validate2, compare) {
-      return { validate: validate2, compare };
+    function fmtDef(validate3, compare) {
+      return { validate: validate3, compare };
     }
     exports.fullFormats = {
       // date: http://tools.ietf.org/html/rfc3339#section-5.6
@@ -28220,21 +28220,21 @@ function visit(schema, fnOrHandlers) {
     const h = fnOrHandlers[node2._zod.def.type];
     return h ? h(node2, rewritten) : node2;
   };
-  const cache = /* @__PURE__ */ new Map();
+  const cache2 = /* @__PURE__ */ new Map();
   function run(s) {
-    const cached3 = cache.get(s);
+    const cached3 = cache2.get(s);
     if (cached3 === RESOLVING) {
       return new $ZodLazy({
         type: "lazy",
-        getter: () => cache.get(s)
+        getter: () => cache2.get(s)
       });
     }
     if (cached3 !== void 0)
       return cached3;
-    cache.set(s, RESOLVING);
+    cache2.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
-    cache.set(s, mapped);
+    cache2.set(s, mapped);
     return mapped;
   }
   function mapInner(s) {
@@ -32757,17 +32757,17 @@ var CompleteRequestSchema = RequestSchema.extend({
   method: literal("completion/complete"),
   params: CompleteRequestParamsSchema
 });
-function assertCompleteRequestPrompt(request) {
-  if (request.params.ref.type !== "ref/prompt") {
-    throw new TypeError(`Expected CompleteRequestPrompt, but got ${request.params.ref.type}`);
+function assertCompleteRequestPrompt(request2) {
+  if (request2.params.ref.type !== "ref/prompt") {
+    throw new TypeError(`Expected CompleteRequestPrompt, but got ${request2.params.ref.type}`);
   }
-  void request;
+  void request2;
 }
-function assertCompleteRequestResourceTemplate(request) {
-  if (request.params.ref.type !== "ref/resource") {
-    throw new TypeError(`Expected CompleteRequestResourceTemplate, but got ${request.params.ref.type}`);
+function assertCompleteRequestResourceTemplate(request2) {
+  if (request2.params.ref.type !== "ref/resource") {
+    throw new TypeError(`Expected CompleteRequestResourceTemplate, but got ${request2.params.ref.type}`);
   }
-  void request;
+  void request2;
 }
 var CompleteResultSchema = ResultSchema.extend({
   completion: looseObject({
@@ -34274,8 +34274,8 @@ var Protocol = class {
     this._taskStore = _options?.taskStore;
     this._taskMessageQueue = _options?.taskMessageQueue;
     if (this._taskStore) {
-      this.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
-        const task = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
+      this.setRequestHandler(GetTaskRequestSchema, async (request2, extra) => {
+        const task = await this._taskStore.getTask(request2.params.taskId, extra.sessionId);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
         }
@@ -34283,9 +34283,9 @@ var Protocol = class {
           ...task
         };
       });
-      this.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
+      this.setRequestHandler(GetTaskPayloadRequestSchema, async (request2, extra) => {
         const handleTaskResult = async () => {
-          const taskId = request.params.taskId;
+          const taskId = request2.params.taskId;
           if (this._taskMessageQueue) {
             let queuedMessage;
             while (queuedMessage = await this._taskMessageQueue.dequeue(taskId, extra.sessionId)) {
@@ -34336,9 +34336,9 @@ var Protocol = class {
         };
         return await handleTaskResult();
       });
-      this.setRequestHandler(ListTasksRequestSchema, async (request, extra) => {
+      this.setRequestHandler(ListTasksRequestSchema, async (request2, extra) => {
         try {
-          const { tasks, nextCursor } = await this._taskStore.listTasks(request.params?.cursor, extra.sessionId);
+          const { tasks, nextCursor } = await this._taskStore.listTasks(request2.params?.cursor, extra.sessionId);
           return {
             tasks,
             nextCursor,
@@ -34348,20 +34348,20 @@ var Protocol = class {
           throw new McpError(ErrorCode.InvalidParams, `Failed to list tasks: ${error62 instanceof Error ? error62.message : String(error62)}`);
         }
       });
-      this.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
+      this.setRequestHandler(CancelTaskRequestSchema, async (request2, extra) => {
         try {
-          const task = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
+          const task = await this._taskStore.getTask(request2.params.taskId, extra.sessionId);
           if (!task) {
-            throw new McpError(ErrorCode.InvalidParams, `Task not found: ${request.params.taskId}`);
+            throw new McpError(ErrorCode.InvalidParams, `Task not found: ${request2.params.taskId}`);
           }
           if (isTerminal(task.status)) {
             throw new McpError(ErrorCode.InvalidParams, `Cannot cancel task in terminal status: ${task.status}`);
           }
-          await this._taskStore.updateTaskStatus(request.params.taskId, "cancelled", "Client cancelled task execution.", extra.sessionId);
-          this._clearTaskQueue(request.params.taskId);
-          const cancelledTask = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
+          await this._taskStore.updateTaskStatus(request2.params.taskId, "cancelled", "Client cancelled task execution.", extra.sessionId);
+          this._clearTaskQueue(request2.params.taskId);
+          const cancelledTask = await this._taskStore.getTask(request2.params.taskId, extra.sessionId);
           if (!cancelledTask) {
-            throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${request.params.taskId}`);
+            throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${request2.params.taskId}`);
           }
           return {
             _meta: {},
@@ -34482,14 +34482,14 @@ var Protocol = class {
     }
     Promise.resolve().then(() => handler2(notification)).catch((error62) => this._onerror(new Error(`Uncaught error in notification handler: ${error62}`)));
   }
-  _onrequest(request, extra) {
-    const handler2 = this._requestHandlers.get(request.method) ?? this.fallbackRequestHandler;
+  _onrequest(request2, extra) {
+    const handler2 = this._requestHandlers.get(request2.method) ?? this.fallbackRequestHandler;
     const capturedTransport = this._transport;
-    const relatedTaskId = request.params?._meta?.[RELATED_TASK_META_KEY]?.taskId;
+    const relatedTaskId = request2.params?._meta?.[RELATED_TASK_META_KEY]?.taskId;
     if (handler2 === void 0) {
       const errorResponse = {
         jsonrpc: "2.0",
-        id: request.id,
+        id: request2.id,
         error: {
           code: ErrorCode.MethodNotFound,
           message: "Method not found"
@@ -34507,17 +34507,17 @@ var Protocol = class {
       return;
     }
     const abortController = new AbortController();
-    this._requestHandlerAbortControllers.set(request.id, abortController);
-    const taskCreationParams = isTaskAugmentedRequestParams(request.params) ? request.params.task : void 0;
-    const taskStore = this._taskStore ? this.requestTaskStore(request, capturedTransport?.sessionId) : void 0;
+    this._requestHandlerAbortControllers.set(request2.id, abortController);
+    const taskCreationParams = isTaskAugmentedRequestParams(request2.params) ? request2.params.task : void 0;
+    const taskStore = this._taskStore ? this.requestTaskStore(request2, capturedTransport?.sessionId) : void 0;
     const fullExtra = {
       signal: abortController.signal,
       sessionId: capturedTransport?.sessionId,
-      _meta: request.params?._meta,
+      _meta: request2.params?._meta,
       sendNotification: async (notification) => {
         if (abortController.signal.aborted)
           return;
-        const notificationOptions = { relatedRequestId: request.id };
+        const notificationOptions = { relatedRequestId: request2.id };
         if (relatedTaskId) {
           notificationOptions.relatedTask = { taskId: relatedTaskId };
         }
@@ -34527,7 +34527,7 @@ var Protocol = class {
         if (abortController.signal.aborted) {
           throw new McpError(ErrorCode.ConnectionClosed, "Request was cancelled");
         }
-        const requestOptions = { ...options, relatedRequestId: request.id };
+        const requestOptions = { ...options, relatedRequestId: request2.id };
         if (relatedTaskId && !requestOptions.relatedTask) {
           requestOptions.relatedTask = { taskId: relatedTaskId };
         }
@@ -34538,7 +34538,7 @@ var Protocol = class {
         return await this.request(r, resultSchema, requestOptions);
       },
       authInfo: extra?.authInfo,
-      requestId: request.id,
+      requestId: request2.id,
       requestInfo: extra?.requestInfo,
       taskId: relatedTaskId,
       taskStore,
@@ -34548,16 +34548,16 @@ var Protocol = class {
     };
     Promise.resolve().then(() => {
       if (taskCreationParams) {
-        this.assertTaskHandlerCapability(request.method);
+        this.assertTaskHandlerCapability(request2.method);
       }
-    }).then(() => handler2(request, fullExtra)).then(async (result) => {
+    }).then(() => handler2(request2, fullExtra)).then(async (result) => {
       if (abortController.signal.aborted) {
         return;
       }
       const response = {
         result,
         jsonrpc: "2.0",
-        id: request.id
+        id: request2.id
       };
       if (relatedTaskId && this._taskMessageQueue) {
         await this._enqueueTaskMessage(relatedTaskId, {
@@ -34574,7 +34574,7 @@ var Protocol = class {
       }
       const errorResponse = {
         jsonrpc: "2.0",
-        id: request.id,
+        id: request2.id,
         error: {
           code: Number.isSafeInteger(error62["code"]) ? error62["code"] : ErrorCode.InternalError,
           message: error62.message ?? "Internal error",
@@ -34591,8 +34591,8 @@ var Protocol = class {
         await capturedTransport?.send(errorResponse);
       }
     }).catch((error62) => this._onerror(new Error(`Failed to send response: ${error62}`))).finally(() => {
-      if (this._requestHandlerAbortControllers.get(request.id) === abortController) {
-        this._requestHandlerAbortControllers.delete(request.id);
+      if (this._requestHandlerAbortControllers.get(request2.id) === abortController) {
+        this._requestHandlerAbortControllers.delete(request2.id);
       }
     });
   }
@@ -34696,11 +34696,11 @@ var Protocol = class {
    *
    * @experimental Use `client.experimental.tasks.requestStream()` to access this method.
    */
-  async *requestStream(request, resultSchema, options) {
+  async *requestStream(request2, resultSchema, options) {
     const { task } = options ?? {};
     if (!task) {
       try {
-        const result = await this.request(request, resultSchema, options);
+        const result = await this.request(request2, resultSchema, options);
         yield { type: "result", result };
       } catch (error62) {
         yield {
@@ -34712,7 +34712,7 @@ var Protocol = class {
     }
     let taskId;
     try {
-      const createResult = await this.request(request, CreateTaskResultSchema, options);
+      const createResult = await this.request(request2, CreateTaskResultSchema, options);
       if (createResult.task) {
         taskId = createResult.task.taskId;
         yield { type: "taskCreated", task: createResult.task };
@@ -34760,7 +34760,7 @@ var Protocol = class {
    *
    * Do not use this method to emit notifications! Use notification() instead.
    */
-  request(request, resultSchema, options) {
+  request(request2, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
     return new Promise((resolve, reject) => {
       const earlyReject = (error62) => {
@@ -34772,9 +34772,9 @@ var Protocol = class {
       }
       if (this._options?.enforceStrictCapabilities === true) {
         try {
-          this.assertCapabilityForMethod(request.method);
+          this.assertCapabilityForMethod(request2.method);
           if (task) {
-            this.assertTaskCapability(request.method);
+            this.assertTaskCapability(request2.method);
           }
         } catch (e) {
           earlyReject(e);
@@ -34784,16 +34784,16 @@ var Protocol = class {
       options?.signal?.throwIfAborted();
       const messageId = this._requestMessageId++;
       const jsonrpcRequest = {
-        ...request,
+        ...request2,
         jsonrpc: "2.0",
         id: messageId
       };
       if (options?.onprogress) {
         this._progressHandlers.set(messageId, options.onprogress);
         jsonrpcRequest.params = {
-          ...request.params,
+          ...request2.params,
           _meta: {
-            ...request.params?._meta || {},
+            ...request2.params?._meta || {},
             progressToken: messageId
           }
         };
@@ -34997,8 +34997,8 @@ var Protocol = class {
   setRequestHandler(requestSchema, handler2) {
     const method = getMethodLiteral(requestSchema);
     this.assertRequestHandlerCapability(method);
-    this._requestHandlers.set(method, (request, extra) => {
-      const parsed = parseWithCompat(requestSchema, request);
+    this._requestHandlers.set(method, (request2, extra) => {
+      const parsed = parseWithCompat(requestSchema, request2);
       return Promise.resolve(handler2(parsed, extra));
     });
   }
@@ -35056,21 +35056,21 @@ var Protocol = class {
    * the error appropriately (e.g., by failing the task, logging, etc.). The Protocol layer
    * simply propagates the error.
    */
-  async _enqueueTaskMessage(taskId, message, sessionId2) {
+  async _enqueueTaskMessage(taskId, message, sessionId) {
     if (!this._taskStore || !this._taskMessageQueue) {
       throw new Error("Cannot enqueue task message: taskStore and taskMessageQueue are not configured");
     }
     const maxQueueSize = this._options?.maxTaskQueueSize;
-    await this._taskMessageQueue.enqueue(taskId, message, sessionId2, maxQueueSize);
+    await this._taskMessageQueue.enqueue(taskId, message, sessionId, maxQueueSize);
   }
   /**
    * Clears the message queue for a task and rejects any pending request resolvers.
    * @param taskId The task ID whose queue should be cleared
    * @param sessionId Optional session ID for binding the operation to a specific session
    */
-  async _clearTaskQueue(taskId, sessionId2) {
+  async _clearTaskQueue(taskId, sessionId) {
     if (this._taskMessageQueue) {
-      const messages = await this._taskMessageQueue.dequeueAll(taskId, sessionId2);
+      const messages = await this._taskMessageQueue.dequeueAll(taskId, sessionId);
       for (const message of messages) {
         if (message.type === "request" && isJSONRPCRequest(message.message)) {
           const requestId = message.message.id;
@@ -35113,31 +35113,31 @@ var Protocol = class {
       }, { once: true });
     });
   }
-  requestTaskStore(request, sessionId2) {
+  requestTaskStore(request2, sessionId) {
     const taskStore = this._taskStore;
     if (!taskStore) {
       throw new Error("No task store configured");
     }
     return {
       createTask: async (taskParams) => {
-        if (!request) {
+        if (!request2) {
           throw new Error("No request provided");
         }
-        return await taskStore.createTask(taskParams, request.id, {
-          method: request.method,
-          params: request.params
-        }, sessionId2);
+        return await taskStore.createTask(taskParams, request2.id, {
+          method: request2.method,
+          params: request2.params
+        }, sessionId);
       },
       getTask: async (taskId) => {
-        const task = await taskStore.getTask(taskId, sessionId2);
+        const task = await taskStore.getTask(taskId, sessionId);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
         }
         return task;
       },
       storeTaskResult: async (taskId, status, result) => {
-        await taskStore.storeTaskResult(taskId, status, result, sessionId2);
-        const task = await taskStore.getTask(taskId, sessionId2);
+        await taskStore.storeTaskResult(taskId, status, result, sessionId);
+        const task = await taskStore.getTask(taskId, sessionId);
         if (task) {
           const notification = TaskStatusNotificationSchema.parse({
             method: "notifications/tasks/status",
@@ -35150,18 +35150,18 @@ var Protocol = class {
         }
       },
       getTaskResult: (taskId) => {
-        return taskStore.getTaskResult(taskId, sessionId2);
+        return taskStore.getTaskResult(taskId, sessionId);
       },
       updateTaskStatus: async (taskId, status, statusMessage) => {
-        const task = await taskStore.getTask(taskId, sessionId2);
+        const task = await taskStore.getTask(taskId, sessionId);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, `Task "${taskId}" not found - it may have been cleaned up`);
         }
         if (isTerminal(task.status)) {
           throw new McpError(ErrorCode.InvalidParams, `Cannot update task "${taskId}" from terminal status "${task.status}" to "${status}". Terminal states (completed, failed, cancelled) cannot transition to other states.`);
         }
-        await taskStore.updateTaskStatus(taskId, status, statusMessage, sessionId2);
-        const updatedTask = await taskStore.getTask(taskId, sessionId2);
+        await taskStore.updateTaskStatus(taskId, status, statusMessage, sessionId);
+        const updatedTask = await taskStore.getTask(taskId, sessionId);
         if (updatedTask) {
           const notification = TaskStatusNotificationSchema.parse({
             method: "notifications/tasks/status",
@@ -35174,7 +35174,7 @@ var Protocol = class {
         }
       },
       listTasks: (cursor) => {
-        return taskStore.listTasks(cursor, sessionId2);
+        return taskStore.listTasks(cursor, sessionId);
       }
     };
   }
@@ -35286,8 +35286,8 @@ var ExperimentalServerTasks = class {
    *
    * @experimental
    */
-  requestStream(request, resultSchema, options) {
-    return this._server.requestStream(request, resultSchema, options);
+  requestStream(request2, resultSchema, options) {
+    return this._server.requestStream(request2, resultSchema, options);
   }
   /**
    * Sends a sampling request and returns an AsyncGenerator that yields response messages.
@@ -35525,19 +35525,19 @@ var Server = class extends Protocol {
     this._serverInfo = _serverInfo;
     this._loggingLevels = /* @__PURE__ */ new Map();
     this.LOG_LEVEL_SEVERITY = new Map(LoggingLevelSchema.options.map((level, index) => [level, index]));
-    this.isMessageIgnored = (level, sessionId2) => {
-      const currentLevel = this._loggingLevels.get(sessionId2);
+    this.isMessageIgnored = (level, sessionId) => {
+      const currentLevel = this._loggingLevels.get(sessionId);
       return currentLevel ? this.LOG_LEVEL_SEVERITY.get(level) < this.LOG_LEVEL_SEVERITY.get(currentLevel) : false;
     };
     this._capabilities = options?.capabilities ?? {};
     this._instructions = options?.instructions;
     this._jsonSchemaValidator = options?.jsonSchemaValidator ?? new AjvJsonSchemaValidator();
-    this.setRequestHandler(InitializeRequestSchema, (request) => this._oninitialize(request));
+    this.setRequestHandler(InitializeRequestSchema, (request2) => this._oninitialize(request2));
     this.setNotificationHandler(InitializedNotificationSchema, () => this.oninitialized?.());
     if (this._capabilities.logging) {
-      this.setRequestHandler(SetLevelRequestSchema, async (request, extra) => {
+      this.setRequestHandler(SetLevelRequestSchema, async (request2, extra) => {
         const transportSessionId = extra.sessionId || extra.requestInfo?.headers["mcp-session-id"] || void 0;
-        const { level } = request.params;
+        const { level } = request2.params;
         const parseResult = LoggingLevelSchema.safeParse(level);
         if (parseResult.success) {
           this._loggingLevels.set(transportSessionId, parseResult.data);
@@ -35587,14 +35587,14 @@ var Server = class extends Protocol {
     }
     const method = methodValue;
     if (method === "tools/call") {
-      const wrappedHandler = async (request, extra) => {
-        const validatedRequest = safeParse2(CallToolRequestSchema, request);
+      const wrappedHandler = async (request2, extra) => {
+        const validatedRequest = safeParse2(CallToolRequestSchema, request2);
         if (!validatedRequest.success) {
           const errorMessage = validatedRequest.error instanceof Error ? validatedRequest.error.message : String(validatedRequest.error);
           throw new McpError(ErrorCode.InvalidParams, `Invalid tools/call request: ${errorMessage}`);
         }
         const { params } = validatedRequest.data;
-        const result = await Promise.resolve(handler2(request, extra));
+        const result = await Promise.resolve(handler2(request2, extra));
         if (params.task) {
           const taskValidationResult = safeParse2(CreateTaskResultSchema, result);
           if (!taskValidationResult.success) {
@@ -35725,10 +35725,10 @@ var Server = class extends Protocol {
     }
     assertToolsCallTaskCapability(this._capabilities.tasks?.requests, method, "Server");
   }
-  async _oninitialize(request) {
-    const requestedVersion = request.params.protocolVersion;
-    this._clientCapabilities = request.params.capabilities;
-    this._clientVersion = request.params.clientInfo;
+  async _oninitialize(request2) {
+    const requestedVersion = request2.params.protocolVersion;
+    this._clientCapabilities = request2.params.capabilities;
+    this._clientVersion = request2.params.clientInfo;
     const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(requestedVersion) ? requestedVersion : LATEST_PROTOCOL_VERSION;
     return {
       protocolVersion,
@@ -35860,9 +35860,9 @@ var Server = class extends Protocol {
    * @param params
    * @param sessionId optional for stateless and backward compatibility
    */
-  async sendLoggingMessage(params, sessionId2) {
+  async sendLoggingMessage(params, sessionId) {
     if (this._capabilities.logging) {
-      if (!this.isMessageIgnored(params.level, sessionId2)) {
+      if (!this.isMessageIgnored(params.level, sessionId)) {
         return this.notification({ method: "notifications/message", params });
       }
     }
@@ -36055,33 +36055,33 @@ var McpServer = class {
         return toolDefinition;
       })
     }));
-    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request2, extra) => {
       try {
-        const tool2 = this._registeredTools[request.params.name];
+        const tool2 = this._registeredTools[request2.params.name];
         if (!tool2) {
-          throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} not found`);
+          throw new McpError(ErrorCode.InvalidParams, `Tool ${request2.params.name} not found`);
         }
         if (!tool2.enabled) {
-          throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} disabled`);
+          throw new McpError(ErrorCode.InvalidParams, `Tool ${request2.params.name} disabled`);
         }
-        const isTaskRequest = !!request.params.task;
+        const isTaskRequest = !!request2.params.task;
         const taskSupport = tool2.execution?.taskSupport;
         const isTaskHandler = "createTask" in tool2.handler;
         if ((taskSupport === "required" || taskSupport === "optional") && !isTaskHandler) {
-          throw new McpError(ErrorCode.InternalError, `Tool ${request.params.name} has taskSupport '${taskSupport}' but was not registered with registerToolTask`);
+          throw new McpError(ErrorCode.InternalError, `Tool ${request2.params.name} has taskSupport '${taskSupport}' but was not registered with registerToolTask`);
         }
         if (taskSupport === "required" && !isTaskRequest) {
-          throw new McpError(ErrorCode.MethodNotFound, `Tool ${request.params.name} requires task augmentation (taskSupport: 'required')`);
+          throw new McpError(ErrorCode.MethodNotFound, `Tool ${request2.params.name} requires task augmentation (taskSupport: 'required')`);
         }
         if (taskSupport === "optional" && !isTaskRequest && isTaskHandler) {
-          return await this.handleAutomaticTaskPolling(tool2, request, extra);
+          return await this.handleAutomaticTaskPolling(tool2, request2, extra);
         }
-        const args = await this.validateToolInput(tool2, request.params.arguments, request.params.name);
+        const args = await this.validateToolInput(tool2, request2.params.arguments, request2.params.name);
         const result = await this.executeToolHandler(tool2, args, extra);
         if (isTaskRequest) {
           return result;
         }
-        await this.validateToolOutput(tool2, result, request.params.name);
+        await this.validateToolOutput(tool2, result, request2.params.name);
         return result;
       } catch (error62) {
         if (error62 instanceof McpError) {
@@ -36182,11 +36182,11 @@ var McpServer = class {
   /**
    * Handles automatic task polling for tools with taskSupport 'optional'.
    */
-  async handleAutomaticTaskPolling(tool2, request, extra) {
+  async handleAutomaticTaskPolling(tool2, request2, extra) {
     if (!extra.taskStore) {
       throw new Error("No task store provided for task-capable tool.");
     }
-    const args = await this.validateToolInput(tool2, request.params.arguments, request.params.name);
+    const args = await this.validateToolInput(tool2, request2.params.arguments, request2.params.name);
     const handler2 = tool2.handler;
     const taskExtra = { ...extra, taskStore: extra.taskStore };
     const createTaskResult = args ? await Promise.resolve(handler2.createTask(args, taskExtra)) : (
@@ -36214,21 +36214,21 @@ var McpServer = class {
     this.server.registerCapabilities({
       completions: {}
     });
-    this.server.setRequestHandler(CompleteRequestSchema, async (request) => {
-      switch (request.params.ref.type) {
+    this.server.setRequestHandler(CompleteRequestSchema, async (request2) => {
+      switch (request2.params.ref.type) {
         case "ref/prompt":
-          assertCompleteRequestPrompt(request);
-          return this.handlePromptCompletion(request, request.params.ref);
+          assertCompleteRequestPrompt(request2);
+          return this.handlePromptCompletion(request2, request2.params.ref);
         case "ref/resource":
-          assertCompleteRequestResourceTemplate(request);
-          return this.handleResourceCompletion(request, request.params.ref);
+          assertCompleteRequestResourceTemplate(request2);
+          return this.handleResourceCompletion(request2, request2.params.ref);
         default:
-          throw new McpError(ErrorCode.InvalidParams, `Invalid completion reference: ${request.params.ref}`);
+          throw new McpError(ErrorCode.InvalidParams, `Invalid completion reference: ${request2.params.ref}`);
       }
     });
     this._completionHandlerInitialized = true;
   }
-  async handlePromptCompletion(request, ref) {
+  async handlePromptCompletion(request2, ref) {
     const prompt = this._registeredPrompts[ref.name];
     if (!prompt) {
       throw new McpError(ErrorCode.InvalidParams, `Prompt ${ref.name} not found`);
@@ -36240,7 +36240,7 @@ var McpServer = class {
       return EMPTY_COMPLETION_RESULT;
     }
     const promptShape = getObjectShape(prompt.argsSchema);
-    const field = promptShape?.[request.params.argument.name];
+    const field = promptShape?.[request2.params.argument.name];
     if (!isCompletable(field)) {
       return EMPTY_COMPLETION_RESULT;
     }
@@ -36248,22 +36248,22 @@ var McpServer = class {
     if (!completer) {
       return EMPTY_COMPLETION_RESULT;
     }
-    const suggestions = await completer(request.params.argument.value, request.params.context);
+    const suggestions = await completer(request2.params.argument.value, request2.params.context);
     return createCompletionResult(suggestions);
   }
-  async handleResourceCompletion(request, ref) {
+  async handleResourceCompletion(request2, ref) {
     const template = Object.values(this._registeredResourceTemplates).find((t) => t.resourceTemplate.uriTemplate.toString() === ref.uri);
     if (!template) {
       if (this._registeredResources[ref.uri]) {
         return EMPTY_COMPLETION_RESULT;
       }
-      throw new McpError(ErrorCode.InvalidParams, `Resource template ${request.params.ref.uri} not found`);
+      throw new McpError(ErrorCode.InvalidParams, `Resource template ${request2.params.ref.uri} not found`);
     }
-    const completer = template.resourceTemplate.completeCallback(request.params.argument.name);
+    const completer = template.resourceTemplate.completeCallback(request2.params.argument.name);
     if (!completer) {
       return EMPTY_COMPLETION_RESULT;
     }
-    const suggestions = await completer(request.params.argument.value, request.params.context);
+    const suggestions = await completer(request2.params.argument.value, request2.params.context);
     return createCompletionResult(suggestions);
   }
   setResourceRequestHandlers() {
@@ -36278,7 +36278,7 @@ var McpServer = class {
         listChanged: true
       }
     });
-    this.server.setRequestHandler(ListResourcesRequestSchema, async (request, extra) => {
+    this.server.setRequestHandler(ListResourcesRequestSchema, async (request2, extra) => {
       const resources = Object.entries(this._registeredResources).filter(([_, resource]) => resource.enabled).map(([uri, resource]) => ({
         uri,
         name: resource.name,
@@ -36308,8 +36308,8 @@ var McpServer = class {
       }));
       return { resourceTemplates };
     });
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request, extra) => {
-      const uri = new URL(request.params.uri);
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request2, extra) => {
+      const uri = new URL(request2.params.uri);
       const resource = this._registeredResources[uri.toString()];
       if (resource) {
         if (!resource.enabled) {
@@ -36348,21 +36348,21 @@ var McpServer = class {
         };
       })
     }));
-    this.server.setRequestHandler(GetPromptRequestSchema, async (request, extra) => {
-      const prompt = this._registeredPrompts[request.params.name];
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request2, extra) => {
+      const prompt = this._registeredPrompts[request2.params.name];
       if (!prompt) {
-        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} not found`);
+        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request2.params.name} not found`);
       }
       if (!prompt.enabled) {
-        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} disabled`);
+        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request2.params.name} disabled`);
       }
       if (prompt.argsSchema) {
         const argsObj = normalizeObjectSchema(prompt.argsSchema);
-        const parseResult = await safeParseAsync2(argsObj, request.params.arguments);
+        const parseResult = await safeParseAsync2(argsObj, request2.params.arguments);
         if (!parseResult.success) {
           const error62 = "error" in parseResult ? parseResult.error : "Unknown error";
           const errorMessage = getParseErrorMessage(error62);
-          throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for prompt ${request.params.name}: ${errorMessage}`);
+          throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for prompt ${request2.params.name}: ${errorMessage}`);
         }
         const args = parseResult.data;
         const cb = prompt.callback;
@@ -36661,8 +36661,8 @@ var McpServer = class {
    * @param params
    * @param sessionId optional for stateless and backward compatibility
    */
-  async sendLoggingMessage(params, sessionId2) {
-    return this.server.sendLoggingMessage(params, sessionId2);
+  async sendLoggingMessage(params, sessionId) {
+    return this.server.sendLoggingMessage(params, sessionId);
   }
   /**
    * Sends a resource list changed event to the client, if connected.
@@ -36934,14 +36934,15 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
-  -- venue: 'solana' (asset = mint) | 'binance' (asset = ticker, p.ej. 'USDT')
+  -- Cartera de cada misi\xF3n. venue: 'solana' (asset = mint) | 'binance' (asset = ticker, p.ej. 'USDT')
   CREATE TABLE IF NOT EXISTS holdings (
+    mission_id INTEGER NOT NULL,
     venue TEXT NOT NULL,
     asset TEXT NOT NULL,
     symbol TEXT NOT NULL,
     decimals INTEGER NOT NULL,
     amount REAL NOT NULL,
-    PRIMARY KEY (venue, asset)
+    PRIMARY KEY (mission_id, venue, asset)
   );
   CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37056,19 +37057,69 @@ function addColumns(table, columns) {
     if (!existing.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
 }
-addColumns("missions", { instructions: "TEXT", reviewed_at: "TEXT" });
+addColumns("missions", {
+  instructions: "TEXT",
+  reviewed_at: "TEXT",
+  // Laboratorio: tanda a la que pertenece la misión (NULL = misión principal del usuario), grupo y etiqueta.
+  lab_run_id: "INTEGER",
+  lab_group: "TEXT",
+  lab_label: "TEXT",
+  benchmark_sol_price: "REAL"
+});
 addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
+db.exec(`
+  -- Tandas del laboratorio: varias misiones con los mismos par\xE1metros lanzadas a la vez.
+  CREATE TABLE IF NOT EXISTS lab_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    capital_usd REAL NOT NULL,
+    target_usd REAL NOT NULL,
+    duration_minutes REAL NOT NULL,
+    instructions TEXT,
+    groups TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    ended_at TEXT
+  );
+`);
+for (const table of ["journal", "activity", "orders", "notes", "snapshots", "sessions"]) addColumns(table, { mission_id: "INTEGER" });
+{
+  const holdingCols = db.prepare("PRAGMA table_info(holdings)").all().map((c) => c.name);
+  if (!holdingCols.includes("mission_id")) {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE holdings_new (
+        mission_id INTEGER NOT NULL, venue TEXT NOT NULL, asset TEXT NOT NULL, symbol TEXT NOT NULL,
+        decimals INTEGER NOT NULL, amount REAL NOT NULL, PRIMARY KEY (mission_id, venue, asset)
+      );
+      INSERT INTO holdings_new SELECT COALESCE((SELECT MAX(id) FROM missions), 0), venue, asset, symbol, decimals, amount FROM holdings;
+      DROP TABLE holdings;
+      ALTER TABLE holdings_new RENAME TO holdings;
+      COMMIT;
+    `);
+  }
+  const done = db.prepare("SELECT value FROM meta WHERE key = 'migration_mission_ids'").get();
+  if (!done) {
+    const byTime = (table, tsCol) => db.exec(`UPDATE ${table} SET mission_id = (
+        SELECT m.id FROM missions m WHERE m.created_at <= ${table}.${tsCol} ORDER BY m.created_at DESC LIMIT 1
+      ) WHERE mission_id IS NULL`);
+    byTime("journal", "ts");
+    byTime("activity", "ts");
+    byTime("orders", "created_at");
+    byTime("notes", "ts");
+    byTime("snapshots", "ts");
+    byTime("sessions", "started_at");
+    const legacyBench = db.prepare("SELECT value FROM meta WHERE key = 'benchmark_sol_price'").get()?.value;
+    if (legacyBench) {
+      db.prepare("UPDATE missions SET benchmark_sol_price = ? WHERE benchmark_sol_price IS NULL AND id = (SELECT MAX(id) FROM missions)").run(Number(legacyBench));
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('migration_mission_ids', '1')").run();
+  }
+}
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
-function getMeta(key) {
-  const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
-  return row?.value;
-}
-function setMeta(key, value) {
-  db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
-}
 function logActivity(entry) {
-  db.prepare("INSERT INTO activity (ts, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?, ?)").run(
     now(),
+    entry.missionId,
     entry.sessionId,
     entry.kind,
     entry.title,
@@ -37076,8 +37127,9 @@ function logActivity(entry) {
   );
 }
 function logJournal(entry) {
-  db.prepare("INSERT INTO journal (ts, session_id, kind, summary, reasoning, details) VALUES (?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO journal (ts, mission_id, session_id, kind, summary, reasoning, details) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     now(),
+    entry.missionId,
     entry.sessionId,
     entry.kind,
     entry.summary,
@@ -37087,14 +37139,73 @@ function logJournal(entry) {
 }
 
 // src/market/http.ts
-async function fetchJson(url2, timeoutMs = 15e3) {
-  const res = await fetch(url2, {
-    signal: AbortSignal.timeout(timeoutMs),
-    headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
-  });
-  const text2 = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} en ${url2}: ${text2.slice(0, 300)}`);
-  return JSON.parse(text2);
+var DEFAULT_TTL_MS = 5e3;
+var MAX_PARALLEL_PER_HOST = 6;
+var MAX_RETRIES = 3;
+var MAX_CACHE_ENTRIES = 2e3;
+var cache = /* @__PURE__ */ new Map();
+var active = /* @__PURE__ */ new Map();
+var waiting = /* @__PURE__ */ new Map();
+async function acquire(host) {
+  if ((active.get(host) ?? 0) >= MAX_PARALLEL_PER_HOST) {
+    await new Promise((resolve) => {
+      const queue = waiting.get(host) ?? [];
+      queue.push(resolve);
+      waiting.set(host, queue);
+    });
+  }
+  active.set(host, (active.get(host) ?? 0) + 1);
+}
+function release(host) {
+  active.set(host, (active.get(host) ?? 1) - 1);
+  waiting.get(host)?.shift()?.();
+}
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function request(url2, timeoutMs) {
+  const host = new URL(url2).host;
+  for (let attempt2 = 0; ; attempt2++) {
+    await acquire(host);
+    let res;
+    let body;
+    try {
+      res = await fetch(url2, {
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: { accept: "application/json", "user-agent": "Mozilla/5.0" }
+      });
+      body = await res.text();
+    } finally {
+      release(host);
+    }
+    if ((res.status === 429 || res.status === 503) && attempt2 < MAX_RETRIES) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 10) * 1e3 : 500 * 2 ** attempt2);
+      continue;
+    }
+    return { status: res.status, body };
+  }
+}
+function fetchText(url2, opts = {}) {
+  const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const nowMs = Date.now();
+  const hit = cache.get(url2);
+  if (hit && hit.expires > nowMs) return hit.value;
+  const value = request(url2, opts.timeoutMs ?? 15e3);
+  cache.set(url2, { expires: nowMs + ttl, value });
+  value.then(
+    (r) => {
+      if (r.status < 200 || r.status >= 300) cache.delete(url2);
+    },
+    () => cache.delete(url2)
+  );
+  if (cache.size > MAX_CACHE_ENTRIES) {
+    for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
+  }
+  return value;
+}
+async function fetchJson(url2, timeoutMs = 15e3, ttlMs = DEFAULT_TTL_MS) {
+  const { status, body } = await fetchText(url2, { timeoutMs, ttlMs });
+  if (status < 200 || status >= 300) throw new Error(`HTTP ${status} en ${url2}: ${body.slice(0, 300)}`);
+  return JSON.parse(body);
 }
 
 // src/market/binance.ts
@@ -37122,7 +37233,10 @@ async function getSymbolInfo(symbol2) {
 }
 async function getOrderBook(symbol2) {
   const raw = await fetchJson(
-    `${BASE}/depth?symbol=${symbol2.toUpperCase()}&limit=5000`
+    `${BASE}/depth?symbol=${symbol2.toUpperCase()}&limit=5000`,
+    15e3,
+    2e3
+    // determina el precio de ejecución: caché muy corta
   );
   const parse3 = (levels) => levels.map(([p, q]) => [Number(p), Number(q)]);
   return { bids: parse3(raw.bids), asks: parse3(raw.asks) };
@@ -37192,7 +37306,7 @@ async function getTokenInfo(mint) {
 }
 async function getQuote(inputMint, outputMint, amountBase, slippageBps) {
   const url2 = `${BASE2}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
-  const quote = await fetchJson(url2);
+  const quote = await fetchJson(url2, 15e3, 2e3);
   if (quote.error) throw new Error(`Jupiter: ${quote.error}`);
   return quote;
 }
@@ -37208,10 +37322,6 @@ function fromBaseUnits(base, decimals) {
 var USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 var CASH_MINTS = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT]);
 var CASH_TICKERS = /* @__PURE__ */ new Set(["USDC", "USDT", "FDUSD"]);
-function currentMissionId() {
-  const row = db.prepare("SELECT id FROM missions WHERE status IN ('active', 'closing') ORDER BY id DESC LIMIT 1").get();
-  return row?.id ?? null;
-}
 async function usdPrices(mints) {
   const need = mints.filter((m) => !CASH_MINTS.has(m));
   const prices = {};
@@ -37246,7 +37356,6 @@ async function entryFeatures(mint) {
   };
 }
 function researchSnapshot(missionId, mint) {
-  if (missionId === null) return {};
   const mission = db.prepare("SELECT created_at FROM missions WHERE id = ?").get(missionId);
   const lastTrade = db.prepare("SELECT MAX(COALESCE(closed_at, opened_at)) AS ts FROM positions WHERE mission_id = ?").get(missionId);
   const since = lastTrade.ts ?? mission.created_at;
@@ -37260,7 +37369,7 @@ function researchSnapshot(missionId, mint) {
   };
 }
 async function openOrAdd(args) {
-  const missionId = currentMissionId();
+  const missionId = args.missionId;
   const existing = db.prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, args.venue, args.asset);
   if (existing) {
     db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ? WHERE id = ?").run(
@@ -37290,7 +37399,7 @@ async function openOrAdd(args) {
   );
 }
 function reduce(args) {
-  const missionId = currentMissionId();
+  const missionId = args.missionId;
   const p = db.prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, args.venue, args.asset);
   if (!p) return;
   const fraction = Math.min(1, args.qty / p.qty_open);
@@ -37317,10 +37426,11 @@ async function recordSolanaSwap(args) {
   const outUsd = (prices[args.outputMint] ?? 0) * args.outAmount;
   const valueUsd = CASH_MINTS.has(args.inputMint) ? args.inAmount : CASH_MINTS.has(args.outputMint) ? args.outAmount : inUsd || outUsd;
   if (!CASH_MINTS.has(args.inputMint)) {
-    reduce({ venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
+    reduce({ missionId: args.missionId, venue: "solana", asset: args.inputMint, qty: args.inAmount, proceedsUsd: valueUsd, meta: args.meta });
   }
   if (!CASH_MINTS.has(args.outputMint)) {
     await openOrAdd({
+      missionId: args.missionId,
       venue: "solana",
       asset: args.outputMint,
       symbol: args.outputSymbol,
@@ -37335,6 +37445,7 @@ async function recordBinanceTrade(args) {
   const quoteUsd = CASH_TICKERS.has(args.quoteAsset) ? 1 : 0;
   if (args.side === "BUY") {
     await openOrAdd({
+      missionId: args.missionId,
       venue: "binance",
       asset: args.baseAsset,
       symbol: args.baseAsset,
@@ -37343,11 +37454,14 @@ async function recordBinanceTrade(args) {
       meta: args.meta
     });
   } else {
-    reduce({ venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
+    reduce({ missionId: args.missionId, venue: "binance", asset: args.baseAsset, qty: args.baseQty, proceedsUsd: (args.quoteQty - args.fee) * quoteUsd, meta: args.meta });
   }
 }
-function listPositions(missionId) {
-  const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
+function listPositions(filter) {
+  const rows = filter === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : typeof filter === "number" ? db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(filter) : db.prepare(
+    `SELECT p.* FROM positions p JOIN missions m ON m.id = p.mission_id
+               WHERE m.lab_run_id IS ${filter.scope === "main" ? "" : "NOT "}NULL ORDER BY p.id DESC`
+  ).all();
   return rows.map((p) => {
     const pnlUsd = p.status === "closed" ? p.realized_proceeds_usd - p.realized_cost_usd : null;
     return {
@@ -37372,8 +37486,8 @@ function listPositions(missionId) {
     };
   });
 }
-function logResearch(tool2, target) {
-  db.prepare("INSERT INTO research_log (ts, mission_id, tool, target) VALUES (?, ?, ?, ?)").run(now(), currentMissionId(), tool2, target ?? null);
+function logResearch(missionId, tool2, target) {
+  db.prepare("INSERT INTO research_log (ts, mission_id, tool, target) VALUES (?, ?, ?, ?)").run(now(), missionId, tool2, target ?? null);
 }
 
 // src/sim/portfolio.ts
@@ -37383,28 +37497,29 @@ var BINANCE_WITHDRAW_FEES = {
   SOL: 0.01
 };
 var DUST = 1e-12;
-function getHoldings() {
-  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE amount > ? ORDER BY venue, symbol").all(DUST);
+function getHoldings(missionId) {
+  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST);
 }
-function balance(venue, asset2) {
-  const row = db.prepare("SELECT amount FROM holdings WHERE venue = ? AND asset = ?").get(venue, asset2);
+function balance(missionId, venue, asset2) {
+  const row = db.prepare("SELECT amount FROM holdings WHERE mission_id = ? AND venue = ? AND asset = ?").get(missionId, venue, asset2);
   return row?.amount ?? 0;
 }
-function adjust(venue, asset2, symbol2, decimals, delta) {
-  const next = balance(venue, asset2) + delta;
+function adjust(missionId, venue, asset2, symbol2, decimals, delta) {
+  const next = balance(missionId, venue, asset2) + delta;
   if (next < -DUST) throw new Error(`Saldo insuficiente de ${symbol2} en ${venue}`);
   db.prepare(
-    `INSERT INTO holdings (venue, asset, symbol, decimals, amount) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(venue, asset) DO UPDATE SET amount = excluded.amount`
-  ).run(venue, asset2, symbol2, decimals, Math.max(0, next));
+    `INSERT INTO holdings (mission_id, venue, asset, symbol, decimals, amount) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(mission_id, venue, asset) DO UPDATE SET amount = excluded.amount`
+  ).run(missionId, venue, asset2, symbol2, decimals, Math.max(0, next));
 }
 function applyAtomically(fn) {
-  db.exec("BEGIN");
+  db.exec("SAVEPOINT apply");
   try {
     fn();
-    db.exec("COMMIT");
+    db.exec("RELEASE apply");
   } catch (err) {
-    db.exec("ROLLBACK");
+    db.exec("ROLLBACK TO apply");
+    db.exec("RELEASE apply");
     throw err;
   }
 }
@@ -37414,30 +37529,26 @@ async function solUsdPrice() {
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;
 }
-async function resetPortfolio(initialUsd) {
-  const solPrice = await solUsdPrice();
+function resetPortfolio(missionId, initialUsd, solPrice) {
   const solUsd = config2.initialSol * solPrice;
   if (solUsd >= initialUsd) throw new Error("INITIAL_SOL vale m\xE1s que el capital inicial");
   applyAtomically(() => {
-    db.exec("DELETE FROM holdings");
-    adjust("solana", USDC_MINT, "USDC", 6, initialUsd - solUsd);
-    adjust("solana", SOL_MINT, "SOL", 9, config2.initialSol);
-    setMeta("start_ts", now());
-    setMeta("initial_usd", String(initialUsd));
-    setMeta("benchmark_sol_price", String(solPrice));
+    db.prepare("DELETE FROM holdings WHERE mission_id = ?").run(missionId);
+    adjust(missionId, "solana", USDC_MINT, "USDC", 6, initialUsd - solUsd);
+    adjust(missionId, "solana", SOL_MINT, "SOL", 9, config2.initialSol);
   });
 }
-async function liquidateAll(sessionId2, reasoning2) {
+async function liquidateAll(missionId, sessionId, reasoning2) {
   const problems = [];
-  const holdings = getHoldings();
+  const holdings = getHoldings(missionId);
   for (const h of holdings.filter((h2) => h2.venue === "solana" && h2.asset !== USDC_MINT && h2.asset !== SOL_MINT)) {
-    await swapSolana({ sessionId: sessionId2, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
+    await swapSolana({ missionId, sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
       (err) => problems.push(`${h.symbol} (Solana): ${err.message}`)
     );
   }
-  const solLeft = balance("solana", SOL_MINT) - config2.solanaTxFeeSol;
+  const solLeft = balance(missionId, "solana", SOL_MINT) - config2.solanaTxFeeSol;
   if (solLeft > 1e-6) {
-    await swapSolana({ sessionId: sessionId2, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
+    await swapSolana({ missionId, sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning: reasoning2, meta: { exitReason: reasoning2 } }).catch(
       (err) => problems.push(`SOL (Solana): ${err.message}`)
     );
   }
@@ -37445,7 +37556,7 @@ async function liquidateAll(sessionId2, reasoning2) {
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
       try {
-        await binanceMarketOrder({ sessionId: sessionId2, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance("binance", h.asset), reasoning: reasoning2, meta: { exitReason: reasoning2 } });
+        await binanceMarketOrder({ missionId, sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance(missionId, "binance", h.asset), reasoning: reasoning2, meta: { exitReason: reasoning2 } });
         sold = true;
         break;
       } catch {
@@ -37461,23 +37572,24 @@ async function swapSolana(args) {
   if (inputMint === outputMint) throw new Error("El token de entrada y salida son el mismo");
   if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
   const [inInfo, outInfo] = await Promise.all([getTokenInfo(inputMint), getTokenInfo(outputMint)]);
-  const inBalance = balance("solana", inputMint);
+  const m = args.missionId;
+  const inBalance = balance(m, "solana", inputMint);
   if (args.amount > inBalance + DUST) {
     throw new Error(`Saldo insuficiente: tienes ${inBalance} ${inInfo.symbol} y quieres vender ${args.amount}`);
   }
   const quote = await getQuote(inputMint, outputMint, toBaseUnits(args.amount, inInfo.decimals), args.slippageBps);
   const outAmount = fromBaseUnits(quote.outAmount, outInfo.decimals);
-  const opensAccount = outputMint !== SOL_MINT && balance("solana", outputMint) <= DUST;
+  const opensAccount = outputMint !== SOL_MINT && balance(m, "solana", outputMint) <= DUST;
   const closesAccount = inputMint !== SOL_MINT && inBalance - args.amount <= DUST;
   const solCost = config2.solanaTxFeeSol + (opensAccount ? TOKEN_ACCOUNT_RENT_SOL : 0) - (closesAccount ? TOKEN_ACCOUNT_RENT_SOL : 0);
-  const solAfter = balance("solana", SOL_MINT) - solCost - (inputMint === SOL_MINT ? args.amount : 0) + (outputMint === SOL_MINT ? outAmount : 0);
+  const solAfter = balance(m, "solana", SOL_MINT) - solCost - (inputMint === SOL_MINT ? args.amount : 0) + (outputMint === SOL_MINT ? outAmount : 0);
   if (solAfter < -DUST) {
     throw new Error(`SOL insuficiente para pagar la red (${solCost.toFixed(6)} SOL de fees/renta). En Solana necesitas SOL para operar.`);
   }
   applyAtomically(() => {
-    adjust("solana", inputMint, inInfo.symbol, inInfo.decimals, -args.amount);
-    adjust("solana", outputMint, outInfo.symbol, outInfo.decimals, outAmount);
-    adjust("solana", SOL_MINT, "SOL", 9, -solCost);
+    adjust(m, "solana", inputMint, inInfo.symbol, inInfo.decimals, -args.amount);
+    adjust(m, "solana", outputMint, outInfo.symbol, outInfo.decimals, outAmount);
+    adjust(m, "solana", SOL_MINT, "SOL", 9, -solCost);
   });
   const result = {
     sold: `${args.amount} ${inInfo.symbol}`,
@@ -37491,6 +37603,7 @@ async function swapSolana(args) {
     slot: quote.contextSlot
   };
   logJournal({
+    missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
     summary: `Swap ${result.sold} \u2192 ${result.received}`,
@@ -37498,6 +37611,7 @@ async function swapSolana(args) {
     details: { inputMint, outputMint, ...result }
   });
   await recordSolanaSwap({
+    missionId: m,
     inputMint,
     outputMint,
     inputSymbol: inInfo.symbol,
@@ -37525,14 +37639,15 @@ async function binanceMarketOrder(args) {
   const info = await getSymbolInfo(args.symbol);
   const book = await getOrderBook(info.symbol);
   const fee = config2.binanceTakerFee;
+  const m = args.missionId;
   let fill;
   if (args.side === "BUY") {
-    const have = balance("binance", info.quoteAsset);
+    const have = balance(m, "binance", info.quoteAsset);
     if (args.amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.quoteAsset} en Binance`);
     fill = walkBook(book.asks, "BUY", args.amount);
   } else {
     const qty = roundDownToStep(args.amount, info.stepSize);
-    const have = balance("binance", info.baseAsset);
+    const have = balance(m, "binance", info.baseAsset);
     if (qty > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.baseAsset} en Binance`);
     if (qty <= 0) throw new Error(`Cantidad menor que el m\xEDnimo (stepSize ${info.stepSize})`);
     fill = walkBook(book.bids, "SELL", qty);
@@ -37543,11 +37658,11 @@ async function binanceMarketOrder(args) {
   const feePaid = args.side === "BUY" ? fill.baseQty * fee : fill.quoteQty * fee;
   applyAtomically(() => {
     if (args.side === "BUY") {
-      adjust("binance", info.quoteAsset, info.quoteAsset, 8, -fill.quoteQty);
-      adjust("binance", info.baseAsset, info.baseAsset, 8, fill.baseQty - feePaid);
+      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, -fill.quoteQty);
+      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, fill.baseQty - feePaid);
     } else {
-      adjust("binance", info.baseAsset, info.baseAsset, 8, -fill.baseQty);
-      adjust("binance", info.quoteAsset, info.quoteAsset, 8, fill.quoteQty - feePaid);
+      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, -fill.baseQty);
+      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, fill.quoteQty - feePaid);
     }
   });
   const result = {
@@ -37561,6 +37676,7 @@ async function binanceMarketOrder(args) {
     fee: `${feePaid} ${args.side === "BUY" ? info.baseAsset : info.quoteAsset}`
   };
   logJournal({
+    missionId: m,
     sessionId: args.sessionId,
     kind: "cex_order",
     summary: `Binance ${args.side} ${fill.baseQty.toPrecision(6)} ${info.baseAsset} @ ${fill.avgPrice.toPrecision(6)} ${info.quoteAsset}`,
@@ -37568,6 +37684,7 @@ async function binanceMarketOrder(args) {
     details: result
   });
   await recordBinanceTrade({
+    missionId: m,
     baseAsset: info.baseAsset,
     quoteAsset: info.quoteAsset,
     side: args.side,
@@ -37582,26 +37699,28 @@ async function transfer(args) {
   if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
   const mint = args.asset === "SOL" ? SOL_MINT : USDC_MINT;
   const decimals = args.asset === "SOL" ? 9 : 6;
+  const m = args.missionId;
   let received;
   let feeText;
   applyAtomically(() => {
     if (args.from === "solana") {
-      adjust("solana", mint, args.asset, decimals, -args.amount);
-      adjust("solana", SOL_MINT, "SOL", 9, -config2.solanaTxFeeSol);
+      adjust(m, "solana", mint, args.asset, decimals, -args.amount);
+      adjust(m, "solana", SOL_MINT, "SOL", 9, -config2.solanaTxFeeSol);
       received = args.amount;
-      adjust("binance", args.asset, args.asset, 8, received);
+      adjust(m, "binance", args.asset, args.asset, 8, received);
       feeText = `${config2.solanaTxFeeSol} SOL (red)`;
     } else {
       const withdrawFee = BINANCE_WITHDRAW_FEES[args.asset];
       if (args.amount <= withdrawFee) throw new Error(`La retirada m\xEDnima debe superar la comisi\xF3n de ${withdrawFee} ${args.asset}`);
-      adjust("binance", args.asset, args.asset, 8, -args.amount);
+      adjust(m, "binance", args.asset, args.asset, 8, -args.amount);
       received = args.amount - withdrawFee;
-      adjust("solana", mint, args.asset, decimals, received);
+      adjust(m, "solana", mint, args.asset, decimals, received);
       feeText = `${withdrawFee} ${args.asset} (retirada Binance)`;
     }
   });
   const result = { asset: args.asset, from: args.from, to: args.from === "solana" ? "binance" : "solana", sent: args.amount, received, fee: feeText };
   logJournal({
+    missionId: m,
     sessionId: args.sessionId,
     kind: "transfer",
     summary: `Transferencia ${args.amount} ${args.asset} ${result.from} \u2192 ${result.to}`,
@@ -37633,25 +37752,28 @@ async function valueHolding(h) {
   }
   return { usd: 0, method: "sin precio" };
 }
-async function valuation(recordSnapshot = false) {
-  const holdings = getHoldings();
+async function valuation(missionId, recordSnapshot = false) {
+  const holdings = getHoldings(missionId);
   const lines = await Promise.all(
     holdings.map(async (h) => ({ ...h, ...await valueHolding(h) }))
   );
   const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
-  const initialUsd = Number(getMeta("initial_usd") ?? config2.initialUsd);
-  const benchSolPrice = Number(getMeta("benchmark_sol_price"));
+  const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId);
+  const initialUsd = mission?.initial_usd ?? config2.initialUsd;
+  const benchSolPrice = mission?.benchmark_sol_price ?? 0;
   const benchmarkUsd = benchSolPrice ? initialUsd / benchSolPrice * await solUsdPrice() : initialUsd;
   if (recordSnapshot) {
-    db.prepare("INSERT INTO snapshots (ts, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
       now(),
+      missionId,
       totalUsd,
       benchmarkUsd,
       JSON.stringify(lines.map((l) => ({ venue: l.venue, symbol: l.symbol, amount: l.amount, usd: l.usd })))
     );
   }
   return {
-    startedAt: getMeta("start_ts"),
+    missionId,
+    startedAt: mission?.created_at,
     initialUsd,
     totalUsd,
     pnlUsd: totalUsd - initialUsd,
@@ -37710,40 +37832,40 @@ async function placeOrder(args) {
   const expiresAt = args.expiresHours ? new Date(Date.now() + args.expiresHours * 36e5).toISOString() : null;
   const id = Number(
     db.prepare(
-      `INSERT INTO orders (created_at, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(now(), args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, args.triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt).lastInsertRowid
+      `INSERT INTO orders (created_at, mission_id, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(now(), args.missionId, args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, args.triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt).lastInsertRowid
   );
   const summary = `Orden #${id}: si ${triggerLabel} ${args.condition === "above" ? "\u2265" : "\u2264"} ${args.triggerPrice} \u2192 ${describeAction(args.venue, args.action)}`;
-  logJournal({ sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, expiresAt } });
+  logJournal({ missionId: args.missionId, sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, expiresAt } });
   return { id, summary, currentPrice: price, expiresAt };
 }
-function cancelOrder(id, sessionId2) {
-  const changed = db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes;
-  if (!changed) throw new Error(`La orden #${id} no existe o ya no est\xE1 abierta`);
-  logJournal({ sessionId: sessionId2, kind: "order_cancelled", summary: `Orden #${id} cancelada` });
+function cancelOrder(missionId, id, sessionId) {
+  const changed = db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND mission_id = ? AND status = 'open'").run(now(), id, missionId).changes;
+  if (!changed) throw new Error(`La orden #${id} no existe, no es de tu misi\xF3n o ya no est\xE1 abierta`);
+  logJournal({ missionId, sessionId, kind: "order_cancelled", summary: `Orden #${id} cancelada` });
   return `Orden #${id} cancelada.`;
 }
-function listOrders(status, limit = 50) {
-  const where = status === "open" ? "WHERE status = 'open'" : status === "closed" ? "WHERE status <> 'open'" : "";
+function listOrders(missionId, status, limit = 50) {
+  const where = status === "open" ? "AND status = 'open'" : status === "closed" ? "AND status <> 'open'" : "";
   return db.prepare(
     `SELECT id, created_at, venue, trigger_label, condition, trigger_price, action, expires_at, status, closed_at, result
-       FROM orders ${where} ORDER BY id DESC LIMIT ?`
-  ).all(limit).map((o) => ({ ...o, action: JSON.parse(o.action), result: o.result ? JSON.parse(o.result) : null }));
+       FROM orders WHERE mission_id = ? ${where} ORDER BY id DESC LIMIT ?`
+  ).all(missionId, limit).map((o) => ({ ...o, action: JSON.parse(o.action), result: o.result ? JSON.parse(o.result) : null }));
 }
 function close(id, status, result) {
   db.prepare("UPDATE orders SET status = ?, closed_at = ?, result = ? WHERE id = ?").run(status, now(), JSON.stringify(result), id);
 }
 async function checkOrders() {
   const log = [];
-  const expired = db.prepare("SELECT id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?").all(now());
-  for (const { id } of expired) {
+  const expired = db.prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?").all(now());
+  for (const { id, mission_id } of expired) {
     if (db.prepare("UPDATE orders SET status = 'expired', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes) {
-      logJournal({ sessionId: null, kind: "order_expired", summary: `Orden #${id} caducada sin ejecutarse` });
+      logJournal({ missionId: mission_id, sessionId: null, kind: "order_expired", summary: `Orden #${id} caducada sin ejecutarse` });
       log.push(`Orden #${id} caducada`);
     }
   }
-  const open2 = db.prepare("SELECT * FROM orders WHERE status = 'open'").all();
+  const open2 = db.prepare("SELECT o.* FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND m.status = 'active'").all();
   const prices = /* @__PURE__ */ new Map();
   for (const order of open2) {
     const key = `${order.venue}:${order.trigger_asset}`;
@@ -37759,13 +37881,13 @@ async function checkOrders() {
     const reasoning2 = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
     try {
       const action = JSON.parse(order.action);
-      const result = order.venue === "solana" ? await swapSolana({ sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } }) : await binanceMarketOrder({ sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } });
+      const result = order.venue === "solana" ? await swapSolana({ missionId: order.mission_id, sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } }) : await binanceMarketOrder({ missionId: order.mission_id, sessionId: order.session_id, ...action, reasoning: reasoning2, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 } });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {
       const message = err.message;
       close(order.id, "failed", { triggerPriceSeen: price, error: message });
-      logJournal({ sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero fall\xF3: ${message}` });
+      logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero fall\xF3: ${message}` });
       log.push(`Orden #${order.id} fall\xF3: ${message}`);
     }
   }
@@ -37778,16 +37900,22 @@ import { readFileSync as readFileSync2 } from "node:fs";
 import http from "node:http";
 
 // src/sim/mission.ts
+function getMission(id) {
+  return db.prepare("SELECT * FROM missions WHERE id = ?").get(id);
+}
 function getActiveMission() {
-  return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id DESC LIMIT 1").get();
+  return db.prepare("SELECT * FROM missions WHERE status = 'active' AND lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get();
 }
 function getLastMission() {
-  return db.prepare("SELECT * FROM missions ORDER BY id DESC LIMIT 1").get();
+  return db.prepare("SELECT * FROM missions WHERE lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get();
+}
+function activeMissions() {
+  return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id").all();
 }
 function missionHistory() {
   const rows = db.prepare(
     `SELECT m.*, (SELECT COUNT(*) FROM lessons l WHERE l.mission_id = m.id) AS lessons
-       FROM missions m WHERE m.status NOT IN ('active', 'closing') ORDER BY m.id`
+       FROM missions m WHERE m.status NOT IN ('active', 'closing') AND m.lab_run_id IS NULL ORDER BY m.id`
   ).all();
   return rows.map((m) => {
     const minutes = Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4);
@@ -37805,35 +37933,83 @@ function missionHistory() {
     };
   });
 }
-async function createMission(initialUsd, targetUsd, durationMinutes, instructions) {
+function insertMission(args) {
+  const deadline = new Date(Date.now() + args.durationMinutes * 6e4).toISOString();
+  const id = Number(
+    db.prepare(
+      `INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price, lab_run_id, lab_group, lab_label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      now(),
+      args.initialUsd,
+      args.targetUsd,
+      deadline,
+      args.instructions?.trim() || null,
+      args.solPrice,
+      args.lab?.runId ?? null,
+      args.lab?.group ?? null,
+      args.lab?.label ?? null
+    ).lastInsertRowid
+  );
+  resetPortfolio(id, args.initialUsd, args.solPrice);
+  logJournal({
+    missionId: id,
+    sessionId: null,
+    kind: "mission",
+    summary: `Misi\xF3n #${id}${args.lab ? ` (${args.lab.label}, grupo ${args.lab.group})` : ""} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`
+  });
+  return id;
+}
+function validate2(initialUsd, targetUsd, durationMinutes) {
   if (!(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
   if (!(durationMinutes > 0)) throw new Error("La duraci\xF3n debe ser positiva");
+}
+async function createMission(initialUsd, targetUsd, durationMinutes, instructions) {
+  validate2(initialUsd, targetUsd, durationMinutes);
+  const solPrice = await solUsdPrice();
   const previous = getActiveMission();
   if (previous) {
     db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
-    logJournal({ sessionId: null, kind: "mission", summary: `Misi\xF3n #${previous.id} cancelada por el usuario al crear una nueva` });
+    db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), previous.id);
+    logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misi\xF3n #${previous.id} cancelada por el usuario al crear una nueva` });
   }
-  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open'").run(now());
-  db.exec("DELETE FROM notes");
-  await resetPortfolio(initialUsd);
-  const deadline = new Date(Date.now() + durationMinutes * 6e4).toISOString();
-  const id = Number(
-    db.prepare("INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions) VALUES (?, ?, ?, ?, ?)").run(now(), initialUsd, targetUsd, deadline, instructions?.trim() || null).lastInsertRowid
+  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, solPrice }));
+}
+async function createLabRun(args) {
+  validate2(args.capitalUsd, args.targetUsd, args.durationMinutes);
+  const plan = Object.entries(args.groups).filter(([, n3]) => n3 > 0);
+  const total = plan.reduce((s, [, n3]) => s + n3, 0);
+  if (total < 1) throw new Error("La tanda necesita al menos un agente");
+  if (total > 50) throw new Error("Como m\xE1ximo 50 agentes por tanda");
+  const solPrice = await solUsdPrice();
+  const runId = Number(
+    db.prepare("INSERT INTO lab_runs (created_at, capital_usd, target_usd, duration_minutes, instructions, groups) VALUES (?, ?, ?, ?, ?, ?)").run(now(), args.capitalUsd, args.targetUsd, args.durationMinutes, args.instructions?.trim() || null, JSON.stringify(args.groups)).lastInsertRowid
   );
-  logJournal({
-    sessionId: null,
-    kind: "mission",
-    summary: `Misi\xF3n #${id} iniciada: de ${initialUsd} USD a ${targetUsd} USD antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`
-  });
-  return getActiveMission();
+  const missions = [];
+  let n2 = 0;
+  for (const [group, count] of plan) {
+    for (let i = 0; i < count; i++) {
+      const label = `T${runId}-A${++n2}`;
+      const missionId = insertMission({
+        initialUsd: args.capitalUsd,
+        targetUsd: args.targetUsd,
+        durationMinutes: args.durationMinutes,
+        instructions: args.instructions,
+        solPrice,
+        lab: { runId, group, label }
+      });
+      missions.push({ missionId, label, group });
+    }
+  }
+  return { runId, missions };
 }
 function remaining(deadline) {
   const ms = new Date(deadline).getTime() - Date.now();
   const totalMin = Math.max(0, Math.floor(ms / 6e4));
   return { ms, text: `${Math.floor(totalMin / 60)} h ${totalMin % 60} min` };
 }
-async function missionStatus() {
-  const mission = getActiveMission() ?? getLastMission();
+async function missionStatus(missionId) {
+  const mission = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
   if (!mission) return { active: false, message: "No hay ninguna misi\xF3n. El usuario debe crear una con /trading en Claude Code (o `npm run mission`)." };
   if (mission.status !== "active") {
     return {
@@ -37842,11 +38018,12 @@ async function missionStatus() {
       mission
     };
   }
-  const v = await valuation();
+  const v = await valuation(mission.id);
   const left = remaining(mission.deadline);
   return {
     active: true,
     missionId: mission.id,
+    ...mission.lab_run_id ? { labRun: mission.lab_run_id, labLabel: mission.lab_label } : {},
     initialUsd: mission.initial_usd,
     targetUsd: mission.target_usd,
     currentUsd: Number(v.totalUsd.toFixed(2)),
@@ -37857,54 +38034,94 @@ async function missionStatus() {
     userInstructions: mission.instructions ?? "ninguna: modo libre"
   };
 }
-async function stopMission(closePositions) {
-  const mission = getActiveMission();
-  if (!mission) throw new Error("No hay ninguna misi\xF3n activa");
+async function stopMission(closePositions, missionId) {
+  const mission = missionId !== void 0 ? getMission(missionId) : getActiveMission();
+  if (!mission || mission.status !== "active") throw new Error("No hay ninguna misi\xF3n activa");
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) {
     throw new Error("La misi\xF3n se est\xE1 cerrando en este momento");
   }
-  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open'").run(now());
-  const problems = closePositions ? await liquidateAll(null, `Cierre manual: el usuario detuvo la misi\xF3n #${mission.id}`) : [];
-  const final = await valuation(true);
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  const problems = closePositions ? await liquidateAll(mission.id, null, `Cierre manual: el usuario detuvo la misi\xF3n #${mission.id}`) : [];
+  const final = await valuation(mission.id, true);
   db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ?, final_usd = ? WHERE id = ?").run(now(), final.totalUsd, mission.id);
   logJournal({
+    missionId: mission.id,
     sessionId: null,
     kind: "mission",
     summary: `Misi\xF3n #${mission.id} detenida por el usuario ${closePositions ? "cerrando posiciones" : "sin cerrar posiciones"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`,
     details: { problems }
   });
+  closeFinishedLabRuns();
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
-var checking = false;
-async function checkMission() {
-  if (checking) return [];
-  checking = true;
-  try {
-    const mission = getActiveMission();
-    if (!mission) return [];
-    const expired = remaining(mission.deadline).ms <= 0;
-    const value = (await valuation()).totalUsd;
-    const reached = value >= mission.target_usd;
-    if (!expired && !reached) return [];
-    const status = reached ? "succeeded" : "expired";
-    if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
-    const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
-    db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open'").run(now());
-    const problems = await liquidateAll(null, reason);
-    const final = await valuation(true);
-    if (reached && !expired && final.totalUsd < mission.target_usd) {
-      db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
-      const summary2 = `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
-      logJournal({ sessionId: null, kind: "mission", summary: summary2, details: { problems } });
-      return [summary2];
-    }
-    db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
-    const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
-    logJournal({ sessionId: null, kind: "mission", summary, details: { problems } });
-    return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
-  } finally {
-    checking = false;
+async function checkOne(mission) {
+  const expired = remaining(mission.deadline).ms <= 0;
+  const value = (await valuation(mission.id)).totalUsd;
+  const reached = value >= mission.target_usd;
+  if (!expired && !reached) return [];
+  const status = reached ? "succeeded" : "expired";
+  if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
+  const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  const problems = await liquidateAll(mission.id, null, reason);
+  const final = await valuation(mission.id, true);
+  if (reached && !expired && final.totalUsd < mission.target_usd) {
+    db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
+    const summary2 = `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
+    logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });
+    return [summary2];
   }
+  db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
+  const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
+  logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
+  closeFinishedLabRuns();
+  return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
+}
+function closeFinishedLabRuns() {
+  db.prepare(
+    `UPDATE lab_runs SET status = 'finished', ended_at = ?
+     WHERE status = 'active' AND NOT EXISTS (
+       SELECT 1 FROM missions m WHERE m.lab_run_id = lab_runs.id AND m.status IN ('active', 'closing')
+     )`
+  ).run(now());
+}
+var checking = /* @__PURE__ */ new Set();
+async function checkMission(missionId) {
+  const targets = missionId !== void 0 ? [getMission(missionId)].filter((m) => m?.status === "active") : activeMissions();
+  const results = await Promise.all(
+    targets.map(async (m) => {
+      if (checking.has(m.id)) return [];
+      checking.add(m.id);
+      try {
+        return await checkOne(m);
+      } catch (err) {
+        return [`Error revisando la misi\xF3n #${m.id}: ${err.message}`];
+      } finally {
+        checking.delete(m.id);
+      }
+    })
+  );
+  return results.flat();
+}
+async function labRunStatus(runId) {
+  const run = runId !== void 0 ? db.prepare("SELECT * FROM lab_runs WHERE id = ?").get(runId) : db.prepare("SELECT * FROM lab_runs ORDER BY id DESC LIMIT 1").get();
+  if (!run) return null;
+  const missions = db.prepare("SELECT * FROM missions WHERE lab_run_id = ? ORDER BY id").all(run.id);
+  const rows = await Promise.all(
+    missions.map(async (m) => {
+      const value = m.status === "active" ? (await valuation(m.id)).totalUsd : m.final_usd ?? (await valuation(m.id)).totalUsd;
+      return {
+        missionId: m.id,
+        label: m.lab_label,
+        group: m.lab_group,
+        status: m.status,
+        valueUsd: Number(value.toFixed(2)),
+        resultPct: Number(((value - m.initial_usd) / m.initial_usd * 100).toFixed(2))
+      };
+    })
+  );
+  rows.sort((a, b) => b.valueUsd - a.valueUsd);
+  return { run, leaderboard: rows };
 }
 
 // src/dashboard/timeline.ts
@@ -38044,12 +38261,13 @@ var JOURNAL_KIND = {
   hypothetical: "hypothetical",
   mission: "mission"
 };
-function dbEvents() {
+function dbEvents(missionId) {
+  if (missionId === null) return [];
   const events = [];
-  for (const a of db.prepare("SELECT id, ts, kind, title, body FROM activity").all()) {
+  for (const a of db.prepare("SELECT id, ts, kind, title, body FROM activity WHERE mission_id = ?").all(missionId)) {
     events.push({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: a.title, body: a.body ?? void 0 });
   }
-  for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal").all()) {
+  for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ?").all(missionId)) {
     events.push({
       id: `j${j.id}`,
       ts: j.ts,
@@ -38059,16 +38277,16 @@ function dbEvents() {
       body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : void 0
     });
   }
-  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons").all()) {
+  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons WHERE mission_id = ?").all(missionId)) {
     events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lecci\xF3n #${l.id}, de la misi\xF3n #${l.mission_id}` : void 0 });
   }
-  for (const n2 of db.prepare("SELECT id, ts, text FROM notes").all()) {
+  for (const n2 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
     events.push({ id: `n${n2.id}`, ts: n2.ts, kind: "note", title: n2.text });
   }
   return events;
 }
-function timeline(since) {
-  return [...transcriptEvents(since), ...dbEvents()].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+function timeline(since, missionId) {
+  return [...transcriptEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
 }
 
 // src/dashboard/server.ts
@@ -38078,8 +38296,13 @@ var lastSnapshot = 0;
 var running = null;
 async function refreshValuation(log) {
   try {
-    const record2 = !!getActiveMission() && Date.now() - lastSnapshot >= 6e4;
-    cached2 = { at: (/* @__PURE__ */ new Date()).toISOString(), value: await valuation(record2) };
+    const mission = getActiveMission() ?? getLastMission();
+    if (!mission) {
+      cached2 = null;
+      return;
+    }
+    const record2 = mission.status === "active" && Date.now() - lastSnapshot >= 6e4;
+    cached2 = { at: (/* @__PURE__ */ new Date()).toISOString(), value: await valuation(mission.id, record2) };
     if (record2) lastSnapshot = Date.now();
   } catch (err) {
     log(`Error valorando la cartera: ${err.message}`);
@@ -38087,14 +38310,14 @@ async function refreshValuation(log) {
 }
 function state() {
   const mission = getActiveMission() ?? getLastMission();
-  const since = mission?.created_at ?? "1970";
-  const snapshots = db.prepare("SELECT ts, total_usd FROM snapshots WHERE ts >= ? ORDER BY ts").all(since);
+  const snapshots = mission ? db.prepare("SELECT ts, total_usd FROM snapshots WHERE mission_id = ? ORDER BY ts").all(mission.id) : [];
   return {
     now: (/* @__PURE__ */ new Date()).toISOString(),
     mission: mission ?? null,
-    valuation: cached2?.value ?? null,
+    // La valoración en caché puede ser de la misión anterior justo después de crear otra.
+    valuation: cached2 && mission && cached2.value.missionId === mission.id ? cached2.value : null,
     valuedAt: cached2?.at ?? null,
-    orders: listOrders("open"),
+    orders: mission ? listOrders(mission.id, "open") : [],
     snapshots,
     history: missionHistory(),
     lessons: db.prepare("SELECT id, created_at, mission_id, text, applies_to, confidence FROM lessons ORDER BY id DESC").all()
@@ -38115,7 +38338,7 @@ function handler(port) {
       if (url2.pathname === "/api/events") {
         const mission = getActiveMission() ?? getLastMission();
         const since = url2.searchParams.get("all") ? "1970" : mission?.created_at ?? "1970";
-        return send(res, 200, "application/json", JSON.stringify(timeline(since)));
+        return send(res, 200, "application/json", JSON.stringify(timeline(since, mission?.id ?? null)));
       }
       send(res, 404, "text/plain", "No encontrado");
     } catch (err) {
@@ -38169,12 +38392,12 @@ function distance(a, b) {
 var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
 var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
 function finishedMissions() {
-  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND lab_run_id IS NULL ORDER BY id").all();
 }
 function pendingReviews() {
   return db.prepare(
     `SELECT m.id FROM missions m
-         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL
+         WHERE m.status IN ('succeeded', 'expired') AND m.reviewed_at IS NULL AND m.lab_run_id IS NULL
            AND NOT EXISTS (SELECT 1 FROM lessons l WHERE l.mission_id = m.id)
          ORDER BY m.id`
   ).all().map((r) => r.id);
@@ -38205,8 +38428,8 @@ function tradeStats(ps) {
   ];
   return groups.map(([label, fn]) => summarize(label, ps.filter(fn))).filter(Boolean);
 }
-function recall(limitLessons) {
-  const current = getActiveMission() ?? getLastMission();
+function recall(missionId, limitLessons) {
+  const current = (missionId ? getMission(missionId) : void 0) ?? getActiveMission() ?? getLastMission();
   const curProfile = current ? profile(current) : null;
   const history = finishedMissions().filter((m) => m.id !== current?.id || m.status !== "active").map((m) => {
     const p = profile(m);
@@ -38231,7 +38454,7 @@ function recall(limitLessons) {
     relevance: l.mission_id && distByMission.has(l.mission_id) ? similarityLabel(distByMission.get(l.mission_id)) : "sin misi\xF3n vinculada",
     _d: l.mission_id && distByMission.has(l.mission_id) ? distByMission.get(l.mission_id) : 99
   })).sort((a, b) => a._d - b._d).map(({ _d, ...rest }) => rest);
-  const all = listPositions();
+  const all = listPositions({ scope: "main" });
   const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
   return {
     currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
@@ -38248,37 +38471,42 @@ function recall(limitLessons) {
 }
 
 // src/sim/session.ts
-function startSession() {
-  return Number(db.prepare("INSERT INTO sessions (started_at) VALUES (?)").run(now()).lastInsertRowid);
+function startSession(missionId) {
+  return Number(db.prepare("INSERT INTO sessions (started_at, mission_id) VALUES (?, ?)").run(now(), missionId).lastInsertRowid);
 }
-async function sessionBriefing(sessionId2) {
-  const portfolio = await valuation(true);
-  const notes = db.prepare("SELECT id, ts, text FROM notes ORDER BY id").all();
-  const openOrders = listOrders("open");
-  const mem = recall(8);
-  const missionStart = db.prepare("SELECT created_at FROM missions ORDER BY id DESC LIMIT 1").get()?.created_at ?? "1970";
-  const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE ts >= ? ORDER BY id DESC LIMIT 15").all(missionStart);
+async function sessionBriefing(sessionId, missionId) {
+  const header = `Sesi\xF3n #${sessionId}. Fecha y hora actual: ${now()}.`;
+  if (missionId === null) return [header, "", JSON.stringify(await missionStatus(), null, 2)].join("\n");
+  const mission = getMission(missionId);
+  const portfolio = await valuation(missionId, true);
+  const notes = db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId);
+  const openOrders = listOrders(missionId, "open");
+  const recent = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT 15").all(missionId);
+  const memoryLines = [];
+  if (mission.lab_run_id === null) {
+    const mem = recall(missionId, 8);
+    if (mem.pendingReview.length) {
+      memoryLines.push(
+        `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misi\xF3n"} #${mem.pendingReview.join(", #")} (trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.`,
+        ""
+      );
+    }
+    memoryLines.push(
+      mem.missionHistory.length ? "Tu memoria, ordenada por parecido con esta misi\xF3n (recall_lessons tiene el detalle completo):\n" + JSON.stringify(
+        { missionHistory: mem.missionHistory.slice(0, 6), lessons: mem.lessons, totalLessons: mem.totalLessons, tradeStats: mem.tradeStats },
+        null,
+        2
+      ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
+      ""
+    );
+  }
   return [
-    `Sesi\xF3n #${sessionId2}. Fecha y hora actual: ${now()}.`,
+    header,
     "",
     "Misi\xF3n:",
-    JSON.stringify(await missionStatus(), null, 2),
+    JSON.stringify(await missionStatus(missionId), null, 2),
     "",
-    ...mem.pendingReview.length ? [
-      `PENDIENTE: antes de operar tienes que revisar ${mem.pendingReview.length > 1 ? "las misiones" : "la misi\xF3n"} #${mem.pendingReview.join(", #")} (trade_history y journal_history con su mission_id) y guardar lo aprendido con write_lesson, o mark_mission_reviewed si no aporta nada.`,
-      ""
-    ] : [],
-    mem.missionHistory.length ? "Tu memoria, ordenada por parecido con esta misi\xF3n (recall_lessons tiene el detalle completo):\n" + JSON.stringify(
-      {
-        missionHistory: mem.missionHistory.slice(0, 6),
-        lessons: mem.lessons,
-        totalLessons: mem.totalLessons,
-        tradeStats: mem.tradeStats
-      },
-      null,
-      2
-    ) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
-    "",
+    ...memoryLines,
     "Cartera:",
     JSON.stringify(portfolio, null, 2),
     "",
@@ -38289,14 +38517,14 @@ async function sessionBriefing(sessionId2) {
     recent.length ? "\xDAltimas entradas del diario:\n" + recent.reverse().map((j) => `- ${j.ts} [${j.kind}] ${j.summary}`).join("\n") : "El diario est\xE1 vac\xEDo: es tu primera sesi\xF3n."
   ].join("\n");
 }
-async function endSession(sessionId2, finalText, tokens) {
-  const end = await valuation(true);
+async function endSession(sessionId, missionId, finalText, tokens) {
+  const end = missionId !== null ? await valuation(missionId, true) : null;
   db.prepare("UPDATE sessions SET ended_at = ?, final_text = ?, input_tokens = ?, output_tokens = ? WHERE id = ?").run(
     now(),
     finalText,
     tokens?.input ?? 0,
     tokens?.output ?? 0,
-    sessionId2
+    sessionId
   );
   return end;
 }
@@ -38309,16 +38537,16 @@ function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 }
-async function statusReport() {
-  const m = getActiveMission() ?? getLastMission();
+async function statusReport(missionId) {
+  const m = missionId !== void 0 ? getMission(missionId) : getActiveMission() ?? getLastMission();
   if (!m) return "No hay ninguna misi\xF3n. Crea una con /cryptoagent:trading.";
-  const v = await valuation();
+  const v = await valuation(m.id);
   const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
   const change = (current - m.initial_usd) / m.initial_usd * 100;
   const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
   const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : "detenida por el usuario";
   const lines = [];
-  lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
+  lines.push(`Misi\xF3n #${m.id}${m.lab_label ? ` (${m.lab_label}, grupo ${m.lab_group})` : ""}: ${statusText}`);
   lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
   const open2 = listPositions(m.id).filter((p) => p.status === "open");
@@ -38332,7 +38560,7 @@ async function statusReport() {
       const cost = p.openCostUsd;
       lines.push(`- ${p.symbol}: ${usd(now2)} (${pct(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
     }
-    const orders = listOrders("open");
+    const orders = listOrders(m.id, "open");
     if (orders.length) {
       lines.push(`\xD3rdenes abiertas: ${orders.map((o) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
     }
@@ -38343,7 +38571,7 @@ async function statusReport() {
     lines.push("", `Operaciones cerradas: ${closed.length} (${wins} con beneficio)`);
     for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
   }
-  const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE ts >= ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.created_at);
+  const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE mission_id = ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.id);
   if (recent.length) {
     lines.push("", "\xDAltimos movimientos:");
     for (const j of recent) {
@@ -38351,7 +38579,7 @@ async function statusReport() {
       lines.push(`- ${hhmm(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
     }
   }
-  const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND ts >= ? ORDER BY id DESC LIMIT 2").all(m.created_at);
+  const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2").all(m.id);
   if (notes.length) {
     lines.push("", "\xDAltima nota del agente:");
     for (const n2 of notes) lines.push(`- ${hhmm(n2.ts)} ${n2.title.slice(0, 220)}`);
@@ -38538,6 +38766,10 @@ function tool(def) {
 var json2 = (value) => JSON.stringify(value, null, 2);
 
 // src/tools/index.ts
+var mid = (ctx) => {
+  if (ctx.missionId === null) throw new Error("No hay ninguna misi\xF3n");
+  return ctx.missionId;
+};
 var MAX_WAIT_MINUTES = 10;
 var FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 var isTradingTool = (name) => name.startsWith("simulate_") || name.endsWith("_trigger_order");
@@ -38589,7 +38821,7 @@ var SIM_TOOLS = [
     description: "Registro de trabajo: anota qu\xE9 vas a investigar o hacer a continuaci\xF3n, qu\xE9 has encontrado y qu\xE9 decisiones tomas. Se muestra en el panel del usuario.",
     schema: external_exports.object({ entry: external_exports.string() }),
     run: async ({ entry }, ctx) => {
-      logActivity({ sessionId: ctx.sessionId, kind: "thought", title: entry });
+      logActivity({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "thought", title: entry });
       return "Anotado.";
     }
   }),
@@ -38597,25 +38829,26 @@ var SIM_TOOLS = [
     name: "mission_status",
     description: "Estado de tu misi\xF3n: capital inicial, objetivo, valor actual de la cartera, cu\xE1nto falta y tiempo restante. La misi\xF3n termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
     schema: external_exports.object({}),
-    run: async () => json2(await missionStatus())
+    run: async (_i, ctx) => json2(await missionStatus(ctx.missionId ?? void 0))
   }),
   tool({
     name: "wait",
     description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus \xF3rdenes condicionales se siguen vigilando. Vuelve antes si la misi\xF3n termina. El tiempo tambi\xE9n pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.`,
     schema: external_exports.object({ minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES) }),
-    run: async ({ minutes }) => {
+    run: async ({ minutes }, ctx) => {
+      const m = mid(ctx);
       const until = Date.now() + minutes * 6e4;
       while (Date.now() < until) {
         await new Promise((r) => setTimeout(r, Math.min(2e4, until - Date.now())));
         await checkOrders().catch(() => []);
-        const ended = await checkMission().catch(() => []);
-        if (ended.length || !getActiveMission()) {
+        await checkMission(m).catch(() => []);
+        if (getMission(m)?.status !== "active") {
           return `La misi\xF3n ha terminado mientras esperabas. Hora: ${now()}
-${json2(await missionStatus())}`;
+${json2(await missionStatus(m))}`;
         }
       }
       return `Han pasado ${minutes} minutos. Hora actual: ${now()}
-${json2(await missionStatus())}`;
+${json2(await missionStatus(m))}`;
     }
   }),
   tool({
@@ -38624,9 +38857,8 @@ ${json2(await missionStatus())}`;
     schema: external_exports.object({ url: external_exports.string() }),
     run: async ({ url: url2 }) => {
       if (!/^https?:\/\//i.test(url2)) throw new Error("Solo se permiten URLs http(s)");
-      const res = await fetch(url2, { signal: AbortSignal.timeout(2e4) });
-      const body = await res.text();
-      return `HTTP ${res.status}
+      const { status, body } = await fetchText(url2, { timeoutMs: 2e4 });
+      return `HTTP ${status}
 ${body.slice(0, 2e4)}${body.length > 2e4 ? `
 \u2026 (truncado, ${body.length} caracteres en total)` : ""}`;
     }
@@ -38636,7 +38868,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "portfolio",
     description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n real ahora mismo, el PnL desde el inicio y lo que valdr\xEDa el capital inicial si se hubiera mantenido en SOL.",
     schema: external_exports.object({}),
-    run: async () => json2(await valuation())
+    run: async (_i, ctx) => json2(await valuation(mid(ctx)))
   }),
   tool({
     name: "quote_solana_swap",
@@ -38661,6 +38893,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => json2(
       await swapSolana({
+        missionId: mid(ctx),
         sessionId: ctx.sessionId,
         input: i.input,
         output: i.output,
@@ -38675,13 +38908,13 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "simulate_binance_market_order",
     description: "Ejecuta en simulaci\xF3n una orden de mercado en Binance spot contra el order book real (precio medio y slippage reales, comisi\xF3n taker incluida). BUY: amount = cantidad del activo quote a gastar. SELL: amount = cantidad del activo base a vender. symbol: par de Binance, p. ej. BTCUSDC.",
     schema: external_exports.object({ symbol: external_exports.string(), side: external_exports.enum(["BUY", "SELL"]), amount: external_exports.number().positive(), thesis }),
-    run: async (i, ctx) => json2(await binanceMarketOrder({ sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis), meta: tradeMeta(i.thesis) }))
+    run: async (i, ctx) => json2(await binanceMarketOrder({ missionId: mid(ctx), sessionId: ctx.sessionId, symbol: i.symbol, side: i.side, amount: i.amount, reasoning: formatThesis(i.thesis), meta: tradeMeta(i.thesis) }))
   }),
   tool({
     name: "simulate_transfer",
     description: "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulaci\xF3n. De Solana a Binance se paga la fee de red; de Binance a Solana, la comisi\xF3n de retirada de Binance.",
     schema: external_exports.object({ asset: external_exports.enum(["USDC", "SOL"]), from: external_exports.enum(["solana", "binance"]), amount: external_exports.number().positive(), reasoning }),
-    run: async (i, ctx) => json2(await transfer({ sessionId: ctx.sessionId, ...i }))
+    run: async (i, ctx) => json2(await transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i }))
   }),
   tool({
     name: "place_solana_trigger_order",
@@ -38699,6 +38932,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => json2(
       await placeOrder({
+        missionId: mid(ctx),
         sessionId: ctx.sessionId,
         venue: "solana",
         triggerAsset: i.trigger_asset,
@@ -38725,6 +38959,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => json2(
       await placeOrder({
+        missionId: mid(ctx),
         sessionId: ctx.sessionId,
         venue: "binance",
         triggerAsset: i.trigger_symbol,
@@ -38740,13 +38975,13 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "list_orders",
     description: "Lista tus \xF3rdenes condicionales: abiertas, cerradas (ejecutadas, fallidas, canceladas, caducadas) o todas.",
     schema: external_exports.object({ status: external_exports.enum(["open", "closed", "all"]).default("open") }),
-    run: async ({ status }) => json2(listOrders(status))
+    run: async ({ status }, ctx) => json2(listOrders(mid(ctx), status))
   }),
   tool({
     name: "cancel_order",
     description: "Cancela una orden condicional abierta.",
     schema: external_exports.object({ id: external_exports.number().int() }),
-    run: async ({ id }, ctx) => cancelOrder(id, ctx.sessionId)
+    run: async ({ id }, ctx) => cancelOrder(mid(ctx), id, ctx.sessionId)
   }),
   tool({
     name: "record_hypothetical_action",
@@ -38760,6 +38995,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       logJournal({
+        missionId: ctx.missionId,
         sessionId: ctx.sessionId,
         kind: "hypothetical",
         summary: `[${i.action_type}] ${i.description}`,
@@ -38773,15 +39009,10 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "journal_history",
     description: "Devuelve las \xFAltimas entradas de tu diario de operaciones. Por defecto, de la misi\xF3n actual; con mission_id, las de una misi\xF3n anterior (\xFAtil para analizarla y sacar lecciones).",
     schema: external_exports.object({ limit: external_exports.number().int().min(1).max(200).default(30), mission_id: external_exports.number().int().optional() }),
-    run: async ({ limit, mission_id }) => {
-      const missions = db.prepare("SELECT id, created_at, ended_at FROM missions ORDER BY id").all();
-      const target = mission_id === void 0 ? missions.at(-1) : missions.find((m) => m.id === mission_id);
-      if (!target) throw new Error(mission_id === void 0 ? "No hay misiones" : `No existe la misi\xF3n #${mission_id}`);
-      const next = missions.find((m) => m.id > target.id);
-      const until = next?.created_at ?? "9999";
-      return json2(
-        db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE ts >= ? AND ts < ? ORDER BY id DESC LIMIT ?").all(target.created_at, until, limit)
-      );
+    run: async ({ limit, mission_id }, ctx) => {
+      const target = mission_id ?? ctx.missionId;
+      if (target === null || !getMission(target)) throw new Error(mission_id === void 0 ? "No hay misiones" : `No existe la misi\xF3n #${mission_id}`);
+      return json2(db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? ORDER BY id DESC LIMIT ?").all(target, limit));
     }
   }),
   // ─── Memoria a largo plazo: lecciones entre misiones ──────────────────────
@@ -38789,7 +39020,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "recall_lessons",
     description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual (plazo, objetivo y enfoque): historial de misiones con su resultado, tus lecciones con su contexto y estad\xEDsticas reales de tus operaciones cerradas agrupadas por caracter\xEDsticas (antig\xFCedad y liquidez del token, si sub\xEDa mucho al comprar, si investigaste antes\u2026), en todas las misiones y en las parecidas.",
     schema: external_exports.object({}),
-    run: async () => json2(recall())
+    run: async (_i, ctx) => json2(recall(ctx.missionId))
   }),
   tool({
     name: "trade_history",
@@ -38803,7 +39034,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     schema: external_exports.object({ mission_id: external_exports.number().int(), note: external_exports.string().min(1).describe("Por qu\xE9 no hay lecciones nuevas") }),
     run: async ({ mission_id, note }, ctx) => {
       markReviewed(mission_id);
-      logJournal({ sessionId: ctx.sessionId, kind: "mission", summary: `Misi\xF3n #${mission_id} revisada sin lecciones nuevas: ${note}` });
+      logJournal({ missionId: mission_id, sessionId: ctx.sessionId, kind: "mission", summary: `Misi\xF3n #${mission_id} revisada sin lecciones nuevas: ${note}` });
       return `Misi\xF3n #${mission_id} marcada como revisada.`;
     }
   }),
@@ -38817,8 +39048,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       confidence: external_exports.enum(["baja", "media", "alta"]).describe("Cu\xE1nto conf\xEDas en ella seg\xFAn la cantidad de pruebas"),
       mission_id: external_exports.number().int().optional()
     }),
-    run: async ({ lesson, applies_to, evidence, confidence, mission_id }) => {
-      const missionId = mission_id ?? getActiveMission()?.id ?? getLastMission()?.id ?? null;
+    run: async ({ lesson, applies_to, evidence, confidence, mission_id }, ctx) => {
+      const missionId = mission_id ?? ctx.missionId;
       const id = db.prepare("INSERT INTO lessons (created_at, mission_id, text, applies_to, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)").run(now(), missionId, lesson, applies_to, evidence, confidence).lastInsertRowid;
       if (missionId) markReviewed(missionId);
       return `Lecci\xF3n #${id} guardada${missionId ? ` (misi\xF3n #${missionId})` : ""}.`;
@@ -38839,7 +39070,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     description: "Guarda una nota para ti mismo. Las notas se te muestran al empezar cada sesi\xF3n futura.",
     schema: external_exports.object({ text: external_exports.string() }),
     run: async ({ text: text2 }, ctx) => {
-      db.prepare("INSERT INTO notes (ts, session_id, text) VALUES (?, ?, ?)").run(now(), ctx.sessionId, text2);
+      db.prepare("INSERT INTO notes (ts, mission_id, session_id, text) VALUES (?, ?, ?, ?)").run(now(), mid(ctx), ctx.sessionId, text2);
       return "Nota guardada.";
     }
   }),
@@ -38847,8 +39078,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "delete_note",
     description: "Borra una nota por su id cuando ya no sea \xFAtil.",
     schema: external_exports.object({ id: external_exports.number().int() }),
-    run: async ({ id }) => {
-      db.prepare("DELETE FROM notes WHERE id = ?").run(id);
+    run: async ({ id }, ctx) => {
+      db.prepare("DELETE FROM notes WHERE id = ? AND mission_id = ?").run(id, mid(ctx));
       return "Nota borrada.";
     }
   })
@@ -38858,10 +39089,11 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
   const parsed = def.schema.safeParse(rawInput);
   if (!parsed.success) return { content: `Entrada no v\xE1lida: ${parsed.error.message}`, isError: true };
-  if (isTradingTool(name) && !getActiveMission()) {
-    return { content: `Error: no hay ninguna misi\xF3n activa. ${(await missionStatus()).message ?? ""}`, isError: true };
+  const current = ctx.missionId !== null ? getMission(ctx.missionId) : void 0;
+  if (isTradingTool(name) && current?.status !== "active") {
+    return { content: `Error: no hay ninguna misi\xF3n activa. ${(await missionStatus(ctx.missionId ?? void 0)).message ?? ""}`, isError: true };
   }
-  const unreviewed = isTradingTool(name) ? pendingReviews() : [];
+  const unreviewed = isTradingTool(name) && current?.lab_run_id === null ? pendingReviews() : [];
   if (unreviewed.length) {
     return {
       content: `Error: antes de operar tienes que revisar ${unreviewed.length > 1 ? "las misiones" : "la misi\xF3n"} #${unreviewed.join(", #")}. Analiza qu\xE9 pas\xF3 (trade_history y journal_history con su mission_id) y guarda lo aprendido con write_lesson, o usa mark_mission_reviewed si no aporta nada nuevo.`,
@@ -38870,12 +39102,12 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   }
   if (RESEARCH_TOOLS.has(name)) {
     const input2 = parsed.data;
-    logResearch(name, String(input2.mint ?? input2.url ?? input2.output ?? "") || void 0);
+    logResearch(ctx.missionId, name, String(input2.mint ?? input2.url ?? input2.output ?? "") || void 0);
   }
   try {
     const content = await def.run(parsed.data, ctx);
     if (isTradingTool(name)) {
-      const ended = await checkMission().catch(() => []);
+      const ended = await checkMission(ctx.missionId ?? void 0).catch(() => []);
       if (ended.length && typeof content === "string") return { content: `${content}
 
 ${ended.join("\n")}`, isError: false };
@@ -38884,7 +39116,7 @@ ${ended.join("\n")}`, isError: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isTradingTool(name)) {
-      logJournal({ sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
+      logJournal({ missionId: ctx.missionId, sessionId: ctx.sessionId, kind: "rejected", summary: `${name} rechazada: ${message}`, details: rawInput });
     }
     return { content: `Error: ${message}`, isError: true };
   }
@@ -38892,32 +39124,56 @@ ${ended.join("\n")}`, isError: false };
 
 // src/mcp.ts
 var server = new McpServer({ name: "cryptosim", version: "0.1.0" });
-var sessionId = null;
 var text = (t) => ({ content: [{ type: "text", text: t }] });
+var missionIdParam = external_exports.number().int().optional().describe("Solo en el laboratorio: la misi\xF3n sobre la que trabajas. Si no la indicas, se usa la misi\xF3n principal.");
+function resolveMission(requested) {
+  if (requested !== void 0) {
+    if (!getMission(requested)) throw new Error(`No existe la misi\xF3n #${requested}`);
+    return requested;
+  }
+  return (getActiveMission() ?? getLastMission())?.id ?? null;
+}
+var sessions = /* @__PURE__ */ new Map();
+var sessionFor = (missionId) => {
+  if (!sessions.has(missionId)) sessions.set(missionId, startSession(missionId));
+  return sessions.get(missionId);
+};
 server.registerTool(
   "start_session",
   {
     description: "Empieza una sesi\xF3n de trabajo. Ll\xE1mala antes que cualquier otra herramienta: devuelve la hora, tu cartera, tus notas y el diario reciente.",
-    inputSchema: {}
+    inputSchema: { mission_id: missionIdParam }
   },
-  async () => {
-    await checkOrders().catch(() => []);
-    await checkMission().catch(() => []);
-    sessionId = startSession();
-    return text(await sessionBriefing(sessionId));
+  async ({ mission_id }) => {
+    try {
+      await checkOrders().catch(() => []);
+      await checkMission().catch(() => []);
+      const missionId = resolveMission(mission_id);
+      const sessionId = startSession(missionId);
+      sessions.set(missionId, sessionId);
+      return text(await sessionBriefing(sessionId, missionId));
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
   }
 );
 server.registerTool(
   "end_session",
   {
     description: "Cierra la sesi\xF3n con un resumen de lo que hiciste. Devuelve el estado final de la cartera.",
-    inputSchema: { summary: external_exports.string() }
+    inputSchema: { summary: external_exports.string(), mission_id: missionIdParam }
   },
-  async ({ summary }) => {
-    if (sessionId === null) return { ...text("No hay ninguna sesi\xF3n abierta."), isError: true };
-    const end = await endSession(sessionId, summary);
-    sessionId = null;
-    return text(JSON.stringify(end, null, 2));
+  async ({ summary, mission_id }) => {
+    try {
+      const missionId = resolveMission(mission_id);
+      const sessionId = sessions.get(missionId);
+      if (sessionId === void 0) return { ...text("No hay ninguna sesi\xF3n abierta."), isError: true };
+      const end = await endSession(sessionId, missionId, summary);
+      sessions.delete(missionId);
+      return text(JSON.stringify(end, null, 2));
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
   }
 );
 server.registerTool(
@@ -38933,10 +39189,10 @@ server.registerTool(
     }
   },
   async ({ capital_usd, target_usd, duration_minutes, replace, instructions }) => {
-    const active = getActiveMission();
-    if (active && !replace) {
+    const active2 = getActiveMission();
+    if (active2 && !replace) {
       return {
-        ...text(`Ya hay una misi\xF3n activa (#${active.id}, objetivo ${active.target_usd} USD, plazo ${active.deadline}). Pregunta al usuario si quiere reemplazarla.`),
+        ...text(`Ya hay una misi\xF3n activa (#${active2.id}, objetivo ${active2.target_usd} USD, plazo ${active2.deadline}). Pregunta al usuario si quiere reemplazarla.`),
         isError: true
       };
     }
@@ -38951,16 +39207,60 @@ server.registerTool(
 server.registerTool(
   "stop_mission",
   {
-    description: "[Solo para el usuario, no para el agente trader] Detiene la misi\xF3n activa antes de tiempo y cancela sus \xF3rdenes. Con close_positions = true vende todas las posiciones a mercado; si no, la cartera queda como est\xE1.",
-    inputSchema: { close_positions: external_exports.boolean() }
+    description: "[Solo para el usuario, no para el agente trader] Detiene una misi\xF3n antes de tiempo (por defecto, la principal) y cancela sus \xF3rdenes. Con close_positions = true vende todas las posiciones a mercado; si no, la cartera queda como est\xE1.",
+    inputSchema: { close_positions: external_exports.boolean(), mission_id: external_exports.number().int().optional() }
   },
-  async ({ close_positions }) => {
+  async ({ close_positions, mission_id }) => {
     try {
-      const r = await stopMission(close_positions);
+      const r = await stopMission(close_positions, mission_id);
       return text(
         `Misi\xF3n #${r.missionId} detenida. Valor final: ${r.finalUsd.toFixed(2)} USD.` + (r.problems.length ? `
 No se pudo vender: ${r.problems.join("; ")}` : "")
       );
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "create_lab_run",
+  {
+    description: "[Solo para el usuario, no para los agentes] Crea una tanda del laboratorio: varias misiones id\xE9nticas a la vez, cada una con su propia cartera, repartidas entre grupos (control: sin memoria; memoria: con el manual de estrategia; explorador: sin repetir lo conocido). Devuelve el id de la tanda y el id de misi\xF3n de cada agente.",
+    inputSchema: {
+      capital_usd: external_exports.number().positive(),
+      target_usd: external_exports.number().positive(),
+      duration_minutes: external_exports.number().positive(),
+      instructions: external_exports.string().optional(),
+      control: external_exports.number().int().min(0).default(0),
+      memoria: external_exports.number().int().min(0).default(0),
+      explorador: external_exports.number().int().min(0).default(0)
+    }
+  },
+  async ({ capital_usd, target_usd, duration_minutes, instructions, control, memoria, explorador }) => {
+    try {
+      const run = await createLabRun({
+        capitalUsd: capital_usd,
+        targetUsd: target_usd,
+        durationMinutes: duration_minutes,
+        instructions,
+        groups: { control, memoria, explorador }
+      });
+      return text(JSON.stringify(run, null, 2));
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "lab_status",
+  {
+    description: "Clasificaci\xF3n de una tanda del laboratorio (por defecto, la \xFAltima): valor y resultado de cada agente y su grupo.",
+    inputSchema: { run_id: external_exports.number().int().optional() }
+  },
+  async ({ run_id }) => {
+    try {
+      const status = await labRunStatus(run_id);
+      return text(status ? JSON.stringify(status, null, 2) : "Todav\xEDa no hay ninguna tanda del laboratorio.");
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }
@@ -38997,10 +39297,21 @@ server.registerTool(
   }
 );
 for (const tool2 of SIM_TOOLS) {
-  server.registerTool(tool2.name, { description: tool2.description, inputSchema: tool2.schema.shape }, async (input2) => {
-    sessionId ??= startSession();
-    const { content, isError } = await runTool(tool2.name, input2, { sessionId });
-    return { ...text(typeof content === "string" ? content : JSON.stringify(content)), isError };
+  const shape = {
+    ...tool2.schema.shape,
+    ..."mission_id" in tool2.schema.shape ? {} : { mission_id: missionIdParam }
+  };
+  server.registerTool(tool2.name, { description: tool2.description, inputSchema: shape }, async (raw) => {
+    try {
+      const ownsParam = "mission_id" in tool2.schema.shape;
+      const { mission_id, ...rest } = raw;
+      const missionId = resolveMission(mission_id);
+      const input2 = ownsParam ? raw : rest;
+      const { content, isError } = await runTool(tool2.name, input2, { sessionId: sessionFor(missionId), missionId });
+      return { ...text(typeof content === "string" ? content : JSON.stringify(content)), isError };
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
   });
 }
 await server.connect(new StdioServerTransport());

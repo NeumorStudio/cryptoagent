@@ -54,7 +54,8 @@ export async function getQuote(inputMint: string, outputMint: string, amountBase
   const url =
     `${BASE}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}` +
     `&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
-  const quote = await fetchJson<JupiterQuote & { error?: string }>(url);
+  // Determina el precio de ejecución: caché muy corta (solo agrupa peticiones idénticas casi simultáneas).
+  const quote = await fetchJson<JupiterQuote & { error?: string }>(url, 15_000, 2_000);
   if (quote.error) throw new Error(`Jupiter: ${quote.error}`);
   return quote;
 }

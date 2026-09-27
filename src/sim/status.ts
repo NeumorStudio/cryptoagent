@@ -1,6 +1,6 @@
 // Resumen de la misión en texto, pensado para leerse en el chat (también desde el móvil con Remote Control).
 import { db } from "../db.js";
-import { getActiveMission, getLastMission } from "./mission.js";
+import { getActiveMission, getLastMission, getMission } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
 import { listPositions } from "./positions.js";
@@ -14,11 +14,11 @@ function timeLeft(deadline: string) {
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
 }
 
-export async function statusReport(): Promise<string> {
-  const m = getActiveMission() ?? getLastMission();
+export async function statusReport(missionId?: number): Promise<string> {
+  const m = missionId !== undefined ? getMission(missionId) : (getActiveMission() ?? getLastMission());
   if (!m) return "No hay ninguna misión. Crea una con /cryptoagent:trading.";
 
-  const v = await valuation();
+  const v = await valuation(m.id);
   const current = m.status === "active" ? v.totalUsd : (m.final_usd ?? v.totalUsd);
   const change = ((current - m.initial_usd) / m.initial_usd) * 100;
   const progress = ((current - m.initial_usd) / (m.target_usd - m.initial_usd)) * 100;
@@ -32,7 +32,7 @@ export async function statusReport(): Promise<string> {
           : "detenida por el usuario";
 
   const lines: string[] = [];
-  lines.push(`Misión #${m.id}: ${statusText}`);
+  lines.push(`Misión #${m.id}${m.lab_label ? ` (${m.lab_label}, grupo ${m.lab_group})` : ""}: ${statusText}`);
   lines.push(`Valor: ${usd(current)} (${pct(change)}) · objetivo ${usd(m.target_usd)} · progreso ${Math.round(progress)} %`);
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
 
@@ -49,7 +49,7 @@ export async function statusReport(): Promise<string> {
       const cost = p.openCostUsd;
       lines.push(`- ${p.symbol}: ${usd(now)} (${pct(cost ? ((now - cost) / cost) * 100 : 0)} sobre ${usd(cost)})`);
     }
-    const orders = listOrders("open");
+    const orders = listOrders(m.id, "open");
     if (orders.length) {
       lines.push(`Órdenes abiertas: ${orders.map((o: any) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "≥" : "≤"} ${o.trigger_price}`).join(" · ")}`);
     }
@@ -64,8 +64,8 @@ export async function statusReport(): Promise<string> {
 
   // Lo último que ha hecho y anotado el agente.
   const recent = db
-    .prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE ts >= ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5")
-    .all(m.created_at) as Array<{ ts: string; kind: string; summary: string; reasoning: string | null }>;
+    .prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE mission_id = ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5")
+    .all(m.id) as Array<{ ts: string; kind: string; summary: string; reasoning: string | null }>;
   if (recent.length) {
     lines.push("", "Últimos movimientos:");
     for (const j of recent) {
@@ -74,8 +74,8 @@ export async function statusReport(): Promise<string> {
     }
   }
   const notes = db
-    .prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND ts >= ? ORDER BY id DESC LIMIT 2")
-    .all(m.created_at) as Array<{ ts: string; title: string }>;
+    .prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2")
+    .all(m.id) as Array<{ ts: string; title: string }>;
   if (notes.length) {
     lines.push("", "Última nota del agente:");
     for (const n of notes) lines.push(`- ${hhmm(n.ts)} ${n.title.slice(0, 220)}`);

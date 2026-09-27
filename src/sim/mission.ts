@@ -1,7 +1,10 @@
 // Misión: capital inicial ficticio, objetivo y plazo real. Termina sola cuando la cartera
 // llega al objetivo o se acaba el tiempo; entonces se cierran todas las posiciones a mercado.
+//
+// Hay una "misión principal" (la del usuario, lab_run_id NULL) y, en el laboratorio, tandas de
+// varias misiones a la vez, cada una con su propia cartera, órdenes, diario y posiciones.
 import { db, logJournal, now } from "../db.js";
-import { liquidateAll, resetPortfolio, valuation } from "./portfolio.js";
+import { liquidateAll, resetPortfolio, solUsdPrice, valuation } from "./portfolio.js";
 
 export interface Mission {
   id: number;
@@ -9,26 +12,46 @@ export interface Mission {
   initial_usd: number;
   target_usd: number;
   deadline: string;
-  status: "active" | "succeeded" | "expired" | "cancelled";
+  status: "active" | "closing" | "succeeded" | "expired" | "cancelled";
   ended_at: string | null;
   final_usd: number | null;
   instructions: string | null;
+  reviewed_at: string | null;
+  lab_run_id: number | null;
+  lab_group: string | null;
+  lab_label: string | null;
+  benchmark_sol_price: number | null;
 }
 
+export type LabGroup = "control" | "memoria" | "explorador";
+
+export function getMission(id: number): Mission | undefined {
+  return db.prepare("SELECT * FROM missions WHERE id = ?").get(id) as Mission | undefined;
+}
+
+/** Misión principal activa (la del usuario, fuera del laboratorio). */
 export function getActiveMission(): Mission | undefined {
-  return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id DESC LIMIT 1").get() as Mission | undefined;
+  return db.prepare("SELECT * FROM missions WHERE status = 'active' AND lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get() as
+    | Mission
+    | undefined;
 }
 
+/** Última misión principal, activa o no. */
 export function getLastMission(): Mission | undefined {
-  return db.prepare("SELECT * FROM missions ORDER BY id DESC LIMIT 1").get() as Mission | undefined;
+  return db.prepare("SELECT * FROM missions WHERE lab_run_id IS NULL ORDER BY id DESC LIMIT 1").get() as Mission | undefined;
 }
 
-/** Historial objetivo de misiones terminadas (lo calcula el simulador, no el agente). */
+/** Todas las misiones activas: la principal y las del laboratorio. */
+export function activeMissions(): Mission[] {
+  return db.prepare("SELECT * FROM missions WHERE status = 'active' ORDER BY id").all() as unknown as Mission[];
+}
+
+/** Historial objetivo de misiones principales terminadas (lo calcula el simulador, no el agente). */
 export function missionHistory() {
   const rows = db
     .prepare(
       `SELECT m.*, (SELECT COUNT(*) FROM lessons l WHERE l.mission_id = m.id) AS lessons
-       FROM missions m WHERE m.status NOT IN ('active', 'closing') ORDER BY m.id`,
+       FROM missions m WHERE m.status NOT IN ('active', 'closing') AND m.lab_run_id IS NULL ORDER BY m.id`,
     )
     .all() as unknown as Array<Mission & { lessons: number }>;
   return rows.map((m) => {
@@ -48,35 +71,105 @@ export function missionHistory() {
   });
 }
 
-export async function createMission(initialUsd: number, targetUsd: number, durationMinutes: number, instructions?: string): Promise<Mission> {
+function insertMission(args: {
+  initialUsd: number;
+  targetUsd: number;
+  durationMinutes: number;
+  instructions?: string;
+  solPrice: number;
+  lab?: { runId: number; group: LabGroup; label: string };
+}): number {
+  const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
+  const id = Number(
+    db
+      .prepare(
+        `INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, benchmark_sol_price, lab_run_id, lab_group, lab_label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        now(),
+        args.initialUsd,
+        args.targetUsd,
+        deadline,
+        args.instructions?.trim() || null,
+        args.solPrice,
+        args.lab?.runId ?? null,
+        args.lab?.group ?? null,
+        args.lab?.label ?? null,
+      ).lastInsertRowid,
+  );
+  resetPortfolio(id, args.initialUsd, args.solPrice);
+  logJournal({
+    missionId: id,
+    sessionId: null,
+    kind: "mission",
+    summary:
+      `Misión #${id}${args.lab ? ` (${args.lab.label}, grupo ${args.lab.group})` : ""} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD ` +
+      `antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`,
+  });
+  return id;
+}
+
+function validate(initialUsd: number, targetUsd: number, durationMinutes: number) {
   if (!(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
   if (!(durationMinutes > 0)) throw new Error("La duración debe ser positiva");
+}
 
+/** Crea la misión principal (cancela la anterior si seguía activa). */
+export async function createMission(initialUsd: number, targetUsd: number, durationMinutes: number, instructions?: string): Promise<Mission> {
+  validate(initialUsd, targetUsd, durationMinutes);
+  const solPrice = await solUsdPrice();
   const previous = getActiveMission();
   if (previous) {
     db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
-    logJournal({ sessionId: null, kind: "mission", summary: `Misión #${previous.id} cancelada por el usuario al crear una nueva` });
+    db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), previous.id);
+    logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misión #${previous.id} cancelada por el usuario al crear una nueva` });
   }
-  // Cada misión empieza de cero: cartera nueva, sin órdenes y sin notas (las notas son la memoria
-  // del agente dentro de una misión; si pasaran a la siguiente, arrastrarían decisiones de otra).
-  // El diario se conserva como historial.
-  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open'").run(now());
-  db.exec("DELETE FROM notes");
-  await resetPortfolio(initialUsd);
+  // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
+  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, solPrice }))!;
+}
 
-  const deadline = new Date(Date.now() + durationMinutes * 60_000).toISOString();
-  const id = Number(
+/**
+ * Crea una tanda del laboratorio: `agents` misiones idénticas a la vez, repartidas entre grupos.
+ * Todas parten del mismo precio de SOL, para que las carteras iniciales sean exactamente iguales.
+ */
+export async function createLabRun(args: {
+  capitalUsd: number;
+  targetUsd: number;
+  durationMinutes: number;
+  instructions?: string;
+  groups: Partial<Record<LabGroup, number>>;
+}) {
+  validate(args.capitalUsd, args.targetUsd, args.durationMinutes);
+  const plan = (Object.entries(args.groups) as Array<[LabGroup, number]>).filter(([, n]) => n > 0);
+  const total = plan.reduce((s, [, n]) => s + n, 0);
+  if (total < 1) throw new Error("La tanda necesita al menos un agente");
+  if (total > 50) throw new Error("Como máximo 50 agentes por tanda");
+
+  const solPrice = await solUsdPrice();
+  const runId = Number(
     db
-      .prepare("INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions) VALUES (?, ?, ?, ?, ?)")
-      .run(now(), initialUsd, targetUsd, deadline, instructions?.trim() || null)
+      .prepare("INSERT INTO lab_runs (created_at, capital_usd, target_usd, duration_minutes, instructions, groups) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(now(), args.capitalUsd, args.targetUsd, args.durationMinutes, args.instructions?.trim() || null, JSON.stringify(args.groups))
       .lastInsertRowid,
   );
-  logJournal({
-    sessionId: null,
-    kind: "mission",
-    summary: `Misión #${id} iniciada: de ${initialUsd} USD a ${targetUsd} USD antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`,
-  });
-  return getActiveMission()!;
+  const missions: Array<{ missionId: number; label: string; group: LabGroup }> = [];
+  let n = 0;
+  for (const [group, count] of plan) {
+    for (let i = 0; i < count; i++) {
+      const label = `T${runId}-A${++n}`;
+      const missionId = insertMission({
+        initialUsd: args.capitalUsd,
+        targetUsd: args.targetUsd,
+        durationMinutes: args.durationMinutes,
+        instructions: args.instructions,
+        solPrice,
+        lab: { runId, group, label },
+      });
+      missions.push({ missionId, label, group });
+    }
+  }
+  return { runId, missions };
 }
 
 function remaining(deadline: string) {
@@ -85,8 +178,9 @@ function remaining(deadline: string) {
   return { ms, text: `${Math.floor(totalMin / 60)} h ${totalMin % 60} min` };
 }
 
-export async function missionStatus() {
-  const mission = getActiveMission() ?? getLastMission();
+/** Estado de una misión (por defecto, la principal activa o la última). */
+export async function missionStatus(missionId?: number) {
+  const mission = missionId !== undefined ? getMission(missionId) : (getActiveMission() ?? getLastMission());
   if (!mission) return { active: false, message: "No hay ninguna misión. El usuario debe crear una con /trading en Claude Code (o `npm run mission`)." };
   if (mission.status !== "active") {
     return {
@@ -95,11 +189,12 @@ export async function missionStatus() {
       mission,
     };
   }
-  const v = await valuation();
+  const v = await valuation(mission.id);
   const left = remaining(mission.deadline);
   return {
     active: true,
     missionId: mission.id,
+    ...(mission.lab_run_id ? { labRun: mission.lab_run_id, labLabel: mission.lab_label } : {}),
     initialUsd: mission.initial_usd,
     targetUsd: mission.target_usd,
     currentUsd: Number(v.totalUsd.toFixed(2)),
@@ -112,20 +207,21 @@ export async function missionStatus() {
 }
 
 /**
- * Detiene la misión activa por decisión del usuario. Con closePositions, cierra todas las
- * posiciones a mercado (igual que al terminar); si no, la cartera queda tal cual.
+ * Detiene una misión por decisión del usuario (por defecto, la principal). Con closePositions,
+ * cierra todas las posiciones a mercado (igual que al terminar); si no, la cartera queda tal cual.
  */
-export async function stopMission(closePositions: boolean): Promise<{ missionId: number; finalUsd: number; problems: string[] }> {
-  const mission = getActiveMission();
-  if (!mission) throw new Error("No hay ninguna misión activa");
+export async function stopMission(closePositions: boolean, missionId?: number): Promise<{ missionId: number; finalUsd: number; problems: string[] }> {
+  const mission = missionId !== undefined ? getMission(missionId) : getActiveMission();
+  if (!mission || mission.status !== "active") throw new Error("No hay ninguna misión activa");
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) {
     throw new Error("La misión se está cerrando en este momento");
   }
-  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open'").run(now());
-  const problems = closePositions ? await liquidateAll(null, `Cierre manual: el usuario detuvo la misión #${mission.id}`) : [];
-  const final = await valuation(true);
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  const problems = closePositions ? await liquidateAll(mission.id, null, `Cierre manual: el usuario detuvo la misión #${mission.id}`) : [];
+  const final = await valuation(mission.id, true);
   db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ?, final_usd = ? WHERE id = ?").run(now(), final.totalUsd, mission.id);
   logJournal({
+    missionId: mission.id,
     sessionId: null,
     kind: "mission",
     summary:
@@ -133,55 +229,106 @@ export async function stopMission(closePositions: boolean): Promise<{ missionId:
       `${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`,
     details: { problems },
   });
+  closeFinishedLabRuns();
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
 
-let checking = false;
+/** Comprueba una misión y la cierra si ha llegado al objetivo o se le ha acabado el plazo. */
+async function checkOne(mission: Mission): Promise<string[]> {
+  const expired = remaining(mission.deadline).ms <= 0;
+  const value = (await valuation(mission.id)).totalUsd;
+  const reached = value >= mission.target_usd;
+  if (!expired && !reached) return [];
+
+  // Reclamo atómico: solo un proceso cierra la misión.
+  const status = reached ? "succeeded" : "expired";
+  if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
+
+  const reason = reached
+    ? `Cierre automático: objetivo de la misión #${mission.id} alcanzado (${value.toFixed(2)} ≥ ${mission.target_usd} USD)`
+    : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  const problems = await liquidateAll(mission.id, null, reason);
+  const final = await valuation(mission.id, true);
+
+  // El objetivo se detecta con el valor de liquidación estimado, pero lo que cuenta es lo
+  // realizado al vender. Si al cerrar se queda corto y aún hay tiempo, la misión continúa.
+  if (reached && !expired && final.totalUsd < mission.target_usd) {
+    db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
+    const summary =
+      `Misión #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) quedó por debajo ` +
+      `del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misión continúa.`;
+    logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
+    return [summary];
+  }
+
+  db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
+  const summary =
+    `Misión #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD ` +
+    `(objetivo ${mission.target_usd} USD)`;
+  logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
+  closeFinishedLabRuns();
+  return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
+}
+
+/** Marca como terminadas las tandas cuyas misiones han terminado todas. */
+function closeFinishedLabRuns() {
+  db.prepare(
+    `UPDATE lab_runs SET status = 'finished', ended_at = ?
+     WHERE status = 'active' AND NOT EXISTS (
+       SELECT 1 FROM missions m WHERE m.lab_run_id = lab_runs.id AND m.status IN ('active', 'closing')
+     )`,
+  ).run(now());
+}
+
+const checking = new Set<number>();
 
 /**
- * Comprueba si la misión activa ha terminado (objetivo alcanzado o plazo vencido) y,
- * si es así, cierra todas las posiciones y la da por terminada. Devuelve líneas de log.
+ * Comprueba todas las misiones activas (la principal y las del laboratorio) y cierra las que
+ * hayan terminado. Devuelve líneas de log. Si se indica una misión, solo comprueba esa.
  */
-export async function checkMission(): Promise<string[]> {
-  if (checking) return [];
-  checking = true;
-  try {
-    const mission = getActiveMission();
-    if (!mission) return [];
-    const expired = remaining(mission.deadline).ms <= 0;
-    const value = (await valuation()).totalUsd;
-    const reached = value >= mission.target_usd;
-    if (!expired && !reached) return [];
+export async function checkMission(missionId?: number): Promise<string[]> {
+  const targets = missionId !== undefined ? [getMission(missionId)].filter((m): m is Mission => m?.status === "active") : activeMissions();
+  const results = await Promise.all(
+    targets.map(async (m) => {
+      if (checking.has(m.id)) return [];
+      checking.add(m.id);
+      try {
+        return await checkOne(m);
+      } catch (err) {
+        return [`Error revisando la misión #${m.id}: ${(err as Error).message}`];
+      } finally {
+        checking.delete(m.id);
+      }
+    }),
+  );
+  return results.flat();
+}
 
-    // Reclamo atómico: solo un proceso cierra la misión.
-    const status = reached ? "succeeded" : "expired";
-    if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
-
-    const reason = reached
-      ? `Cierre automático: objetivo de la misión #${mission.id} alcanzado (${value.toFixed(2)} ≥ ${mission.target_usd} USD)`
-      : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
-    db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open'").run(now());
-    const problems = await liquidateAll(null, reason);
-    const final = await valuation(true);
-
-    // El objetivo se detecta con el valor de liquidación estimado, pero lo que cuenta es lo
-    // realizado al vender. Si al cerrar se queda corto y aún hay tiempo, la misión continúa.
-    if (reached && !expired && final.totalUsd < mission.target_usd) {
-      db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
-      const summary =
-        `Misión #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) quedó por debajo ` +
-        `del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misión continúa.`;
-      logJournal({ sessionId: null, kind: "mission", summary, details: { problems } });
-      return [summary];
-    }
-
-    db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
-    const summary =
-      `Misión #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD ` +
-      `(objetivo ${mission.target_usd} USD)`;
-    logJournal({ sessionId: null, kind: "mission", summary, details: { problems } });
-    return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
-  } finally {
-    checking = false;
-  }
+/** Clasificación de una tanda del laboratorio (por defecto, la última). */
+export async function labRunStatus(runId?: number) {
+  const run = (
+    runId !== undefined
+      ? db.prepare("SELECT * FROM lab_runs WHERE id = ?").get(runId)
+      : db.prepare("SELECT * FROM lab_runs ORDER BY id DESC LIMIT 1").get()
+  ) as
+    | { id: number; created_at: string; capital_usd: number; target_usd: number; duration_minutes: number; instructions: string | null; status: string }
+    | undefined;
+  if (!run) return null;
+  const missions = db.prepare("SELECT * FROM missions WHERE lab_run_id = ? ORDER BY id").all(run.id) as unknown as Mission[];
+  const rows = await Promise.all(
+    missions.map(async (m) => {
+      const value = m.status === "active" ? (await valuation(m.id)).totalUsd : (m.final_usd ?? (await valuation(m.id)).totalUsd);
+      return {
+        missionId: m.id,
+        label: m.lab_label,
+        group: m.lab_group,
+        status: m.status,
+        valueUsd: Number(value.toFixed(2)),
+        resultPct: Number((((value - m.initial_usd) / m.initial_usd) * 100).toFixed(2)),
+      };
+    }),
+  );
+  rows.sort((a, b) => b.valueUsd - a.valueUsd);
+  return { run, leaderboard: rows };
 }

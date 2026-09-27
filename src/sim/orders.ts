@@ -22,6 +22,7 @@ export interface BinanceAction {
 
 interface OrderRow {
   id: number;
+  mission_id: number;
   session_id: number | null;
   venue: "solana" | "binance";
   trigger_asset: string;
@@ -58,6 +59,7 @@ function describeAction(venue: "solana" | "binance", action: SolanaAction | Bina
 }
 
 export async function placeOrder(args: {
+  missionId: number;
   sessionId: number | null;
   venue: "solana" | "binance";
   triggerAsset: string;
@@ -92,32 +94,34 @@ export async function placeOrder(args: {
   const id = Number(
     db
       .prepare(
-        `INSERT INTO orders (created_at, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (created_at, mission_id, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(now(), args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, args.triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt)
+      .run(now(), args.missionId, args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, args.triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt)
       .lastInsertRowid,
   );
   const summary = `Orden #${id}: si ${triggerLabel} ${args.condition === "above" ? "≥" : "≤"} ${args.triggerPrice} → ${describeAction(args.venue, args.action)}`;
-  logJournal({ sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, expiresAt } });
+  logJournal({ missionId: args.missionId, sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, expiresAt } });
   return { id, summary, currentPrice: price, expiresAt };
 }
 
-export function cancelOrder(id: number, sessionId: number | null) {
-  const changed = db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes;
-  if (!changed) throw new Error(`La orden #${id} no existe o ya no está abierta`);
-  logJournal({ sessionId, kind: "order_cancelled", summary: `Orden #${id} cancelada` });
+export function cancelOrder(missionId: number, id: number, sessionId: number | null) {
+  const changed = db
+    .prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND mission_id = ? AND status = 'open'")
+    .run(now(), id, missionId).changes;
+  if (!changed) throw new Error(`La orden #${id} no existe, no es de tu misión o ya no está abierta`);
+  logJournal({ missionId, sessionId, kind: "order_cancelled", summary: `Orden #${id} cancelada` });
   return `Orden #${id} cancelada.`;
 }
 
-export function listOrders(status: "open" | "closed" | "all", limit = 50) {
-  const where = status === "open" ? "WHERE status = 'open'" : status === "closed" ? "WHERE status <> 'open'" : "";
+export function listOrders(missionId: number, status: "open" | "closed" | "all", limit = 50) {
+  const where = status === "open" ? "AND status = 'open'" : status === "closed" ? "AND status <> 'open'" : "";
   return db
     .prepare(
       `SELECT id, created_at, venue, trigger_label, condition, trigger_price, action, expires_at, status, closed_at, result
-       FROM orders ${where} ORDER BY id DESC LIMIT ?`,
+       FROM orders WHERE mission_id = ? ${where} ORDER BY id DESC LIMIT ?`,
     )
-    .all(limit)
+    .all(missionId, limit)
     .map((o: any) => ({ ...o, action: JSON.parse(o.action), result: o.result ? JSON.parse(o.result) : null }));
 }
 
@@ -129,15 +133,19 @@ function close(id: number, status: string, result: unknown) {
 export async function checkOrders(): Promise<string[]> {
   const log: string[] = [];
 
-  const expired = db.prepare("SELECT id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?").all(now()) as Array<{ id: number }>;
-  for (const { id } of expired) {
+  const expired = db
+    .prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?")
+    .all(now()) as Array<{ id: number; mission_id: number }>;
+  for (const { id, mission_id } of expired) {
     if (db.prepare("UPDATE orders SET status = 'expired', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes) {
-      logJournal({ sessionId: null, kind: "order_expired", summary: `Orden #${id} caducada sin ejecutarse` });
+      logJournal({ missionId: mission_id, sessionId: null, kind: "order_expired", summary: `Orden #${id} caducada sin ejecutarse` });
       log.push(`Orden #${id} caducada`);
     }
   }
 
-  const open = db.prepare("SELECT * FROM orders WHERE status = 'open'").all() as unknown as OrderRow[];
+  const open = db
+    .prepare("SELECT o.* FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND m.status = 'active'")
+    .all() as unknown as OrderRow[];
   const prices = new Map<string, number>();
   for (const order of open) {
     const key = `${order.venue}:${order.trigger_asset}`;
@@ -158,14 +166,14 @@ export async function checkOrders(): Promise<string[]> {
       const action = JSON.parse(order.action);
       const result =
         order.venue === "solana"
-          ? await swapSolana({ sessionId: order.session_id, ...(action as SolanaAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } })
-          : await binanceMarketOrder({ sessionId: order.session_id, ...(action as BinanceAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } });
+          ? await swapSolana({ missionId: order.mission_id, sessionId: order.session_id, ...(action as SolanaAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } })
+          : await binanceMarketOrder({ missionId: order.mission_id, sessionId: order.session_id, ...(action as BinanceAction), reasoning, meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined } });
       close(order.id, "filled", { triggerPriceSeen: price, ...result });
       log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
     } catch (err) {
       const message = (err as Error).message;
       close(order.id, "failed", { triggerPriceSeen: price, error: message });
-      logJournal({ sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero falló: ${message}` });
+      logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero falló: ${message}` });
       log.push(`Orden #${order.id} falló: ${message}`);
     }
   }

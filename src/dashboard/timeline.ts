@@ -187,12 +187,13 @@ const JOURNAL_KIND: Record<string, EventKind> = {
   mission: "mission",
 };
 
-function dbEvents(): TimelineEvent[] {
+function dbEvents(missionId: number | null): TimelineEvent[] {
+  if (missionId === null) return [];
   const events: TimelineEvent[] = [];
-  for (const a of db.prepare("SELECT id, ts, kind, title, body FROM activity").all() as any[]) {
+  for (const a of db.prepare("SELECT id, ts, kind, title, body FROM activity WHERE mission_id = ?").all(missionId) as any[]) {
     events.push({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: a.title, body: a.body ?? undefined });
   }
-  for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal").all() as any[]) {
+  for (const j of db.prepare("SELECT id, ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ?").all(missionId) as any[]) {
     events.push({
       id: `j${j.id}`,
       ts: j.ts,
@@ -202,18 +203,18 @@ function dbEvents(): TimelineEvent[] {
       body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : undefined,
     });
   }
-  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons").all() as any[]) {
+  for (const l of db.prepare("SELECT id, created_at, mission_id, text FROM lessons WHERE mission_id = ?").all(missionId) as any[]) {
     events.push({ id: `l${l.id}`, ts: l.created_at, kind: "lesson", title: l.text, body: l.mission_id ? `Lección #${l.id}, de la misión #${l.mission_id}` : undefined });
   }
-  for (const n of db.prepare("SELECT id, ts, text FROM notes").all() as any[]) {
+  for (const n of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId) as any[]) {
     events.push({ id: `n${n.id}`, ts: n.ts, kind: "note", title: n.text });
   }
   return events;
 }
 
 /** Eventos desde `since` (ISO), ordenados del más antiguo al más reciente. */
-export function timeline(since: string): TimelineEvent[] {
-  return [...transcriptEvents(since), ...dbEvents()]
+export function timeline(since: string, missionId: number | null): TimelineEvent[] {
+  return [...transcriptEvents(since), ...dbEvents(missionId)]
     .filter((e) => e.ts && e.ts >= since)
     .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
 }

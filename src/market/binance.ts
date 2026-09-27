@@ -41,6 +41,8 @@ type Level = [number, number]; // [precio, cantidad base]
 export async function getOrderBook(symbol: string): Promise<{ bids: Level[]; asks: Level[] }> {
   const raw = await fetchJson<{ bids: [string, string][]; asks: [string, string][] }>(
     `${BASE}/depth?symbol=${symbol.toUpperCase()}&limit=5000`,
+    15_000,
+    2_000, // determina el precio de ejecución: caché muy corta
   );
   const parse = (levels: [string, string][]): Level[] => levels.map(([p, q]) => [Number(p), Number(q)]);
   return { bids: parse(raw.bids), asks: parse(raw.asks) };

@@ -1,7 +1,7 @@
 // Cartera virtual. Todas las operaciones se calculan con datos de mercado reales
 // en el momento de la llamada; nunca se firma ni se envía nada a una red real.
 import { config } from "../config.js";
-import { db, getMeta, logJournal, now, setMeta } from "../db.js";
+import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, USDC_MINT, fromBaseUnits, getQuote, getTokenInfo, resolveMint, toBaseUnits } from "../market/jupiter.js";
@@ -28,55 +28,59 @@ export interface Holding {
 
 const DUST = 1e-12;
 
-export function getHoldings(): Holding[] {
-  return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE amount > ? ORDER BY venue, symbol").all(DUST) as unknown as Holding[];
+export function getHoldings(missionId: number): Holding[] {
+  return db
+    .prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol")
+    .all(missionId, DUST) as unknown as Holding[];
 }
 
-function balance(venue: Venue, asset: string): number {
-  const row = db.prepare("SELECT amount FROM holdings WHERE venue = ? AND asset = ?").get(venue, asset) as { amount: number } | undefined;
+function balance(missionId: number, venue: Venue, asset: string): number {
+  const row = db.prepare("SELECT amount FROM holdings WHERE mission_id = ? AND venue = ? AND asset = ?").get(missionId, venue, asset) as
+    | { amount: number }
+    | undefined;
   return row?.amount ?? 0;
 }
 
-function adjust(venue: Venue, asset: string, symbol: string, decimals: number, delta: number) {
-  const next = balance(venue, asset) + delta;
+function adjust(missionId: number, venue: Venue, asset: string, symbol: string, decimals: number, delta: number) {
+  const next = balance(missionId, venue, asset) + delta;
   if (next < -DUST) throw new Error(`Saldo insuficiente de ${symbol} en ${venue}`);
   db.prepare(
-    `INSERT INTO holdings (venue, asset, symbol, decimals, amount) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(venue, asset) DO UPDATE SET amount = excluded.amount`,
-  ).run(venue, asset, symbol, decimals, Math.max(0, next));
+    `INSERT INTO holdings (mission_id, venue, asset, symbol, decimals, amount) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(mission_id, venue, asset) DO UPDATE SET amount = excluded.amount`,
+  ).run(missionId, venue, asset, symbol, decimals, Math.max(0, next));
 }
 
 /** Aplica varios movimientos de saldo de forma atómica. */
 function applyAtomically(fn: () => void) {
-  db.exec("BEGIN");
+  db.exec("SAVEPOINT apply");
   try {
     fn();
-    db.exec("COMMIT");
+    db.exec("RELEASE apply");
   } catch (err) {
-    db.exec("ROLLBACK");
+    db.exec("ROLLBACK TO apply");
+    db.exec("RELEASE apply");
     throw err;
   }
 }
 
-async function solUsdPrice(): Promise<number> {
+export async function solUsdPrice(): Promise<number> {
   const info = await fetchJson<Array<Record<string, any>>>(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`);
   const price = info.find((t) => t.id === SOL_MINT)?.usdPrice;
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;
 }
 
-/** Vacía la cartera y la deja con el capital inicial (casi todo en USDC y un poco de SOL para la red). */
-export async function resetPortfolio(initialUsd: number) {
-  const solPrice = await solUsdPrice();
+/**
+ * Deja la cartera de la misión con su capital inicial (casi todo en USDC y un poco de SOL para la red).
+ * Recibe el precio de SOL para que varias misiones creadas a la vez partan exactamente igual.
+ */
+export function resetPortfolio(missionId: number, initialUsd: number, solPrice: number) {
   const solUsd = config.initialSol * solPrice;
   if (solUsd >= initialUsd) throw new Error("INITIAL_SOL vale más que el capital inicial");
   applyAtomically(() => {
-    db.exec("DELETE FROM holdings");
-    adjust("solana", USDC_MINT, "USDC", 6, initialUsd - solUsd);
-    adjust("solana", SOL_MINT, "SOL", 9, config.initialSol);
-    setMeta("start_ts", now());
-    setMeta("initial_usd", String(initialUsd));
-    setMeta("benchmark_sol_price", String(solPrice));
+    db.prepare("DELETE FROM holdings WHERE mission_id = ?").run(missionId);
+    adjust(missionId, "solana", USDC_MINT, "USDC", 6, initialUsd - solUsd);
+    adjust(missionId, "solana", SOL_MINT, "SOL", 9, config.initialSol);
   });
 }
 
@@ -85,19 +89,19 @@ export async function resetPortfolio(initialUsd: number) {
  * (conservando el SOL justo para pagar la red) y activos de Binance → USDC/USDT.
  * Devuelve lo que no se pudo vender.
  */
-export async function liquidateAll(sessionId: number | null, reasoning: string): Promise<string[]> {
+export async function liquidateAll(missionId: number, sessionId: number | null, reasoning: string): Promise<string[]> {
   const problems: string[] = [];
-  const holdings = getHoldings();
+  const holdings = getHoldings(missionId);
 
   for (const h of holdings.filter((h) => h.venue === "solana" && h.asset !== USDC_MINT && h.asset !== SOL_MINT)) {
-    await swapSolana({ sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning, meta: { exitReason: reasoning } }).catch((err) =>
+    await swapSolana({ missionId, sessionId, input: h.asset, output: USDC_MINT, amount: h.amount, slippageBps: 300, reasoning, meta: { exitReason: reasoning } }).catch((err) =>
       problems.push(`${h.symbol} (Solana): ${(err as Error).message}`),
     );
   }
   // El SOL se vende al final, dejando lo necesario para la fee de esa última transacción.
-  const solLeft = balance("solana", SOL_MINT) - config.solanaTxFeeSol;
+  const solLeft = balance(missionId, "solana", SOL_MINT) - config.solanaTxFeeSol;
   if (solLeft > 0.000001) {
-    await swapSolana({ sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning, meta: { exitReason: reasoning } }).catch(
+    await swapSolana({ missionId, sessionId, input: SOL_MINT, output: USDC_MINT, amount: Number(solLeft.toFixed(9)), slippageBps: 100, reasoning, meta: { exitReason: reasoning } }).catch(
       (err) => problems.push(`SOL (Solana): ${(err as Error).message}`),
     );
   }
@@ -106,7 +110,7 @@ export async function liquidateAll(sessionId: number | null, reasoning: string):
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
       try {
-        await binanceMarketOrder({ sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance("binance", h.asset), reasoning, meta: { exitReason: reasoning } });
+        await binanceMarketOrder({ missionId, sessionId, symbol: `${h.asset}${quote}`, side: "SELL", amount: balance(missionId, "binance", h.asset), reasoning, meta: { exitReason: reasoning } });
         sold = true;
         break;
       } catch {
@@ -121,6 +125,7 @@ export async function liquidateAll(sessionId: number | null, reasoning: string):
 // ─── Swaps en Solana (Jupiter) ──────────────────────────────────────────────
 
 export async function swapSolana(args: {
+  missionId: number;
   sessionId: number | null;
   input: string;
   output: string;
@@ -136,7 +141,8 @@ export async function swapSolana(args: {
 
   const [inInfo, outInfo] = await Promise.all([getTokenInfo(inputMint), getTokenInfo(outputMint)]);
 
-  const inBalance = balance("solana", inputMint);
+  const m = args.missionId;
+  const inBalance = balance(m, "solana", inputMint);
   if (args.amount > inBalance + DUST) {
     throw new Error(`Saldo insuficiente: tienes ${inBalance} ${inInfo.symbol} y quieres vender ${args.amount}`);
   }
@@ -145,21 +151,21 @@ export async function swapSolana(args: {
   const outAmount = fromBaseUnits(quote.outAmount, outInfo.decimals);
 
   // Costes de red en SOL: fee de la transacción + renta si hay que crear la cuenta del token recibido.
-  const opensAccount = outputMint !== SOL_MINT && balance("solana", outputMint) <= DUST;
+  const opensAccount = outputMint !== SOL_MINT && balance(m, "solana", outputMint) <= DUST;
   const closesAccount = inputMint !== SOL_MINT && inBalance - args.amount <= DUST;
   const solCost =
     config.solanaTxFeeSol + (opensAccount ? TOKEN_ACCOUNT_RENT_SOL : 0) - (closesAccount ? TOKEN_ACCOUNT_RENT_SOL : 0);
 
   const solAfter =
-    balance("solana", SOL_MINT) - solCost - (inputMint === SOL_MINT ? args.amount : 0) + (outputMint === SOL_MINT ? outAmount : 0);
+    balance(m, "solana", SOL_MINT) - solCost - (inputMint === SOL_MINT ? args.amount : 0) + (outputMint === SOL_MINT ? outAmount : 0);
   if (solAfter < -DUST) {
     throw new Error(`SOL insuficiente para pagar la red (${solCost.toFixed(6)} SOL de fees/renta). En Solana necesitas SOL para operar.`);
   }
 
   applyAtomically(() => {
-    adjust("solana", inputMint, inInfo.symbol, inInfo.decimals, -args.amount);
-    adjust("solana", outputMint, outInfo.symbol, outInfo.decimals, outAmount);
-    adjust("solana", SOL_MINT, "SOL", 9, -solCost);
+    adjust(m, "solana", inputMint, inInfo.symbol, inInfo.decimals, -args.amount);
+    adjust(m, "solana", outputMint, outInfo.symbol, outInfo.decimals, outAmount);
+    adjust(m, "solana", SOL_MINT, "SOL", 9, -solCost);
   });
 
   const result = {
@@ -174,6 +180,7 @@ export async function swapSolana(args: {
     slot: quote.contextSlot,
   };
   logJournal({
+    missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
     summary: `Swap ${result.sold} → ${result.received}`,
@@ -181,6 +188,7 @@ export async function swapSolana(args: {
     details: { inputMint, outputMint, ...result },
   });
   await recordSolanaSwap({
+    missionId: m,
     inputMint,
     outputMint,
     inputSymbol: inInfo.symbol,
@@ -209,6 +217,7 @@ export async function quoteSolana(input: string, output: string, amount: number,
 // ─── Órdenes de mercado en Binance ──────────────────────────────────────────
 
 export async function binanceMarketOrder(args: {
+  missionId: number;
   sessionId: number | null;
   symbol: string;
   side: "BUY" | "SELL";
@@ -219,15 +228,16 @@ export async function binanceMarketOrder(args: {
   const info = await binance.getSymbolInfo(args.symbol);
   const book = await binance.getOrderBook(info.symbol);
   const fee = config.binanceTakerFee;
+  const m = args.missionId;
 
   let fill: binance.MarketFill;
   if (args.side === "BUY") {
-    const have = balance("binance", info.quoteAsset);
+    const have = balance(m, "binance", info.quoteAsset);
     if (args.amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.quoteAsset} en Binance`);
     fill = binance.walkBook(book.asks, "BUY", args.amount);
   } else {
     const qty = binance.roundDownToStep(args.amount, info.stepSize);
-    const have = balance("binance", info.baseAsset);
+    const have = balance(m, "binance", info.baseAsset);
     if (qty > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${info.baseAsset} en Binance`);
     if (qty <= 0) throw new Error(`Cantidad menor que el mínimo (stepSize ${info.stepSize})`);
     fill = binance.walkBook(book.bids, "SELL", qty);
@@ -240,11 +250,11 @@ export async function binanceMarketOrder(args: {
   const feePaid = args.side === "BUY" ? fill.baseQty * fee : fill.quoteQty * fee;
   applyAtomically(() => {
     if (args.side === "BUY") {
-      adjust("binance", info.quoteAsset, info.quoteAsset, 8, -fill.quoteQty);
-      adjust("binance", info.baseAsset, info.baseAsset, 8, fill.baseQty - feePaid);
+      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, -fill.quoteQty);
+      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, fill.baseQty - feePaid);
     } else {
-      adjust("binance", info.baseAsset, info.baseAsset, 8, -fill.baseQty);
-      adjust("binance", info.quoteAsset, info.quoteAsset, 8, fill.quoteQty - feePaid);
+      adjust(m, "binance", info.baseAsset, info.baseAsset, 8, -fill.baseQty);
+      adjust(m, "binance", info.quoteAsset, info.quoteAsset, 8, fill.quoteQty - feePaid);
     }
   });
 
@@ -259,6 +269,7 @@ export async function binanceMarketOrder(args: {
     fee: `${feePaid} ${args.side === "BUY" ? info.baseAsset : info.quoteAsset}`,
   };
   logJournal({
+    missionId: m,
     sessionId: args.sessionId,
     kind: "cex_order",
     summary: `Binance ${args.side} ${fill.baseQty.toPrecision(6)} ${info.baseAsset} @ ${fill.avgPrice.toPrecision(6)} ${info.quoteAsset}`,
@@ -266,6 +277,7 @@ export async function binanceMarketOrder(args: {
     details: result,
   });
   await recordBinanceTrade({
+    missionId: m,
     baseAsset: info.baseAsset,
     quoteAsset: info.quoteAsset,
     side: args.side,
@@ -280,6 +292,7 @@ export async function binanceMarketOrder(args: {
 // ─── Transferencias entre el monedero de Solana y Binance ────────────────────
 
 export async function transfer(args: {
+  missionId: number;
   sessionId: number | null;
   asset: "USDC" | "SOL";
   from: Venue;
@@ -289,29 +302,31 @@ export async function transfer(args: {
   if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
   const mint = args.asset === "SOL" ? SOL_MINT : USDC_MINT;
   const decimals = args.asset === "SOL" ? 9 : 6;
+  const m = args.missionId;
   let received: number;
   let feeText: string;
 
   applyAtomically(() => {
     if (args.from === "solana") {
       // Envío on-chain a la dirección de depósito de Binance: se paga la fee de red en SOL.
-      adjust("solana", mint, args.asset, decimals, -args.amount);
-      adjust("solana", SOL_MINT, "SOL", 9, -config.solanaTxFeeSol);
+      adjust(m, "solana", mint, args.asset, decimals, -args.amount);
+      adjust(m, "solana", SOL_MINT, "SOL", 9, -config.solanaTxFeeSol);
       received = args.amount;
-      adjust("binance", args.asset, args.asset, 8, received);
+      adjust(m, "binance", args.asset, args.asset, 8, received);
       feeText = `${config.solanaTxFeeSol} SOL (red)`;
     } else {
       const withdrawFee = BINANCE_WITHDRAW_FEES[args.asset];
       if (args.amount <= withdrawFee) throw new Error(`La retirada mínima debe superar la comisión de ${withdrawFee} ${args.asset}`);
-      adjust("binance", args.asset, args.asset, 8, -args.amount);
+      adjust(m, "binance", args.asset, args.asset, 8, -args.amount);
       received = args.amount - withdrawFee;
-      adjust("solana", mint, args.asset, decimals, received);
+      adjust(m, "solana", mint, args.asset, decimals, received);
       feeText = `${withdrawFee} ${args.asset} (retirada Binance)`;
     }
   });
 
   const result = { asset: args.asset, from: args.from, to: args.from === "solana" ? "binance" : "solana", sent: args.amount, received: received!, fee: feeText! };
   logJournal({
+    missionId: m,
     sessionId: args.sessionId,
     kind: "transfer",
     summary: `Transferencia ${args.amount} ${args.asset} ${result.from} → ${result.to}`,
@@ -350,26 +365,31 @@ async function valueHolding(h: Holding): Promise<{ usd: number; method: string }
   return { usd: 0, method: "sin precio" };
 }
 
-export async function valuation(recordSnapshot = false) {
-  const holdings = getHoldings();
+export async function valuation(missionId: number, recordSnapshot = false) {
+  const holdings = getHoldings(missionId);
   const lines = await Promise.all(
     holdings.map(async (h) => ({ ...h, ...(await valueHolding(h)) })),
   );
   const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
-  const initialUsd = Number(getMeta("initial_usd") ?? config.initialUsd);
-  const benchSolPrice = Number(getMeta("benchmark_sol_price"));
+  const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price FROM missions WHERE id = ?").get(missionId) as
+    | { created_at: string; initial_usd: number; benchmark_sol_price: number | null }
+    | undefined;
+  const initialUsd = mission?.initial_usd ?? config.initialUsd;
+  const benchSolPrice = mission?.benchmark_sol_price ?? 0;
   const benchmarkUsd = benchSolPrice ? (initialUsd / benchSolPrice) * (await solUsdPrice()) : initialUsd;
 
   if (recordSnapshot) {
-    db.prepare("INSERT INTO snapshots (ts, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
       now(),
+      missionId,
       totalUsd,
       benchmarkUsd,
       JSON.stringify(lines.map((l) => ({ venue: l.venue, symbol: l.symbol, amount: l.amount, usd: l.usd }))),
     );
   }
   return {
-    startedAt: getMeta("start_ts"),
+    missionId,
+    startedAt: mission?.created_at,
     initialUsd,
     totalUsd,
     pnlUsd: totalUsd - initialUsd,

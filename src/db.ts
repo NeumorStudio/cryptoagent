@@ -15,14 +15,15 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
-  -- venue: 'solana' (asset = mint) | 'binance' (asset = ticker, p.ej. 'USDT')
+  -- Cartera de cada misión. venue: 'solana' (asset = mint) | 'binance' (asset = ticker, p.ej. 'USDT')
   CREATE TABLE IF NOT EXISTS holdings (
+    mission_id INTEGER NOT NULL,
     venue TEXT NOT NULL,
     asset TEXT NOT NULL,
     symbol TEXT NOT NULL,
     decimals INTEGER NOT NULL,
     amount REAL NOT NULL,
-    PRIMARY KEY (venue, asset)
+    PRIMARY KEY (mission_id, venue, asset)
   );
   CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,8 +141,72 @@ function addColumns(table: string, columns: Record<string, string>) {
     if (!existing.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
 }
-addColumns("missions", { instructions: "TEXT", reviewed_at: "TEXT" });
+addColumns("missions", {
+  instructions: "TEXT",
+  reviewed_at: "TEXT",
+  // Laboratorio: tanda a la que pertenece la misión (NULL = misión principal del usuario), grupo y etiqueta.
+  lab_run_id: "INTEGER",
+  lab_group: "TEXT",
+  lab_label: "TEXT",
+  benchmark_sol_price: "REAL",
+});
 addColumns("lessons", { applies_to: "TEXT", evidence: "TEXT", confidence: "TEXT" });
+
+db.exec(`
+  -- Tandas del laboratorio: varias misiones con los mismos parámetros lanzadas a la vez.
+  CREATE TABLE IF NOT EXISTS lab_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    capital_usd REAL NOT NULL,
+    target_usd REAL NOT NULL,
+    duration_minutes REAL NOT NULL,
+    instructions TEXT,
+    groups TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    ended_at TEXT
+  );
+`);
+
+// Todo lo que pertenece a una misión lleva su mission_id: así pueden convivir varias misiones a la vez.
+for (const table of ["journal", "activity", "orders", "notes", "snapshots", "sessions"]) addColumns(table, { mission_id: "INTEGER" });
+
+// Migración de bases de datos anteriores (una sola cartera global, sin mission_id).
+{
+  const holdingCols = (db.prepare("PRAGMA table_info(holdings)").all() as Array<{ name: string }>).map((c) => c.name);
+  if (!holdingCols.includes("mission_id")) {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE holdings_new (
+        mission_id INTEGER NOT NULL, venue TEXT NOT NULL, asset TEXT NOT NULL, symbol TEXT NOT NULL,
+        decimals INTEGER NOT NULL, amount REAL NOT NULL, PRIMARY KEY (mission_id, venue, asset)
+      );
+      INSERT INTO holdings_new SELECT COALESCE((SELECT MAX(id) FROM missions), 0), venue, asset, symbol, decimals, amount FROM holdings;
+      DROP TABLE holdings;
+      ALTER TABLE holdings_new RENAME TO holdings;
+      COMMIT;
+    `);
+  }
+  // Una sola vez: asigna a cada fila antigua la misión en curso en ese momento (por fecha).
+  // No se repite después, porque con misiones en paralelo la fecha no identifica la misión.
+  const done = db.prepare("SELECT value FROM meta WHERE key = 'migration_mission_ids'").get();
+  if (!done) {
+    const byTime = (table: string, tsCol: string) =>
+      db.exec(`UPDATE ${table} SET mission_id = (
+        SELECT m.id FROM missions m WHERE m.created_at <= ${table}.${tsCol} ORDER BY m.created_at DESC LIMIT 1
+      ) WHERE mission_id IS NULL`);
+    byTime("journal", "ts");
+    byTime("activity", "ts");
+    byTime("orders", "created_at");
+    byTime("notes", "ts");
+    byTime("snapshots", "ts");
+    byTime("sessions", "started_at");
+    const legacyBench = (db.prepare("SELECT value FROM meta WHERE key = 'benchmark_sol_price'").get() as { value: string } | undefined)?.value;
+    if (legacyBench) {
+      db.prepare("UPDATE missions SET benchmark_sol_price = ? WHERE benchmark_sol_price IS NULL AND id = (SELECT MAX(id) FROM missions)").run(Number(legacyBench));
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('migration_mission_ids', '1')").run();
+  }
+}
 
 export const now = () => new Date().toISOString();
 
@@ -154,9 +219,10 @@ export function setMeta(key: string, value: string) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
 
-export function logActivity(entry: { sessionId: number | null; kind: string; title: string; body?: string }) {
-  db.prepare("INSERT INTO activity (ts, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?)").run(
+export function logActivity(entry: { missionId: number | null; sessionId: number | null; kind: string; title: string; body?: string }) {
+  db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?, ?)").run(
     now(),
+    entry.missionId,
     entry.sessionId,
     entry.kind,
     entry.title,
@@ -165,14 +231,16 @@ export function logActivity(entry: { sessionId: number | null; kind: string; tit
 }
 
 export function logJournal(entry: {
+  missionId: number | null;
   sessionId: number | null;
   kind: string;
   summary: string;
   reasoning?: string;
   details?: unknown;
 }) {
-  db.prepare("INSERT INTO journal (ts, session_id, kind, summary, reasoning, details) VALUES (?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO journal (ts, mission_id, session_id, kind, summary, reasoning, details) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     now(),
+    entry.missionId,
     entry.sessionId,
     entry.kind,
     entry.summary,

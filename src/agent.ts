@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { logActivity } from "./db.js";
+import { getActiveMission, getLastMission } from "./sim/mission.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { runTool, toolDefinitions } from "./tools/runner.js";
 
@@ -55,11 +56,12 @@ function log(tag: string, text: string) {
   console.log(`[${time}] ${tag} ${text}`);
 }
 
-export async function runSession(): Promise<void> {
-  const sessionId = startSession();
+/** Una sesión del agente sobre una misión (por defecto, la principal activa). */
+export async function runSession(missionId = (getActiveMission() ?? getLastMission())?.id ?? null): Promise<void> {
+  const sessionId = startSession(missionId);
   log("▶", `Sesión #${sessionId} iniciada`);
 
-  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: await sessionBriefing(sessionId) }];
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: await sessionBriefing(sessionId, missionId) }];
   const useFallbacks = FALLBACK_MODELS.has(config.model);
   const tools = toolDefinitions.map((t) => ("input_schema" in t ? { ...t, eager_input_streaming: true } : t));
 
@@ -102,15 +104,15 @@ export async function runSession(): Promise<void> {
 
     for (const block of message.content) {
       if (block.type === "thinking" && block.thinking.trim()) {
-        logActivity({ sessionId, kind: "thinking", title: block.thinking.trim() });
+        logActivity({ missionId, sessionId, kind: "thinking", title: block.thinking.trim() });
       }
       if (block.type === "text" && block.text.trim()) {
         log("💬", block.text.trim());
-        logActivity({ sessionId, kind: "text", title: block.text.trim() });
+        logActivity({ missionId, sessionId, kind: "text", title: block.text.trim() });
       }
       if (block.type === "server_tool_use") {
         log("🔎", `${block.name} ${JSON.stringify(block.input)}`);
-        logActivity({ sessionId, kind: "tool", title: block.name, body: JSON.stringify(block.input) });
+        logActivity({ missionId, sessionId, kind: "tool", title: block.name, body: JSON.stringify(block.input) });
       }
     }
 
@@ -133,12 +135,12 @@ export async function runSession(): Promise<void> {
     const results: Anthropic.Beta.BetaContentBlockParam[] = await Promise.all(
       toolUses.map(async (use) => {
         log("🛠", `${use.name} ${JSON.stringify(use.input).slice(0, 300)}`);
-        if (use.name !== "log_progress") logActivity({ sessionId, kind: "tool", title: use.name, body: JSON.stringify(use.input) });
-        const { content, isError } = await runTool(use.name, use.input, { sessionId });
+        if (use.name !== "log_progress") logActivity({ missionId, sessionId, kind: "tool", title: use.name, body: JSON.stringify(use.input) });
+        const { content, isError } = await runTool(use.name, use.input, { sessionId, missionId });
         if (isError) log("✖", String(content).slice(0, 300));
         if (use.name !== "log_progress") {
           const text = typeof content === "string" ? content : "[contenido no textual]";
-          logActivity({ sessionId, kind: isError ? "error" : "result", title: use.name, body: text.slice(0, 4000) });
+          logActivity({ missionId, sessionId, kind: isError ? "error" : "result", title: use.name, body: text.slice(0, 4000) });
         }
         return { type: "tool_result" as const, tool_use_id: use.id, content, is_error: isError };
       }),
@@ -150,10 +152,11 @@ export async function runSession(): Promise<void> {
     messages.push({ role: "user", content: results });
   }
 
-  const end = await endSession(sessionId, finalText, { input: inputTokens, output: outputTokens });
+  const end = await endSession(sessionId, missionId, finalText, { input: inputTokens, output: outputTokens });
   log(
     "■",
-    `Sesión #${sessionId} terminada. Cartera: ${end.totalUsd.toFixed(2)} USD (${end.pnlPct.toFixed(2)} %), ` +
-      `holdear SOL: ${end.benchmarkHoldSolUsd.toFixed(2)} USD. Tokens: ${inputTokens} entrada / ${outputTokens} salida`,
+    `Sesión #${sessionId} terminada. ` +
+      (end ? `Cartera: ${end.totalUsd.toFixed(2)} USD (${end.pnlPct.toFixed(2)} %), holdear SOL: ${end.benchmarkHoldSolUsd.toFixed(2)} USD. ` : "") +
+      `Tokens: ${inputTokens} entrada / ${outputTokens} salida`,
   );
 }

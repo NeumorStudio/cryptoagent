@@ -6,16 +6,10 @@ import { db, logJournal, now } from "../db.js";
 import * as market from "../market/binance.js";
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
-import { movePosition, recordTrade } from "./positions.js";
+import { recordTrade } from "./positions.js";
 import { VENUES, type Allocation, type ChainId, type Holding, type TradeMeta, type VenueId } from "./types.js";
 import { fillMarketOrder } from "./venues/binance.js";
 import { allChains, binance, getChain, getVenue, type CostLine, type Delta } from "./venues/index.js";
-
-// Comisiones de retirada de Binance por la red Solana.
-const BINANCE_WITHDRAW_FEES: Record<string, number> = {
-  USDC: config.binanceUsdcWithdrawFee,
-  SOL: 0.001,
-};
 
 export type Venue = VenueId;
 export type { Holding };
@@ -28,7 +22,7 @@ export function getHoldings(missionId: number): Holding[] {
     .all(missionId, DUST) as unknown as Holding[];
 }
 
-function balance(missionId: number, venue: Venue, asset: string): number {
+export function balance(missionId: number, venue: Venue, asset: string): number {
   const row = db.prepare("SELECT amount FROM holdings WHERE mission_id = ? AND venue = ? AND asset = ?").get(missionId, venue, asset) as
     | { amount: number }
     | undefined;
@@ -57,7 +51,8 @@ function applyAtomically(fn: () => void) {
   }
 }
 
-function applyDeltas(missionId: number, venue: VenueId, deltas: Delta[]) {
+/** Aplica cambios de saldo en un sitio de forma atómica (falla si alguno deja un saldo negativo). */
+export function applyDeltas(missionId: number, venue: VenueId, deltas: Delta[]) {
   applyAtomically(() => {
     for (const d of deltas) if (d.amount !== 0) adjust(missionId, venue, d.asset, d.symbol, d.decimals, d.amount);
   });
@@ -341,67 +336,6 @@ export async function binanceMarketOrder(args: {
   return result;
 }
 
-// ─── Transferencias entre el monedero de Solana y Binance ────────────────────
-
-export async function transfer(args: {
-  missionId: number;
-  sessionId: number | null;
-  asset: "USDC" | "SOL";
-  from: VenueId;
-  to: VenueId;
-  amount: number;
-  reasoning: string;
-}) {
-  if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
-  const route = `${args.from}>${args.to}`;
-  if (route !== "solana>binance" && route !== "binance>solana") {
-    throw new Error("Por ahora solo se puede transferir entre tu monedero de Solana y Binance (en los dos sentidos)");
-  }
-  const mint = args.asset === "SOL" ? SOL_MINT : USDC_MINT;
-  const decimals = args.asset === "SOL" ? 9 : 6;
-  const m = args.missionId;
-  let received: number;
-  let feeText: string;
-
-  applyAtomically(() => {
-    if (args.from === "solana") {
-      // Envío on-chain a la dirección de depósito de Binance: se paga la fee de red en SOL.
-      adjust(m, "solana", mint, args.asset, decimals, -args.amount);
-      adjust(m, "solana", SOL_MINT, "SOL", 9, -config.solanaTxFeeSol);
-      received = args.amount;
-      adjust(m, "binance", args.asset, args.asset, 8, received);
-      feeText = `${config.solanaTxFeeSol} SOL (red)`;
-    } else {
-      const withdrawFee = BINANCE_WITHDRAW_FEES[args.asset]!;
-      if (args.amount <= withdrawFee) throw new Error(`La retirada mínima debe superar la comisión de ${withdrawFee} ${args.asset}`);
-      adjust(m, "binance", args.asset, args.asset, 8, -args.amount);
-      received = args.amount - withdrawFee;
-      adjust(m, "solana", mint, args.asset, decimals, received);
-      feeText = `${withdrawFee} ${args.asset} (retirada Binance)`;
-    }
-  });
-
-  const result = { asset: args.asset, from: args.from, to: args.to, sent: args.amount, received: received!, fee: feeText! };
-  logJournal({
-    missionId: m,
-    sessionId: args.sessionId,
-    kind: "transfer",
-    summary: `Transferencia ${args.amount} ${args.asset} ${result.from} → ${result.to}`,
-    reasoning: args.reasoning,
-    details: result,
-  });
-  // El coste de lo que se mueve viaja con ello (las stablecoins no son posiciones).
-  const assetAt = (venue: VenueId) => (venue === "binance" ? args.asset : mint);
-  await movePosition({
-    missionId: m,
-    from: { venue: args.from, asset: assetAt(args.from) },
-    to: { venue: args.to, asset: assetAt(args.to), symbol: args.asset },
-    qty: args.amount,
-    received: received!,
-  }).catch((err) => console.error(`No se pudo mover la posición: ${(err as Error).message}`));
-  return result;
-}
-
 /**
  * Dirección del monedero EVM de la misión (la misma en Base y BNB Chain, como en MetaMask).
  * Es ficticia: se deriva del id de la misión y no corresponde a ninguna clave real.
@@ -413,7 +347,17 @@ export const evmAddress = (missionId: number) => `0x${createHash("sha256").updat
 export async function valuation(missionId: number, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
-  const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
+  // Lo que está en tránsito (transferencias y puentes) se valora en su destino.
+  const pending = db
+    .prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status IN ('pending', 'settling') ORDER BY id")
+    .all(missionId) as Array<{ id: number; to_venue: VenueId; asset_in: string; symbol_in: string; decimals_in: number; amount_in: number; arrives_at: string }>;
+  const transit = await Promise.all(
+    pending.map(async (t) => ({
+      ...t,
+      ...(await getVenue(t.to_venue).liquidationValue({ venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in })),
+    })),
+  );
+  const totalUsd = lines.reduce((s, l) => s + l.usd, 0) + transit.reduce((s, t) => s + t.usd, 0);
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price, benchmark FROM missions WHERE id = ?").get(missionId) as
     | { created_at: string; initial_usd: number; benchmark_sol_price: number | null; benchmark: string | null }
     | undefined;
@@ -451,7 +395,7 @@ export async function valuation(missionId: number, recordSnapshot = false) {
     initialUsd,
     totalUsd,
     /** false si algún saldo se valoró sin cotización real: el total es orientativo. */
-    reliable: lines.every((l) => l.reliable),
+    reliable: lines.every((l) => l.reliable) && transit.every((t) => t.reliable),
     pnlUsd: totalUsd - initialUsd,
     pnlPct: ((totalUsd - initialUsd) / initialUsd) * 100,
     benchmarkUsd,
@@ -465,5 +409,17 @@ export async function valuation(missionId: number, recordSnapshot = false) {
       usd: Number(l.usd.toFixed(4)),
       valuedBy: l.method,
     })),
+    ...(transit.length
+      ? {
+          inTransit: transit.map((t) => ({
+            transferId: t.id,
+            to: t.to_venue,
+            symbol: t.symbol_in,
+            amount: t.amount_in,
+            usd: Number(t.usd.toFixed(4)),
+            arrivesAt: t.arrives_at,
+          })),
+        }
+      : {}),
   };
 }

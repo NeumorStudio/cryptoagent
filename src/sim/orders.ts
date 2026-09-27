@@ -6,6 +6,7 @@ import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
 import { binanceMarketOrder, swap } from "./portfolio.js";
 import type { ChainId, VenueId } from "./types.js";
+import { settleTransfers } from "./transfers.js";
 import { getVenue } from "./venues/index.js";
 
 /** Swap en una cadena (el campo `venue` de la orden indica cuál). */
@@ -129,7 +130,8 @@ function close(id: number, status: string, result: unknown) {
 
 /** Revisa las órdenes abiertas y ejecuta las que se hayan disparado. Devuelve líneas de log. */
 export async function checkOrders(): Promise<string[]> {
-  const log: string[] = [];
+  // Primero, las transferencias que ya han llegado: una orden puede depender de ese saldo.
+  const log: string[] = await settleTransfers().catch((err) => [`Error abonando transferencias: ${(err as Error).message}`]);
 
   const expired = db
     .prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?")

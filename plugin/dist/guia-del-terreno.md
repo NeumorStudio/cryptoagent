@@ -24,8 +24,14 @@ Para saber si un token concreto es operable, pide una cotización con `quote_swa
 
 Tus monederos: uno en Solana y uno tipo MetaMask (la misma dirección en Base y en BNB Chain, cada cadena con
 sus propios saldos), más tu cuenta de Binance. El reparto inicial del capital lo elige el usuario en cada misión.
-Por ahora solo puedes mover dinero entre Solana y Binance (`simulate_transfer`); entre Base, BNB Chain y el
-resto, no (no hay puentes todavía).
+Mover dinero entre sitios (el dinero sale al momento y llega después; mientras tanto aparece "en tránsito"):
+- **Binance ↔ tus monederos** (`simulate_transfer`), por la red de cada cadena: USDC por Solana, Base o BNB Chain;
+  USDT por Solana o BNB Chain; SOL por Solana; ETH por Base; BNB por BNB Chain. Al depositar pagas la red de la
+  cadena; al retirar, la comisión de retirada de Binance, con un mínimo (p. ej. USDC: 0,3 por Solana, 0,2 por
+  Base, 0 por BNB Chain; mínimo 3). Llega en 1-3 minutos.
+- **Entre cadenas** (`simulate_bridge`), con Li.Fi, que elige el puente: pagas el gas en la cadena de origen y la
+  comisión del puente va descontada de lo que recibes (suele ser de céntimos). Puedes cambiar de token por el
+  camino. Llega en segundos o minutos. `quote_bridge` da una estimación sin gastar nada.
 
 ## 2. Cómo se simula (y qué no se simula)
 

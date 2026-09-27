@@ -42,6 +42,39 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE missions ADD COLUMN benchmark TEXT;
       `),
   },
+  {
+    version: 4,
+    description: "Transferencias con tiempo de llegada: depósitos y retiradas de Binance y puentes entre cadenas",
+    up: (db) =>
+      db.exec(`
+        -- El dinero sale al momento y llega en arrives_at. status: 'pending' | 'settling' | 'settled'.
+        -- kind: 'cex_deposit' | 'cex_withdraw' | 'bridge'. carry: coste de la posición que viaja con el activo.
+        CREATE TABLE transfers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mission_id INTEGER NOT NULL,
+          session_id INTEGER,
+          created_at TEXT NOT NULL,
+          arrives_at TEXT NOT NULL,
+          settled_at TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          kind TEXT NOT NULL,
+          from_venue TEXT NOT NULL,
+          to_venue TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          asset_out TEXT NOT NULL,
+          symbol_out TEXT NOT NULL,
+          amount_out REAL NOT NULL,
+          asset_in TEXT NOT NULL,
+          symbol_in TEXT NOT NULL,
+          decimals_in INTEGER NOT NULL,
+          amount_in REAL NOT NULL,
+          value_usd REAL,
+          costs TEXT NOT NULL,
+          carry TEXT
+        );
+        CREATE INDEX transfers_pending ON transfers (status, arrives_at);
+      `),
+  },
 ];
 
 /**

@@ -4,6 +4,7 @@
 import { db, logJournal, now } from "../db.js";
 import { liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
 import { DEFAULT_ALLOCATION, type Allocation, type ChainId, type Holding } from "./types.js";
+import { settleTransfers } from "./transfers.js";
 import { getVenue } from "./venues/index.js";
 
 export interface Mission {
@@ -176,6 +177,8 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
     throw new Error("La misión se está cerrando en este momento");
   }
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  // Lo que está en tránsito llega: la cartera final lo incluye.
+  await settleTransfers({ missionId: mission.id, force: true });
   const problems = closePositions ? await liquidateAll(mission.id, null, `Cierre manual: el usuario detuvo la misión #${mission.id}`) : [];
   const final = await valuation(mission.id, true);
   db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ?, final_usd = ? WHERE id = ?").run(now(), final.totalUsd, mission.id);
@@ -208,6 +211,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
     ? `Cierre automático: objetivo de la misión #${mission.id} alcanzado (${value.toFixed(2)} ≥ ${mission.target_usd} USD)`
     : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
   const final = await valuation(mission.id, true);
 

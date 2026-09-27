@@ -109,6 +109,33 @@ function handle(url: URL, body?: unknown): Response {
       },
     });
   }
+  if (url.host === "li.quest") {
+    // Puente: convierte a precio de mercado, cobra 0,05 $ y 0,0001 del nativo de origen de gas; tarda 45 s.
+    const chainOf: Record<string, EvmChain | "solana"> = { SOL: "solana", "8453": "base", "56": "bsc" };
+    const find = (chain: EvmChain | "solana", addr: string) =>
+      chain === "solana"
+        ? tokens[addr === "11111111111111111111111111111111" ? SOL_MINT : addr]
+        : evmTokens[chain][addr === "0x0000000000000000000000000000000000000000" ? NATIVE : addr.toLowerCase()];
+    const from = chainOf[url.searchParams.get("fromChain")!]!;
+    const to = chainOf[url.searchParams.get("toChain")!]!;
+    const a = find(from, url.searchParams.get("fromToken")!);
+    const b = find(to, url.searchParams.get("toToken")!);
+    if (!a || !b) return json({ message: "No available quotes for the requested transfer" }, 404);
+    const fromUsd = (Number(url.searchParams.get("fromAmount")) / 10 ** a.decimals) * a.price;
+    const toUsd = fromUsd - 0.05;
+    const native = from === "solana" ? { decimals: 9, symbol: "SOL" } : { decimals: 18, symbol: from === "base" ? "ETH" : "BNB" };
+    return json({
+      tool: "fakebridge",
+      estimate: {
+        toAmount: BigInt(Math.floor((toUsd / b.price) * 10 ** b.decimals)).toString(),
+        executionDuration: 45,
+        gasCosts: [{ amount: String(10 ** (native.decimals - 4)), amountUSD: "0.02", token: native }],
+        feeCosts: [{ name: "Fake Fee", amountUSD: "0.05", included: true }],
+        fromAmountUSD: String(fromUsd),
+        toAmountUSD: String(toUsd),
+      },
+    });
+  }
   if (url.host === "api.gopluslabs.io") {
     const chain: EvmChain = url.pathname.endsWith("/8453") ? "base" : "bsc";
     const addr = url.searchParams.get("contract_addresses")!.toLowerCase();

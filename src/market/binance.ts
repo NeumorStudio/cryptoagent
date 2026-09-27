@@ -99,3 +99,56 @@ export function roundDownToStep(qty: number, step: number): number {
   const decimals = Math.max(0, Math.round(-Math.log10(step)));
   return Number((Math.floor(qty / step + 1e-9) * step).toFixed(decimals));
 }
+
+// ─── Redes de depósito y retirada ───────────────────────────────────────────
+
+export interface NetworkInfo {
+  withdrawFee: number;
+  withdrawMin: number;
+  depositEnable: boolean;
+  withdrawEnable: boolean;
+  /** Minutos estimados de llegada que publica Binance. */
+  arrivalMinutes: number;
+  source: "binance" | "tabla fija";
+}
+
+// Valores publicados por Binance el 27 de septiembre de 2026: se usan si su API no responde.
+const STATIC_NETWORKS: Record<string, Record<string, Omit<NetworkInfo, "source">>> = {
+  USDC: {
+    SOL: { withdrawFee: 0.3, withdrawMin: 3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+    BASE: { withdrawFee: 0.2, withdrawMin: 3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+    BSC: { withdrawFee: 0, withdrawMin: 3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+  },
+  USDT: {
+    SOL: { withdrawFee: 0.3, withdrawMin: 5, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+    BSC: { withdrawFee: 0.01, withdrawMin: 5, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+  },
+  SOL: { SOL: { withdrawFee: 0.001, withdrawMin: 0.01, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 } },
+  ETH: { BASE: { withdrawFee: 0.00005, withdrawMin: 0.002, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 } },
+  BNB: { BSC: { withdrawFee: 0.00001, withdrawMin: 0.0005, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 } },
+};
+
+/** Comisión, mínimo y estado de una moneda en una red de Binance (API pública de su web, sin clave). */
+export async function networkInfo(coin: string, network: string): Promise<NetworkInfo | undefined> {
+  try {
+    const res = await fetchJson<{ data: Array<{ coin: string; networkList: Array<Record<string, any>> }> }>(
+      "https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll",
+      { ttlMs: 60 * 60_000 },
+    );
+    const n = res.data.find((c) => c.coin === coin)?.networkList.find((x) => x.network === network);
+    if (n) {
+      return {
+        withdrawFee: Number(n.withdrawFee),
+        withdrawMin: Number(n.withdrawMin),
+        depositEnable: Boolean(n.depositEnable),
+        withdrawEnable: Boolean(n.withdrawEnable),
+        arrivalMinutes: Math.max(1, Number(n.estimatedArrivalTime) || 1),
+        source: "binance",
+      };
+    }
+  } catch {
+    /* se usa la tabla fija */
+  }
+  const s = STATIC_NETWORKS[coin]?.[network];
+  return s ? { ...s, source: "tabla fija" } : undefined;
+}

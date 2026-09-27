@@ -144,22 +144,23 @@ export async function recordTrade(args: {
   }
 }
 
+/** Parte de una posición que viaja con una transferencia: su coste y sus datos de entrada. */
+export interface Carry {
+  /** Fracción de lo enviado que era posición (el resto era saldo que no se compró, p. ej. el gas inicial). */
+  share: number;
+  costUsd: number;
+  row: Pick<PositionRow, "entry_features" | "research" | "thesis" | "lessons_applied" | "beliefs_applied">;
+}
+
 /**
- * Mueve (parte de) una posición a otro sitio, p. ej. al transferir SOL de Solana a Binance. No es una
- * venta: el coste viaja con el activo y el resultado se mide cuando se venda en el destino.
- * `received` puede ser menor que `qty` por las comisiones de la transferencia.
+ * Saca de una posición lo que se envía a otro sitio. No es una venta: devuelve el coste que viaja con
+ * el activo (o null si ese saldo no era una posición), para attachPosition cuando llegue.
  */
-export async function movePosition(args: {
-  missionId: number;
-  from: { venue: VenueId; asset: string };
-  to: { venue: VenueId; asset: string; symbol: string };
-  qty: number;
-  received: number;
-}) {
+export function detachPosition(args: { missionId: number; venue: VenueId; asset: string; qty: number; toVenue: VenueId }): Carry | null {
   const p = db
     .prepare("SELECT * FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'")
-    .get(args.missionId, args.from.venue, args.from.asset) as PositionRow | undefined;
-  if (!p) return; // saldo que no era una posición (p. ej. el SOL inicial para fees)
+    .get(args.missionId, args.venue, args.asset) as PositionRow | undefined;
+  if (!p) return null; // saldo que no era una posición (p. ej. el SOL inicial para fees)
   const qty = Math.min(args.qty, p.qty_open);
   const fraction = p.qty_open > 0 ? qty / p.qty_open : 0;
   const costPart = p.cost_open_usd * fraction;
@@ -169,20 +170,44 @@ export async function movePosition(args: {
     all ? 0 : p.cost_open_usd - costPart,
     all ? "moved" : "open",
     all ? now() : null,
-    all ? `transferida a ${args.to.venue}` : null,
+    all ? `transferida a ${args.toVenue}` : null,
     p.id,
   );
-  const received = args.received * (args.qty > 0 ? qty / args.qty : 0);
-  if (received <= 0) return;
-  await openOrAdd({
-    missionId: args.missionId,
-    venue: args.to.venue,
-    asset: args.to.asset,
-    symbol: args.to.symbol,
-    qty: received,
-    costUsd: costPart,
-    inherit: p,
-  });
+  return { share: args.qty > 0 ? qty / args.qty : 0, costUsd: costPart, row: p };
+}
+
+/** Pone en el destino lo que llegó de una transferencia, con el coste y los datos que traía. */
+export async function attachPosition(args: { missionId: number; venue: VenueId; asset: string; symbol: string; received: number; carry: Carry }) {
+  const qty = args.received * args.carry.share;
+  if (qty <= 0) return;
+  await openOrAdd({ missionId: args.missionId, venue: args.venue, asset: args.asset, symbol: args.symbol, qty, costUsd: args.carry.costUsd, inherit: args.carry.row });
+}
+
+/** Cierra (parte de) una posición a un valor en USD, fuera de un swap (p. ej. al cruzar un puente cambiando de token). */
+export function sellFromPosition(args: { missionId: number; venue: VenueId; asset: string; qty: number; proceedsUsd: number; meta?: TradeMeta }) {
+  reduce(args);
+}
+
+/** Abre (o amplía) una posición fuera de un swap (p. ej. al llegar un puente con otro token). */
+export async function buyIntoPosition(args: { missionId: number; venue: VenueId; asset: string; symbol: string; qty: number; costUsd: number; meta?: TradeMeta }) {
+  const venue = getVenue(args.venue);
+  const measurable = venue.kind === "chain" && args.asset !== venue.native.address;
+  await openOrAdd({ ...args, features: measurable ? () => venue.entryFeatures(args.asset) : undefined });
+}
+
+/**
+ * Mueve (parte de) una posición a otro sitio en el acto. No es una venta: el coste viaja con el activo
+ * y el resultado se mide cuando se venda en el destino. `received` puede ser menor que `qty` por las comisiones.
+ */
+export async function movePosition(args: {
+  missionId: number;
+  from: { venue: VenueId; asset: string };
+  to: { venue: VenueId; asset: string; symbol: string };
+  qty: number;
+  received: number;
+}) {
+  const carry = detachPosition({ missionId: args.missionId, venue: args.from.venue, asset: args.from.asset, qty: args.qty, toVenue: args.to.venue });
+  if (carry) await attachPosition({ missionId: args.missionId, venue: args.to.venue, asset: args.to.asset, symbol: args.to.symbol, received: args.received, carry });
 }
 
 /** Posiciones con su resultado, para el propio agente y para las estadísticas de memoria. */

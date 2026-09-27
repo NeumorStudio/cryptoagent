@@ -9,6 +9,7 @@ import * as memory from "../sim/memory.js";
 import * as orders from "../sim/orders.js";
 import * as positions from "../sim/positions.js";
 import * as sim from "../sim/portfolio.js";
+import * as transfers from "../sim/transfers.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 
@@ -244,16 +245,68 @@ export const SIM_TOOLS = [
     kind: "trade",
     journaled: true,
     description:
-      "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulación. " +
-      "De Solana a Binance se paga la fee de red; de Binance a Solana, la comisión de retirada de Binance.",
+      "Deposita en Binance desde uno de tus monederos, o retira de Binance a uno de ellos, por la red de esa cadena. " +
+      "Redes: USDC por Solana, Base o BNB Chain; USDT por Solana o BNB Chain; SOL por Solana; ETH por Base; BNB por BNB Chain. " +
+      "Al depositar pagas la red de la cadena (en su nativo); al retirar, la comisión de retirada de Binance (y hay un mínimo). " +
+      "El dinero sale al momento y llega unos minutos después (mientras tanto aparece en tu cartera como en tránsito). " +
+      "Entre dos cadenas usa simulate_bridge.",
     schema: z.object({
-      asset: z.enum(["USDC", "SOL"]),
+      asset: z.enum(transfers.TRANSFER_ASSETS),
       from: z.enum(VENUES),
       to: z.enum(VENUES),
       amount: z.number().positive(),
       reasoning,
     }),
-    run: async (i, ctx) => json(await sim.transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i })),
+    run: async (i, ctx) => json(await transfers.cexTransfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i })),
+  }),
+  tool({
+    name: "quote_bridge",
+    kind: "research",
+    researchTarget: (i) => i.token_out,
+    description:
+      "Estimación orientativa de un puente entre dos cadenas (Solana, Base, BNB Chain): cuánto recibirías y el gas aproximado. " +
+      "No gasta nada. El coste, el gas y la duración reales los da el agregador de puentes al ejecutarlo con simulate_bridge.",
+    schema: z.object({
+      from_chain: chainParam,
+      to_chain: chainParam,
+      token_in: z.string().describe(`Token que envías (dirección o alias: ${TOKEN_ALIASES})`),
+      token_out: z.string().describe("Token que quieres recibir en la cadena de destino (dirección o alias)"),
+      amount: z.number().positive(),
+    }),
+    run: async (i) => json(await transfers.quoteBridge({ fromChain: i.from_chain, toChain: i.to_chain, tokenIn: i.token_in, tokenOut: i.token_out, amount: i.amount })),
+  }),
+  tool({
+    name: "simulate_bridge",
+    kind: "trade",
+    journaled: true,
+    description:
+      "Cruza un puente entre dos cadenas (Solana, Base, BNB Chain) con Li.Fi, que elige el puente y la ruta. Puedes cambiar de token " +
+      "por el camino (p. ej. USDC de Base a BNB en BNB Chain). Pagas el gas en la cadena de origen (en su nativo) y la comisión del " +
+      "puente va incluida en lo que recibes. El dinero sale al momento y llega cuando indique el puente (segundos o minutos).",
+    schema: z.object({
+      from_chain: chainParam,
+      to_chain: chainParam,
+      token_in: z.string().describe(`Token que envías (dirección o alias: ${TOKEN_ALIASES})`),
+      token_out: z.string().describe("Token que quieres recibir en la cadena de destino (dirección o alias)"),
+      amount: z.number().positive(),
+      slippage_bps: z.number().int().min(1).max(5000).default(50),
+      thesis,
+    }),
+    run: async (i, ctx) =>
+      json(
+        await transfers.bridge({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          fromChain: i.from_chain,
+          toChain: i.to_chain,
+          tokenIn: i.token_in,
+          tokenOut: i.token_out,
+          amount: i.amount,
+          slippageBps: i.slippage_bps,
+          reasoning: formatThesis(i.thesis),
+          meta: tradeMeta(i.thesis),
+        }),
+      ),
   }),
   tool({
     name: "place_swap_trigger_order",
@@ -737,6 +790,8 @@ export async function runTool(
     const unknown = memory.unknownBeliefs(beliefs);
     if (unknown.length) return fail(`Las creencias #${unknown.join(", #")} no existen o ya no están activas. Activas: ${memory.activeBeliefIds().map((id) => `#${id}`).join(", ") || "ninguna"}`);
   }
+  // Antes de operar o de mirar la cartera, lo que ya ha llegado de una transferencia está disponible.
+  if (trading || def.deliversNews) await transfers.settleTransfers({ missionId: ctx.missionId ?? undefined }).catch(() => []);
   if (def.researchTarget) {
     positions.logResearch(ctx.missionId, name, (def.researchTarget as (i: unknown) => string | undefined)(parsed.data)?.trim() || undefined);
   }

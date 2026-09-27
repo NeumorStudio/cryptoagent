@@ -70,7 +70,8 @@ O activa la actualización automática de este marketplace en el gestor de plugi
 | Swap en Solana | Cotización real de Jupiter + fee de red en SOL + renta de la cuenta del token |
 | Swap en Base o BNB Chain | Cotización real de KyberSwap (o ParaSwap) + gas real en ETH o BNB + approve la primera vez que se vende un token + impuestos del token (GoPlus): si superan el slippage, revierte y se pierde el gas |
 | Orden de mercado en Binance | Se recorre el order book real + comisión taker + tamaño mínimo |
-| Transferencia Solana ↔ Binance | Fee de red o comisión de retirada |
+| Depósito o retirada de Binance | Por la red de cada cadena: gas al depositar, comisión y mínimo reales de Binance al retirar; llega en 1-3 min |
+| Puente entre cadenas | Cotización real de Li.Fi (coste, gas y duración); si se agota su cupo gratuito, una estimación |
 | Orden condicional | Se dispara cuando el precio real cruza el umbral (comprobado cada ~60 s) |
 | Valoración | Precio de liquidación: cuánto se obtendría vendiéndolo todo ahora |
 | Acciones hipotéticas | Solo se anotan (crear tokens, publicar…); no afectan a la cartera |

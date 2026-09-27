@@ -8,7 +8,8 @@ const BASE = "https://lite-api.jup.ag";
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-const ALIASES: Record<string, string> = { SOL: SOL_MINT, USDC: USDC_MINT };
+const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+const ALIASES: Record<string, string> = { SOL: SOL_MINT, USDC: USDC_MINT, USDT: USDT_MINT };
 
 export function resolveMint(mintOrAlias: string): string {
   return ALIASES[mintOrAlias.toUpperCase()] ?? mintOrAlias;

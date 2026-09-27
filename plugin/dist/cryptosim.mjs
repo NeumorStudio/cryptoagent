@@ -13244,8 +13244,8 @@ function anchor(source) {
 }
 var date = /* @__PURE__ */ anchor(dateSource);
 function timeSource(args) {
-  const hhmm2 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
-  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm2}` : args.precision === 0 ? `${hhmm2}:[0-5]\\d` : `${hhmm2}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm2}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm2}(?::[0-5]\\d(?:\\.\\d+)?)?`;
+  const hhmm3 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
+  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm3}` : args.precision === 0 ? `${hhmm3}:[0-5]\\d` : `${hhmm3}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm3}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm3}(?::[0-5]\\d(?:\\.\\d+)?)?`;
   return regex;
 }
 function time(args) {
@@ -36978,6 +36978,38 @@ var MIGRATIONS = [
         ALTER TABLE missions ADD COLUMN allocation TEXT;
         ALTER TABLE missions ADD COLUMN benchmark TEXT;
       `)
+  },
+  {
+    version: 4,
+    description: "Transferencias con tiempo de llegada: dep\xF3sitos y retiradas de Binance y puentes entre cadenas",
+    up: (db2) => db2.exec(`
+        -- El dinero sale al momento y llega en arrives_at. status: 'pending' | 'settling' | 'settled'.
+        -- kind: 'cex_deposit' | 'cex_withdraw' | 'bridge'. carry: coste de la posici\xF3n que viaja con el activo.
+        CREATE TABLE transfers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mission_id INTEGER NOT NULL,
+          session_id INTEGER,
+          created_at TEXT NOT NULL,
+          arrives_at TEXT NOT NULL,
+          settled_at TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          kind TEXT NOT NULL,
+          from_venue TEXT NOT NULL,
+          to_venue TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          asset_out TEXT NOT NULL,
+          symbol_out TEXT NOT NULL,
+          amount_out REAL NOT NULL,
+          asset_in TEXT NOT NULL,
+          symbol_in TEXT NOT NULL,
+          decimals_in INTEGER NOT NULL,
+          amount_in REAL NOT NULL,
+          value_usd REAL,
+          costs TEXT NOT NULL,
+          carry TEXT
+        );
+        CREATE INDEX transfers_pending ON transfers (status, arrives_at);
+      `)
   }
 ];
 function memoryV2(db2) {
@@ -37337,7 +37369,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.10.0";
+var CODE_VERSION = "0.11.0";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -37489,6 +37521,11 @@ var budgetStmt = db.prepare(
      used = CASE WHEN window_start + ? <= ? THEN 1 ELSE used + 1 END
    RETURNING used`
 );
+function takeBudget(host, limit, windowMs) {
+  const nowMs = Date.now();
+  const { used } = budgetStmt.get(host, nowMs, windowMs, nowMs, windowMs, nowMs);
+  return used <= limit;
+}
 
 // src/market/binance.ts
 var BASE = "https://api.binance.com/api/v3";
@@ -37560,6 +37597,42 @@ function roundDownToStep(qty, step) {
   const decimals = Math.max(0, Math.round(-Math.log10(step)));
   return Number((Math.floor(qty / step + 1e-9) * step).toFixed(decimals));
 }
+var STATIC_NETWORKS = {
+  USDC: {
+    SOL: { withdrawFee: 0.3, withdrawMin: 3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+    BASE: { withdrawFee: 0.2, withdrawMin: 3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+    BSC: { withdrawFee: 0, withdrawMin: 3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 }
+  },
+  USDT: {
+    SOL: { withdrawFee: 0.3, withdrawMin: 5, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 },
+    BSC: { withdrawFee: 0.01, withdrawMin: 5, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 }
+  },
+  SOL: { SOL: { withdrawFee: 1e-3, withdrawMin: 0.01, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 } },
+  ETH: { BASE: { withdrawFee: 5e-5, withdrawMin: 2e-3, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 } },
+  BNB: { BSC: { withdrawFee: 1e-5, withdrawMin: 5e-4, depositEnable: true, withdrawEnable: true, arrivalMinutes: 1 } }
+};
+async function networkInfo(coin, network) {
+  try {
+    const res = await fetchJson(
+      "https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll",
+      { ttlMs: 60 * 6e4 }
+    );
+    const n3 = res.data.find((c) => c.coin === coin)?.networkList.find((x) => x.network === network);
+    if (n3) {
+      return {
+        withdrawFee: Number(n3.withdrawFee),
+        withdrawMin: Number(n3.withdrawMin),
+        depositEnable: Boolean(n3.depositEnable),
+        withdrawEnable: Boolean(n3.withdrawEnable),
+        arrivalMinutes: Math.max(1, Number(n3.estimatedArrivalTime) || 1),
+        source: "binance"
+      };
+    }
+  } catch {
+  }
+  const s = STATIC_NETWORKS[coin]?.[network];
+  return s ? { ...s, source: "tabla fija" } : void 0;
+}
 
 // src/sim/portfolio.ts
 import { createHash } from "node:crypto";
@@ -37568,7 +37641,8 @@ import { createHash } from "node:crypto";
 var BASE2 = "https://lite-api.jup.ag";
 var SOL_MINT = "So11111111111111111111111111111111111111112";
 var USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-var ALIASES = { SOL: SOL_MINT, USDC: USDC_MINT };
+var USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+var ALIASES = { SOL: SOL_MINT, USDC: USDC_MINT, USDT: USDT_MINT };
 function resolveMint(mintOrAlias) {
   return ALIASES[mintOrAlias.toUpperCase()] ?? mintOrAlias;
 }
@@ -38291,8 +38365,8 @@ async function tokenReport(mint) {
 
 // src/sim/venues/solana.ts
 var TOKEN_ACCOUNT_RENT_SOL = 203928e-8;
-var USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
-var CASH2 = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT]);
+var USDT_MINT2 = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+var CASH2 = /* @__PURE__ */ new Set([USDC_MINT, USDT_MINT2]);
 var DUST3 = 1e-12;
 var SOL = { address: SOL_MINT, symbol: "SOL", decimals: 9 };
 var USDC = { address: USDC_MINT, symbol: "USDC", decimals: 6 };
@@ -38528,9 +38602,9 @@ async function recordTrade(args) {
     });
   }
 }
-async function movePosition(args) {
-  const p = db.prepare("SELECT * FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(args.missionId, args.from.venue, args.from.asset);
-  if (!p) return;
+function detachPosition(args) {
+  const p = db.prepare("SELECT * FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(args.missionId, args.venue, args.asset);
+  if (!p) return null;
   const qty = Math.min(args.qty, p.qty_open);
   const fraction = p.qty_open > 0 ? qty / p.qty_open : 0;
   const costPart = p.cost_open_usd * fraction;
@@ -38540,20 +38614,23 @@ async function movePosition(args) {
     all ? 0 : p.cost_open_usd - costPart,
     all ? "moved" : "open",
     all ? now() : null,
-    all ? `transferida a ${args.to.venue}` : null,
+    all ? `transferida a ${args.toVenue}` : null,
     p.id
   );
-  const received = args.received * (args.qty > 0 ? qty / args.qty : 0);
-  if (received <= 0) return;
-  await openOrAdd({
-    missionId: args.missionId,
-    venue: args.to.venue,
-    asset: args.to.asset,
-    symbol: args.to.symbol,
-    qty: received,
-    costUsd: costPart,
-    inherit: p
-  });
+  return { share: args.qty > 0 ? qty / args.qty : 0, costUsd: costPart, row: p };
+}
+async function attachPosition(args) {
+  const qty = args.received * args.carry.share;
+  if (qty <= 0) return;
+  await openOrAdd({ missionId: args.missionId, venue: args.venue, asset: args.asset, symbol: args.symbol, qty, costUsd: args.carry.costUsd, inherit: args.carry.row });
+}
+function sellFromPosition(args) {
+  reduce(args);
+}
+async function buyIntoPosition(args) {
+  const venue = getVenue(args.venue);
+  const measurable = venue.kind === "chain" && args.asset !== venue.native.address;
+  await openOrAdd({ ...args, features: measurable ? () => venue.entryFeatures(args.asset) : void 0 });
 }
 function listPositions(missionId) {
   const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
@@ -38588,10 +38665,6 @@ function logResearch(missionId, tool2, target) {
 }
 
 // src/sim/portfolio.ts
-var BINANCE_WITHDRAW_FEES = {
-  USDC: config2.binanceUsdcWithdrawFee,
-  SOL: 1e-3
-};
 var DUST4 = 1e-12;
 function getHoldings(missionId) {
   return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST4);
@@ -38831,57 +38904,18 @@ async function binanceMarketOrder(args) {
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
-async function transfer(args) {
-  if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
-  const route = `${args.from}>${args.to}`;
-  if (route !== "solana>binance" && route !== "binance>solana") {
-    throw new Error("Por ahora solo se puede transferir entre tu monedero de Solana y Binance (en los dos sentidos)");
-  }
-  const mint = args.asset === "SOL" ? SOL_MINT : USDC_MINT;
-  const decimals = args.asset === "SOL" ? 9 : 6;
-  const m = args.missionId;
-  let received;
-  let feeText;
-  applyAtomically(() => {
-    if (args.from === "solana") {
-      adjust(m, "solana", mint, args.asset, decimals, -args.amount);
-      adjust(m, "solana", SOL_MINT, "SOL", 9, -config2.solanaTxFeeSol);
-      received = args.amount;
-      adjust(m, "binance", args.asset, args.asset, 8, received);
-      feeText = `${config2.solanaTxFeeSol} SOL (red)`;
-    } else {
-      const withdrawFee = BINANCE_WITHDRAW_FEES[args.asset];
-      if (args.amount <= withdrawFee) throw new Error(`La retirada m\xEDnima debe superar la comisi\xF3n de ${withdrawFee} ${args.asset}`);
-      adjust(m, "binance", args.asset, args.asset, 8, -args.amount);
-      received = args.amount - withdrawFee;
-      adjust(m, "solana", mint, args.asset, decimals, received);
-      feeText = `${withdrawFee} ${args.asset} (retirada Binance)`;
-    }
-  });
-  const result = { asset: args.asset, from: args.from, to: args.to, sent: args.amount, received, fee: feeText };
-  logJournal({
-    missionId: m,
-    sessionId: args.sessionId,
-    kind: "transfer",
-    summary: `Transferencia ${args.amount} ${args.asset} ${result.from} \u2192 ${result.to}`,
-    reasoning: args.reasoning,
-    details: result
-  });
-  const assetAt = (venue) => venue === "binance" ? args.asset : mint;
-  await movePosition({
-    missionId: m,
-    from: { venue: args.from, asset: assetAt(args.from) },
-    to: { venue: args.to, asset: assetAt(args.to), symbol: args.asset },
-    qty: args.amount,
-    received
-  }).catch((err) => console.error(`No se pudo mover la posici\xF3n: ${err.message}`));
-  return result;
-}
 var evmAddress = (missionId) => `0x${createHash("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
 async function valuation(missionId, recordSnapshot = false) {
   const holdings = getHoldings(missionId);
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h) })));
-  const totalUsd = lines.reduce((s, l) => s + l.usd, 0);
+  const pending = db.prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status IN ('pending', 'settling') ORDER BY id").all(missionId);
+  const transit = await Promise.all(
+    pending.map(async (t) => ({
+      ...t,
+      ...await getVenue(t.to_venue).liquidationValue({ venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in })
+    }))
+  );
+  const totalUsd = lines.reduce((s, l) => s + l.usd, 0) + transit.reduce((s, t) => s + t.usd, 0);
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price, benchmark FROM missions WHERE id = ?").get(missionId);
   const initialUsd = mission?.initial_usd ?? config2.initialUsd;
   let benchmarkUsd = initialUsd;
@@ -38913,7 +38947,7 @@ async function valuation(missionId, recordSnapshot = false) {
     initialUsd,
     totalUsd,
     /** false si algún saldo se valoró sin cotización real: el total es orientativo. */
-    reliable: lines.every((l) => l.reliable),
+    reliable: lines.every((l) => l.reliable) && transit.every((t) => t.reliable),
     pnlUsd: totalUsd - initialUsd,
     pnlPct: (totalUsd - initialUsd) / initialUsd * 100,
     benchmarkUsd,
@@ -38926,8 +38960,368 @@ async function valuation(missionId, recordSnapshot = false) {
       amount: l.amount,
       usd: Number(l.usd.toFixed(4)),
       valuedBy: l.method
-    }))
+    })),
+    ...transit.length ? {
+      inTransit: transit.map((t) => ({
+        transferId: t.id,
+        to: t.to_venue,
+        symbol: t.symbol_in,
+        amount: t.amount_in,
+        usd: Number(t.usd.toFixed(4)),
+        arrivesAt: t.arrives_at
+      }))
+    } : {}
   };
+}
+
+// src/sim/transfers.ts
+import { createHash as createHash2 } from "node:crypto";
+
+// src/market/lifi.ts
+var HOST = "li.quest";
+var WINDOW_MS = 2 * 60 * 6e4;
+var BUDGET = Number(process.env.LIFI_BUDGET ?? 70);
+var LIFI_CHAIN = { solana: "SOL", base: "8453", bsc: "56" };
+var LIFI_NATIVE = {
+  solana: "11111111111111111111111111111111",
+  base: "0x0000000000000000000000000000000000000000",
+  bsc: "0x0000000000000000000000000000000000000000"
+};
+var BudgetExhausted = class extends Error {
+};
+async function bridgeQuote(q) {
+  if (!process.env.LIFI_API_KEY && !takeBudget(HOST, BUDGET, WINDOW_MS)) {
+    throw new BudgetExhausted("Se ha agotado el cupo gratuito de Li.Fi (75 consultas cada 2 horas)");
+  }
+  const url2 = `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}`;
+  const res = await fetchJson(url2, {
+    ttlMs: 3e4,
+    timeoutMs: 3e4,
+    headers: process.env.LIFI_API_KEY ? { "x-lifi-api-key": process.env.LIFI_API_KEY } : void 0
+  }).catch((err) => {
+    throw new Error(`Li.Fi no encuentra ruta: ${err.message.replace(/^HTTP \d+ en \S+: /, "").slice(0, 200)}`);
+  });
+  const e = res.estimate;
+  if (!e) throw new Error(`Li.Fi no encuentra ruta: ${res.message ?? "respuesta sin estimaci\xF3n"}`);
+  return {
+    tool: String(res.tool ?? res.toolDetails?.name ?? "li.fi"),
+    toAmount: BigInt(e.toAmount),
+    toAmountMin: BigInt(e.toAmountMin ?? e.toAmount),
+    durationSeconds: Number(e.executionDuration ?? 60),
+    gas: (e.gasCosts ?? []).map((g) => ({ amount: BigInt(g.amount), decimals: Number(g.token?.decimals ?? 18), symbol: String(g.token?.symbol ?? "?"), usd: Number(g.amountUSD ?? 0) })),
+    fees: (e.feeCosts ?? []).map((f) => ({ name: String(f.name), usd: Number(f.amountUSD ?? 0) })),
+    fromUsd: e.fromAmountUSD ? Number(e.fromAmountUSD) : void 0,
+    toUsd: e.toAmountUSD ? Number(e.toAmountUSD) : void 0
+  };
+}
+
+// src/sim/transfers.ts
+var DUST5 = 1e-12;
+var TRANSFER_ASSETS = ["USDC", "USDT", "SOL", "ETH", "BNB"];
+var NETWORKS_FOR = {
+  USDC: ["solana", "base", "bsc"],
+  USDT: ["solana", "bsc"],
+  SOL: ["solana"],
+  ETH: ["base"],
+  BNB: ["bsc"]
+};
+var NETWORK = { solana: "SOL", base: "BASE", bsc: "BSC" };
+var DEPOSIT_MINUTES = { solana: 1, base: 2, bsc: 1 };
+var EVM_SEND_GAS = { token: 65000n, native: 21000n };
+var hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+var inMinutes = (m) => new Date(Date.now() + m * 6e4).toISOString();
+async function sendCost(chain, token2) {
+  if (chain === "solana") return config2.solanaTxFeeSol;
+  const gas = token2.address === NATIVE ? EVM_SEND_GAS.native : EVM_SEND_GAS.token;
+  return Number(gas * await gasPriceWei(chain)) / 1e18;
+}
+function insertTransfer(t) {
+  return Number(
+    db.prepare(
+      `INSERT INTO transfers (mission_id, session_id, created_at, arrives_at, kind, from_venue, to_venue, provider, asset_out, symbol_out,
+           amount_out, asset_in, symbol_in, decimals_in, amount_in, value_usd, costs, carry)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      t.mission_id,
+      t.sessionId,
+      now(),
+      t.arrives_at,
+      t.kind,
+      t.from_venue,
+      t.to_venue,
+      t.provider,
+      t.asset_out,
+      t.symbol_out,
+      t.amount_out,
+      t.asset_in,
+      t.symbol_in,
+      t.decimals_in,
+      t.amount_in,
+      t.value_usd,
+      JSON.stringify(t.costs),
+      t.carry
+    ).lastInsertRowid
+  );
+}
+async function cexTransfer(args) {
+  const m = args.missionId;
+  if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
+  if (args.from === args.to) throw new Error("El origen y el destino son el mismo");
+  if (args.from !== "binance" && args.to !== "binance") {
+    throw new Error("Entre dos cadenas no se transfiere directamente: usa simulate_bridge (un puente), o pasa por Binance");
+  }
+  const chainId = args.from === "binance" ? args.to : args.from;
+  const chain = getChain(chainId);
+  if (!NETWORKS_FOR[args.asset].includes(chainId)) {
+    const nets = NETWORKS_FOR[args.asset].map((c) => getChain(c).label).join(", ");
+    throw new Error(`Binance no mueve ${args.asset} por la red de ${chain.label}. Redes disponibles para ${args.asset}: ${nets}`);
+  }
+  const token2 = await chain.resolveToken(args.asset);
+  const info = await networkInfo(args.asset, NETWORK[chainId]);
+  if (!info) throw new Error(`Binance no tiene ${args.asset} en la red ${NETWORK[chainId]}`);
+  const costs = [];
+  let arrivesAt;
+  let received;
+  if (args.to === "binance") {
+    if (!info.depositEnable) throw new Error(`Binance tiene suspendidos los dep\xF3sitos de ${args.asset} por ${NETWORK[chainId]}`);
+    const fee = await sendCost(chainId, token2);
+    const have = balance(m, chainId, token2.address);
+    if (args.amount > have + DUST5) throw new Error(`Saldo insuficiente: tienes ${have} ${args.asset} en ${chain.label}`);
+    const deltas = [
+      { asset: token2.address, symbol: token2.symbol, decimals: token2.decimals, amount: -args.amount },
+      { asset: chain.native.address, symbol: chain.native.symbol, decimals: chain.native.decimals, amount: -fee }
+    ];
+    const nativeNeeded = fee + (token2.address === chain.native.address ? args.amount : 0);
+    if (balance(m, chainId, chain.native.address) + DUST5 < nativeNeeded) {
+      throw new Error(`No tienes ${chain.native.symbol} suficiente para pagar la red de ${chain.label} (${fee.toPrecision(3)} ${chain.native.symbol})`);
+    }
+    applyDeltas(m, chainId, deltas);
+    costs.push({ kind: "network_fee", amount: fee, symbol: chain.native.symbol });
+    received = args.amount;
+    arrivesAt = inMinutes(DEPOSIT_MINUTES[chainId]);
+  } else {
+    if (!info.withdrawEnable) throw new Error(`Binance tiene suspendidas las retiradas de ${args.asset} por ${NETWORK[chainId]}`);
+    if (args.amount < info.withdrawMin) throw new Error(`La retirada m\xEDnima de ${args.asset} por ${NETWORK[chainId]} es ${info.withdrawMin}`);
+    if (args.amount <= info.withdrawFee) throw new Error(`La retirada debe superar la comisi\xF3n de ${info.withdrawFee} ${args.asset}`);
+    const have = balance(m, "binance", args.asset);
+    if (args.amount > have + DUST5) throw new Error(`Saldo insuficiente: tienes ${have} ${args.asset} en Binance`);
+    applyDeltas(m, "binance", [{ asset: args.asset, symbol: args.asset, decimals: 8, amount: -args.amount }]);
+    costs.push({ kind: "withdraw_fee", amount: info.withdrawFee, symbol: args.asset });
+    received = args.amount - info.withdrawFee;
+    arrivesAt = inMinutes(1 + info.arrivalMinutes);
+  }
+  const assetOut = args.from === "binance" ? args.asset : token2.address;
+  const assetIn = args.to === "binance" ? args.asset : token2.address;
+  const carry = detachPosition({ missionId: m, venue: args.from, asset: assetOut, qty: args.amount, toVenue: args.to });
+  const id = insertTransfer({
+    mission_id: m,
+    sessionId: args.sessionId,
+    kind: args.to === "binance" ? "cex_deposit" : "cex_withdraw",
+    from_venue: args.from,
+    to_venue: args.to,
+    provider: `Binance (red ${NETWORK[chainId]}${info.source === "tabla fija" ? ", comisiones de la tabla fija" : ""})`,
+    asset_out: assetOut,
+    symbol_out: args.asset,
+    amount_out: args.amount,
+    asset_in: assetIn,
+    symbol_in: args.to === "binance" ? args.asset : token2.symbol,
+    decimals_in: args.to === "binance" ? 8 : token2.decimals,
+    amount_in: received,
+    value_usd: null,
+    arrives_at: arrivesAt,
+    costs,
+    carry: carry ? JSON.stringify({ move: carry }) : null
+  });
+  const result = {
+    transferId: id,
+    asset: args.asset,
+    from: args.from,
+    to: args.to,
+    network: NETWORK[chainId],
+    sent: args.amount,
+    willReceive: received,
+    costs: costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`),
+    arrivesAt,
+    note: `Llega hacia las ${hhmm(arrivesAt)}. Mientras tanto aparece en tu cartera como "en tr\xE1nsito".`
+  };
+  logJournal({
+    missionId: m,
+    sessionId: args.sessionId,
+    kind: "transfer",
+    summary: `Transferencia ${args.amount} ${args.asset} ${getVenue(args.from).label} \u2192 ${getVenue(args.to).label} (llega hacia las ${hhmm(arrivesAt)})`,
+    reasoning: args.reasoning,
+    details: result
+  });
+  return result;
+}
+function solanaAddress(missionId) {
+  const bytes = createHash2("sha256").update(`cryptoagent-solana-${missionId}`).digest();
+  const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let n3 = BigInt(`0x${bytes.toString("hex")}`);
+  let out = "";
+  while (n3 > 0n) {
+    out = ALPHABET[Number(n3 % 58n)] + out;
+    n3 /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = "1" + out;
+  }
+  return out;
+}
+var lifiToken = (chain, t) => t.address === getChain(chain).native.address ? LIFI_NATIVE[chain] : t.address;
+var STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solana: 5e-5, base: 5e-6, bsc: 3e-5 } };
+async function staticEstimate(from, to, tin, tout, amount) {
+  const [pin, pout] = await Promise.all([getChain(from).priceUsd([tin.address]), getChain(to).priceUsd([tout.address])]);
+  const priceIn = pin[tin.address];
+  const priceOut = pout[tout.address];
+  if (!priceIn || !priceOut) throw new Error(`Sin precio para estimar el puente de ${tin.symbol} a ${tout.symbol}`);
+  const fromUsd = amount * priceIn;
+  const toUsd = fromUsd * (1 - STATIC_BRIDGE.feePct / 100) - STATIC_BRIDGE.fixedUsd;
+  if (toUsd <= 0) throw new Error("La cantidad no cubre el coste del puente");
+  return {
+    provider: "estimaci\xF3n (sin Li.Fi)",
+    amountOut: toUsd / priceOut,
+    gasNative: STATIC_BRIDGE.gas[from],
+    seconds: STATIC_BRIDGE.seconds,
+    fees: [`comisi\xF3n estimada: ${STATIC_BRIDGE.feePct} % + ${STATIC_BRIDGE.fixedUsd} $`],
+    fromUsd,
+    toUsd,
+    estimated: true
+  };
+}
+async function liveEstimate(missionId, from, to, tin, tout, amount, slippageBps) {
+  const address = (c) => c === "solana" ? solanaAddress(missionId) : evmAddress(missionId);
+  const q = await bridgeQuote({
+    fromChain: from,
+    toChain: to,
+    fromToken: lifiToken(from, tin),
+    toToken: lifiToken(to, tout),
+    fromAmount: toBaseUnits(amount, tin.decimals),
+    fromAddress: address(from),
+    toAddress: address(to),
+    slippage: slippageBps / 1e4
+  });
+  const native = getChain(from).native;
+  return {
+    provider: `Li.Fi (${q.tool})`,
+    amountOut: fromBaseUnits(q.toAmount, tout.decimals),
+    gasNative: q.gas.filter((g) => g.symbol === native.symbol || g.symbol === `W${native.symbol}`).reduce((s, g) => s + fromBaseUnits(g.amount, g.decimals), 0),
+    seconds: q.durationSeconds,
+    fees: q.fees.map((f) => `${f.name}: ${f.usd} $ (incluida en lo que recibes)`),
+    fromUsd: q.fromUsd,
+    toUsd: q.toUsd,
+    estimated: false
+  };
+}
+async function resolveBridge(fromChain, toChain, tokenIn, tokenOut) {
+  if (fromChain === toChain) throw new Error("Un puente une dos cadenas distintas: dentro de la misma cadena usa simulate_swap");
+  const [tin, tout] = await Promise.all([getChain(fromChain).resolveToken(tokenIn), getChain(toChain).resolveToken(tokenOut)]);
+  return { tin, tout };
+}
+async function quoteBridge(a) {
+  const { tin, tout } = await resolveBridge(a.fromChain, a.toChain, a.tokenIn, a.tokenOut);
+  const e = await staticEstimate(a.fromChain, a.toChain, tin, tout, a.amount);
+  return {
+    from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
+    to: `~${Number(e.amountOut.toPrecision(6))} ${tout.symbol} en ${getChain(a.toChain).label}`,
+    gas: `~${e.gasNative} ${getChain(a.fromChain).native.symbol}`,
+    duration: "unos minutos",
+    note: "Estimaci\xF3n orientativa (comisi\xF3n t\xEDpica del 0,25 % + 0,05 $). El coste, el gas y la duraci\xF3n reales los da Li.Fi al ejecutar el puente con simulate_bridge."
+  };
+}
+async function bridge(a) {
+  const m = a.missionId;
+  if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
+  const src = getChain(a.fromChain);
+  const dst = getChain(a.toChain);
+  const { tin, tout } = await resolveBridge(a.fromChain, a.toChain, a.tokenIn, a.tokenOut);
+  const have = balance(m, src.id, tin.address);
+  if (a.amount > have + DUST5) throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}`);
+  let e;
+  try {
+    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps);
+  } catch (err) {
+    if (!(err instanceof BudgetExhausted)) throw err;
+    e = await staticEstimate(src.id, dst.id, tin, tout, a.amount);
+  }
+  const nativeNeeded = e.gasNative + (tin.address === src.native.address ? a.amount : 0);
+  if (balance(m, src.id, src.native.address) + DUST5 < nativeNeeded) {
+    throw new Error(`No tienes ${src.native.symbol} suficiente para el gas del puente en ${src.label} (${e.gasNative.toPrecision(3)} ${src.native.symbol})`);
+  }
+  applyDeltas(m, src.id, [
+    { asset: tin.address, symbol: tin.symbol, decimals: tin.decimals, amount: -a.amount },
+    { asset: src.native.address, symbol: src.native.symbol, decimals: src.native.decimals, amount: -e.gasNative }
+  ]);
+  const valueOut = e.fromUsd ?? e.toUsd ?? 0;
+  if (!src.isCash(tin.address)) {
+    sellFromPosition({ missionId: m, venue: src.id, asset: tin.address, qty: a.amount, proceedsUsd: e.toUsd ?? valueOut, meta: a.meta });
+  }
+  const opensPosition = !dst.isCash(tout.address);
+  const arrivesAt = new Date(Date.now() + Math.max(30, e.seconds) * 1e3).toISOString();
+  const costs = [`gas: ${Number(e.gasNative.toPrecision(4))} ${src.native.symbol}`, ...e.fees];
+  const id = insertTransfer({
+    mission_id: m,
+    sessionId: a.sessionId,
+    kind: "bridge",
+    from_venue: src.id,
+    to_venue: dst.id,
+    provider: e.provider,
+    asset_out: tin.address,
+    symbol_out: tin.symbol,
+    amount_out: a.amount,
+    asset_in: tout.address,
+    symbol_in: tout.symbol,
+    decimals_in: tout.decimals,
+    amount_in: e.amountOut,
+    value_usd: e.toUsd ?? null,
+    arrives_at: arrivesAt,
+    costs,
+    carry: opensPosition ? JSON.stringify({ buyCostUsd: valueOut, meta: a.meta }) : null
+  });
+  const result = {
+    transferId: id,
+    bridge: e.provider,
+    sent: `${a.amount} ${tin.symbol} desde ${src.label}`,
+    willReceive: `${e.amountOut} ${tout.symbol} en ${dst.label}`,
+    costs,
+    arrivesAt,
+    ...e.estimated ? { warning: "Se ha agotado el cupo gratuito de Li.Fi: el coste y la duraci\xF3n son una estimaci\xF3n." } : {},
+    note: `Llega hacia las ${hhmm(arrivesAt)}. Mientras tanto aparece en tu cartera como "en tr\xE1nsito".`
+  };
+  logJournal({
+    missionId: m,
+    sessionId: a.sessionId,
+    kind: "transfer",
+    summary: `Puente ${a.amount} ${tin.symbol} ${src.label} \u2192 ${Number(e.amountOut.toPrecision(6))} ${tout.symbol} ${dst.label} (llega hacia las ${hhmm(arrivesAt)})`,
+    reasoning: a.reasoning,
+    details: result
+  });
+  return result;
+}
+async function settleTransfers(opts = {}) {
+  const rows = opts.force && opts.missionId !== void 0 ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? ORDER BY id").all(opts.missionId) : opts.missionId !== void 0 ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? AND arrives_at <= ? ORDER BY id").all(opts.missionId, now()) : db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND arrives_at <= ? ORDER BY id").all(now());
+  const log = [];
+  for (const t of rows) {
+    if (!db.prepare("UPDATE transfers SET status = 'settling' WHERE id = ? AND status = 'pending'").run(t.id).changes) continue;
+    try {
+      applyDeltas(t.mission_id, t.to_venue, [{ asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in }]);
+      const carry = t.carry ? JSON.parse(t.carry) : null;
+      if (carry?.move) {
+        await attachPosition({ missionId: t.mission_id, venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, received: t.amount_in, carry: carry.move });
+      } else if (carry?.buyCostUsd !== void 0) {
+        await buyIntoPosition({ missionId: t.mission_id, venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, qty: t.amount_in, costUsd: carry.buyCostUsd, meta: carry.meta });
+      }
+      db.prepare("UPDATE transfers SET status = 'settled', settled_at = ? WHERE id = ?").run(now(), t.id);
+      const summary = `Llegan ${Number(t.amount_in.toPrecision(8))} ${t.symbol_in} a ${getVenue(t.to_venue).label} (transferencia #${t.id})`;
+      logJournal({ missionId: t.mission_id, sessionId: null, kind: "transfer_arrived", summary });
+      log.push(summary);
+    } catch (err) {
+      db.prepare("UPDATE transfers SET status = 'pending' WHERE id = ?").run(t.id);
+      log.push(`No se pudo abonar la transferencia #${t.id}: ${err.message}`);
+    }
+  }
+  return log;
 }
 
 // src/sim/orders.ts
@@ -38991,7 +39385,7 @@ function close(id, status, result) {
   db.prepare("UPDATE orders SET status = ?, closed_at = ?, result = ? WHERE id = ?").run(status, now(), JSON.stringify(result), id);
 }
 async function checkOrders() {
-  const log = [];
+  const log = await settleTransfers().catch((err) => [`Error abonando transferencias: ${err.message}`]);
   const expired = db.prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?").all(now());
   for (const { id, mission_id } of expired) {
     if (db.prepare("UPDATE orders SET status = 'expired', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes) {
@@ -39148,6 +39542,7 @@ async function stopMission(closePositions, missionId) {
     throw new Error("La misi\xF3n se est\xE1 cerrando en este momento");
   }
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  await settleTransfers({ missionId: mission.id, force: true });
   const problems = closePositions ? await liquidateAll(mission.id, null, `Cierre manual: el usuario detuvo la misi\xF3n #${mission.id}`) : [];
   const final = await valuation(mission.id, true);
   db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ?, final_usd = ? WHERE id = ?").run(now(), final.totalUsd, mission.id);
@@ -39170,6 +39565,7 @@ async function checkOne(mission) {
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
   const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
+  await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
   const final = await valuation(mission.id, true);
   if (reached && !expired && (final.totalUsd < mission.target_usd || problems.length)) {
@@ -39887,15 +40283,58 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "simulate_transfer",
     kind: "trade",
     journaled: true,
-    description: "Mueve USDC o SOL entre tu monedero de Solana y tu cuenta de Binance, en simulaci\xF3n. De Solana a Binance se paga la fee de red; de Binance a Solana, la comisi\xF3n de retirada de Binance.",
+    description: "Deposita en Binance desde uno de tus monederos, o retira de Binance a uno de ellos, por la red de esa cadena. Redes: USDC por Solana, Base o BNB Chain; USDT por Solana o BNB Chain; SOL por Solana; ETH por Base; BNB por BNB Chain. Al depositar pagas la red de la cadena (en su nativo); al retirar, la comisi\xF3n de retirada de Binance (y hay un m\xEDnimo). El dinero sale al momento y llega unos minutos despu\xE9s (mientras tanto aparece en tu cartera como en tr\xE1nsito). Entre dos cadenas usa simulate_bridge.",
     schema: external_exports.object({
-      asset: external_exports.enum(["USDC", "SOL"]),
+      asset: external_exports.enum(TRANSFER_ASSETS),
       from: external_exports.enum(VENUES),
       to: external_exports.enum(VENUES),
       amount: external_exports.number().positive(),
       reasoning
     }),
-    run: async (i, ctx) => json2(await transfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i }))
+    run: async (i, ctx) => json2(await cexTransfer({ missionId: mid(ctx), sessionId: ctx.sessionId, ...i }))
+  }),
+  tool({
+    name: "quote_bridge",
+    kind: "research",
+    researchTarget: (i) => i.token_out,
+    description: "Estimaci\xF3n orientativa de un puente entre dos cadenas (Solana, Base, BNB Chain): cu\xE1nto recibir\xEDas y el gas aproximado. No gasta nada. El coste, el gas y la duraci\xF3n reales los da el agregador de puentes al ejecutarlo con simulate_bridge.",
+    schema: external_exports.object({
+      from_chain: chainParam,
+      to_chain: chainParam,
+      token_in: external_exports.string().describe(`Token que env\xEDas (direcci\xF3n o alias: ${TOKEN_ALIASES})`),
+      token_out: external_exports.string().describe("Token que quieres recibir en la cadena de destino (direcci\xF3n o alias)"),
+      amount: external_exports.number().positive()
+    }),
+    run: async (i) => json2(await quoteBridge({ fromChain: i.from_chain, toChain: i.to_chain, tokenIn: i.token_in, tokenOut: i.token_out, amount: i.amount }))
+  }),
+  tool({
+    name: "simulate_bridge",
+    kind: "trade",
+    journaled: true,
+    description: "Cruza un puente entre dos cadenas (Solana, Base, BNB Chain) con Li.Fi, que elige el puente y la ruta. Puedes cambiar de token por el camino (p. ej. USDC de Base a BNB en BNB Chain). Pagas el gas en la cadena de origen (en su nativo) y la comisi\xF3n del puente va incluida en lo que recibes. El dinero sale al momento y llega cuando indique el puente (segundos o minutos).",
+    schema: external_exports.object({
+      from_chain: chainParam,
+      to_chain: chainParam,
+      token_in: external_exports.string().describe(`Token que env\xEDas (direcci\xF3n o alias: ${TOKEN_ALIASES})`),
+      token_out: external_exports.string().describe("Token que quieres recibir en la cadena de destino (direcci\xF3n o alias)"),
+      amount: external_exports.number().positive(),
+      slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
+      thesis
+    }),
+    run: async (i, ctx) => json2(
+      await bridge({
+        missionId: mid(ctx),
+        sessionId: ctx.sessionId,
+        fromChain: i.from_chain,
+        toChain: i.to_chain,
+        tokenIn: i.token_in,
+        tokenOut: i.token_out,
+        amount: i.amount,
+        slippageBps: i.slippage_bps,
+        reasoning: formatThesis(i.thesis),
+        meta: tradeMeta(i.thesis)
+      })
+    )
   }),
   tool({
     name: "place_swap_trigger_order",
@@ -40314,6 +40753,7 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
     const unknown2 = unknownBeliefs(beliefs);
     if (unknown2.length) return fail(`Las creencias #${unknown2.join(", #")} no existen o ya no est\xE1n activas. Activas: ${activeBeliefIds().map((id) => `#${id}`).join(", ") || "ninguna"}`);
   }
+  if (trading || def.deliversNews) await settleTransfers({ missionId: ctx.missionId ?? void 0 }).catch(() => []);
   if (def.researchTarget) {
     logResearch(ctx.missionId, name, def.researchTarget(parsed.data)?.trim() || void 0);
   }
@@ -40673,7 +41113,7 @@ async function endSession(sessionId, missionId, finalText, tokens) {
 // src/sim/status.ts
 var usd = (n3) => `${n3.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
 var pct = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
-var hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+var hhmm2 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
@@ -40717,16 +41157,16 @@ async function statusReport(missionId) {
     lines.push("", "\xDAltimos movimientos:");
     for (const j of recent) {
       const why = j.reasoning?.match(/^Por qué: (.*)$/m)?.[1];
-      lines.push(`- ${hhmm(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
+      lines.push(`- ${hhmm2(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
     }
   }
   const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2").all(m.id);
   if (notes.length) {
     lines.push("", "\xDAltima nota del agente:");
-    for (const n3 of notes) lines.push(`- ${hhmm(n3.ts)} ${n3.title.slice(0, 220)}`);
+    for (const n3 of notes) lines.push(`- ${hhmm2(n3.ts)} ${n3.title.slice(0, 220)}`);
   }
   const review = db.prepare("SELECT ts, title, body FROM activity WHERE kind = 'review' AND mission_id = ? ORDER BY id DESC LIMIT 1").get(m.id);
-  if (review) lines.push("", `Revisor (${hhmm(review.ts)}): ${review.title}${review.body ? ` \xB7 ${review.body.slice(0, 200)}` : ""}`);
+  if (review) lines.push("", `Revisor (${hhmm2(review.ts)}): ${review.title}${review.body ? ` \xB7 ${review.body.slice(0, 200)}` : ""}`);
   const requests = listCapabilityRequests("open");
   if (requests.length) {
     lines.push("", `El agente pide (${requests.length}, rev\xEDsalas con /cryptoagent:peticiones):`);

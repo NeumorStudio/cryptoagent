@@ -50,7 +50,13 @@ await step("cotizar USDC → BRETT (Base)", async () => console.log("   ", JSON.
 await step("comprar BRETT (Base)", async () => console.log("   ", JSON.stringify(await sim.swap({ ...base, missionId: m, chain: "base", input: "USDC", output: BRETT, amount: 20, slippageBps: 100 }))));
 await step("vender todo el BRETT (Base)", async () => console.log("   ", JSON.stringify(await sim.swap({ ...base, missionId: m, chain: "base", input: BRETT, output: "USDC", sellAll: true, slippageBps: 100 }))));
 await step("comprar CAKE (BNB Chain)", () => sim.swap({ ...base, missionId: m, chain: "bsc", input: "USDT", output: CAKE, amount: 20, slippageBps: 100 }));
-await step("transferir 20 USDC a Binance", () => sim.transfer({ ...base, missionId: m, asset: "USDC", from: "solana", to: "binance", amount: 20 }));
+const transfers = await import("../src/sim/transfers.js");
+await step("transferir 20 USDC a Binance", async () => console.log("   ", JSON.stringify(await transfers.cexTransfer({ ...base, missionId: m, asset: "USDC", from: "solana", to: "binance", amount: 20 }))));
+await step("abonar la transferencia (sin esperar)", async () => console.log("   ", (await transfers.settleTransfers({ missionId: m, force: true })).join(" · ")));
+await step("cotizar puente USDC Base → BNB Chain", async () => console.log("   ", JSON.stringify(await transfers.quoteBridge({ fromChain: "base", toChain: "bsc", tokenIn: "USDC", tokenOut: "USDT", amount: 10 }))));
+await step("puente 10 USDC Base → USDT BNB Chain (Li.Fi)", async () => console.log("   ", JSON.stringify(await transfers.bridge({ ...base, missionId: m, fromChain: "base", toChain: "bsc", tokenIn: "USDC", tokenOut: "USDT", amount: 10, slippageBps: 50 }))));
+await step("puente 10 USDC Solana → ETH Base (Li.Fi)", async () => console.log("   ", JSON.stringify(await transfers.bridge({ ...base, missionId: m, fromChain: "solana", toChain: "base", tokenIn: "USDC", tokenOut: "ETH", amount: 10, slippageBps: 50 }))));
+await step("abonar los puentes (sin esperar)", async () => console.log("   ", (await transfers.settleTransfers({ missionId: m, force: true })).join(" · ")));
 await step("comprar SOL en Binance", () => sim.binanceMarketOrder({ ...base, missionId: m, symbol: "SOLUSDC", side: "BUY", amount: 15 }));
 const v = await step("valorar la cartera", () => sim.valuation(m));
 if (v) console.log(`    ${v.totalUsd.toFixed(2)} USD (${v.pnlPct.toFixed(2)} %) · fiable: ${v.reliable}`);

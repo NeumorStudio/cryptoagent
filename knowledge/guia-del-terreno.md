@@ -42,6 +42,16 @@ Mover dinero entre sitios (el dinero sale al momento y llega después; mientras 
   comisión del puente va descontada de lo que recibes (suele ser de céntimos). Puedes cambiar de token por el
   camino. Llega en segundos o minutos. `quote_bridge` da una estimación sin gastar nada.
 
+**Misiones reales** (`mission_status` dice `mode: REAL`): la cartera es la de verdad de la IA, en Solana, Base y
+BNB Chain. Solo hay swaps, con `execute_swap`: Jupiter en Solana y KyberSwap en Base y BNB Chain. No hay Binance,
+transferencias ni puentes.
+- Cada transacción paga la red real, también si revierte. El slippage se aplica en la cadena.
+- En Base y BNB Chain, la primera venta de un token necesita un approve, que es otra transacción con su gas.
+- Siempre se reserva algo del nativo para el gas: 0,01 SOL, 0,0003 ETH o 0,002 BNB.
+- El firmante (un proceso aparte que tiene la clave) valida cada transacción y aplica los límites de la misión. En
+  aprobación manual, espera hasta ~90 s a que el usuario la apruebe.
+- Al terminar, los tokens se venden a estables y el nativo se queda.
+
 ## 2. Cómo se simula (y qué no se simula)
 
 - El precio de ejecución es la cotización de Jupiter o el order book de Binance **en el momento de la llamada**.

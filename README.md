@@ -94,7 +94,16 @@ O activa la actualización automática de este marketplace en el gestor de plugi
 - **Cómo se guarda la clave.** La página la sirve el *firmante*, un proceso aparte que escucha solo en `127.0.0.1` y es el único que descifra la clave. La frase se guarda cifrada en `~/.cryptoagent/live/wallet.enc` con tu contraseña.
 - **Qué ve el modelo.** La frase de recuperación se muestra una sola vez en esa página; el modelo nunca la ve. No la pegues nunca en un chat.
 - **Verla en otras carteras.** Puedes importar la frase en MetaMask (Base y BNB Chain) y en Phantom (Solana) para ver la cartera.
-- **Qué hace de momento.** Es solo de lectura: muestra direcciones y saldos. Operar con dinero real (con tu aprobación por operación o en autónomo con límites) llega en las próximas versiones.
+- **Misiones reales.** `/cryptoagent:trading` pregunta primero el modo. En **real**, el agente opera con el saldo de esa cartera, solo con swaps (Jupiter en Solana, KyberSwap en Base y BNB Chain), y tú eliges:
+  - **aprobación**: apruebas cada operación en la página de la cartera, o autónomo;
+  - **límites**: máximo por operación y pérdida máxima. Por debajo de la pérdida máxima, solo puede vender a estables.
+- **Qué comprueba el firmante antes de firmar.** Cada transacción:
+  - solo puede ir a Jupiter o al router de KyberSwap, y siempre de vuelta a la propia cartera;
+  - los approves son por la cantidad exacta;
+  - se simula antes de enviarla.
+
+  No existe ninguna forma de enviar fondos a otra dirección. El botón **Parar todo** de la página lo bloquea al instante.
+- **Qué falta todavía.** Los puentes entre cadenas con dinero real llegarán en una próxima versión.
 
 ## Qué se simula y cómo
 

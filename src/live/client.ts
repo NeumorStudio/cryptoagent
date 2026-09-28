@@ -23,11 +23,11 @@ function readInfo(): SignerInfo | null {
 
 export const walletUrl = (info: SignerInfo) => `http://127.0.0.1:${info.port}/wallet`;
 
-async function api<T>(info: SignerInfo, path: string, init: RequestInit = {}): Promise<T> {
+async function api<T>(info: SignerInfo, path: string, init: RequestInit = {}, timeoutMs = 5_000): Promise<T> {
   const res = await fetch(`http://127.0.0.1:${info.port}${path}`, {
     ...init,
     headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
-    signal: AbortSignal.timeout(init.signal ? 120_000 : 5_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const body = (await res.json()) as T & { error?: string };
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -43,6 +43,34 @@ export async function signerStatus(): Promise<{ info: SignerInfo; status: Signer
   } catch {
     return null;
   }
+}
+
+async function runningSigner() {
+  const s = await signerStatus();
+  if (!s) throw new Error("El firmante de la cartera no está en marcha: pide al usuario que la abra y desbloquee con /cryptoagent:cartera");
+  return s.info;
+}
+
+/**
+ * Pide permiso para una operación. En modo manual espera (hasta ~90 s) a que el usuario la apruebe en
+ * la página de la cartera; en autónomo, solo comprueba los límites. Devuelve un ticket para firmar.
+ */
+export async function requestIntent(intent: { missionId: number; chain: string; side: "buy" | "sell"; usd: number; summary: string }): Promise<string> {
+  const info = await runningSigner();
+  const r = await api<{ ticket: string }>(info, "/api/intent", { method: "POST", body: JSON.stringify(intent) }, 100_000);
+  return r.ticket;
+}
+
+export interface SignResult {
+  hash: string;
+  ok: boolean;
+  error?: string;
+}
+
+/** Firma y envía una transacción ya aprobada (el firmante la valida con su política y la simula antes). */
+export async function signTx(body: { ticket: string; chain: string; kind: "swap" | "approve"; usd: number; solanaTx?: string; evmTx?: { chainId: number; to: string; data: string; value: string } }): Promise<SignResult> {
+  const info = await runningSigner();
+  return api<SignResult>(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 180_000);
 }
 
 /** Arranca el firmante como proceso independiente (sobrevive a esta sesión) si no está ya en marcha. */

@@ -6,7 +6,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard } from "./dashboard/server.js";
-import { checkMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission } from "./sim/mission.js";
+import { checkMission, createLiveMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission } from "./sim/mission.js";
+import { liveWalletSnapshot } from "./live/sync.js";
 import { config } from "./config.js";
 import { db, supersededBy } from "./db.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
@@ -93,12 +94,19 @@ server.registerTool(
   "create_mission",
   {
     description:
-      "[Solo para el usuario, no para el agente trader] Crea una misión nueva: reinicia la cartera simulada con el capital " +
-      "indicado y fija el objetivo y el plazo en tiempo real. Si ya hay una misión activa, falla salvo que replace = true.",
+      "[Solo para el usuario, no para el agente trader] Crea una misión nueva. Si ya hay una misión activa, falla salvo que replace = true. " +
+      "mode 'sim' (por defecto): reinicia la cartera simulada con capital_usd y fija target_usd. " +
+      "mode 'live': dinero REAL de la cartera de la IA (debe existir y estar desbloqueada); el capital es lo que vale la cartera ahora " +
+      "y el objetivo se da con target_pct; hay que indicar approval, max_trade_usd y max_loss_pct.",
     inputSchema: {
-      capital_usd: z.number().positive(),
-      target_usd: z.number().positive(),
+      mode: z.enum(["sim", "live"]).default("sim"),
+      capital_usd: z.number().positive().optional().describe("Solo sim: capital ficticio"),
+      target_usd: z.number().positive().optional().describe("Solo sim: objetivo en USD"),
+      target_pct: z.number().positive().optional().describe("Objetivo como % de subida (obligatorio en live; en sim sustituye a target_usd)"),
       duration_minutes: z.number().positive(),
+      approval: z.enum(["manual", "auto"]).optional().describe("Solo live: manual = el usuario aprueba cada operación; auto = dentro de los límites"),
+      max_trade_usd: z.number().positive().optional().describe("Solo live: máximo en USD por operación"),
+      max_loss_pct: z.number().positive().max(100).optional().describe("Solo live: pérdida máxima de la misión en %; por debajo, solo se puede vender a estables"),
       replace: z.boolean().default(false).describe("Cancelar la misión activa si la hay"),
       instructions: z.string().optional().describe("Instrucciones del usuario para esta misión. Vacío = modo libre"),
       allocation: z
@@ -107,7 +115,7 @@ server.registerTool(
         .describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`),
     },
   },
-  async ({ capital_usd, target_usd, duration_minutes, replace, instructions, allocation }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation }) => {
     const active = getActiveMission();
     if (active && !replace) {
       return {
@@ -116,7 +124,27 @@ server.registerTool(
       };
     }
     try {
-      const mission = await createMission(capital_usd, target_usd, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
+      if (mode === "live") {
+        if (!target_pct || !approval || !max_trade_usd || !max_loss_pct) throw new Error("En una misión real hacen falta target_pct, approval, max_trade_usd y max_loss_pct");
+        const running = await signerStatus();
+        if (!running?.status.unlocked || running.status.stopped) throw new Error("La cartera real no está desbloqueada: usa start_wallet y pide al usuario que la desbloquee en su página");
+        const snap = await liveWalletSnapshot();
+        const mission = createLiveMission({
+          holdings: snap.holdings,
+          totalUsd: snap.totalUsd,
+          byChain: snap.byChain,
+          targetPct: target_pct,
+          durationMinutes: duration_minutes,
+          instructions,
+          approval,
+          limits: { maxTradeUsd: max_trade_usd, maxLossPct: max_loss_pct },
+        });
+        return text(JSON.stringify(mission));
+      }
+      if (!capital_usd) throw new Error("Falta capital_usd");
+      const target = target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined);
+      if (!target) throw new Error("Falta target_usd o target_pct");
+      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
       return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };

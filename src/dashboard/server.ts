@@ -56,6 +56,7 @@ async function refreshWallet(log: (msg: string) => void) {
       value: {
         signer: running ? (running.status.stopped ? "parado" : running.status.unlocked ? "desbloqueado" : "bloqueado") : "apagado",
         walletUrl: running ? walletUrl(running.info) : null,
+        pendingApprovals: (running?.status as { pendingApprovals?: number } | undefined)?.pendingApprovals ?? 0,
         addresses: { solana: pub.solana, evm: pub.evm },
         totalUsd: b.totalUsd,
         byChain: b.byChain,
@@ -119,7 +120,7 @@ function missionDetail(missionId: number) {
     const d = j.details ? (JSON.parse(j.details) as Record<string, unknown>) : {};
     // Dónde ocurrió: la cadena del swap, Binance, o el origen de una transferencia.
     const venue = j.kind === "cex_order" ? "binance" : String(d.chain ?? d.from ?? "solana");
-    return { id: j.id, ts: j.ts, kind: j.kind, summary: j.summary, venue };
+    return { id: j.id, ts: j.ts, kind: j.kind, summary: j.summary, venue, ...(d.explorer ? { explorer: String(d.explorer) } : {}) };
   });
   // Todas las compras de la misión (abiertas y cerradas), de la más reciente a la más antigua.
   const positions = listPositions(missionId)
@@ -188,7 +189,11 @@ export async function startDashboard(opts: { port?: number; log?: (msg: string) 
   await refreshValuation(log);
   setInterval(() => refreshValuation(log), 15_000).unref();
   void refreshWallet(log);
-  setInterval(() => refreshWallet(log), 60_000).unref();
+  // Con una misión real, más a menudo (para avisar de aprobaciones pendientes).
+  setInterval(() => {
+    const live = (getActiveMission() as { mode?: string } | undefined)?.mode === "live";
+    if (live || !walletCache || Date.now() - walletCache.at > 60_000) void refreshWallet(log);
+  }, 10_000).unref();
   return { url, alreadyRunning: false };
 }
 

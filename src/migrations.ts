@@ -81,6 +81,30 @@ export const MIGRATIONS: Migration[] = [
     // Las misiones que ya existían cuentan como empezadas al crearse.
     up: (db) => db.exec("ALTER TABLE missions ADD COLUMN started_at TEXT; UPDATE missions SET started_at = created_at;"),
   },
+  {
+    version: 6,
+    description: "Misiones con dinero real: modo, aprobación, límites y registro de transacciones firmadas",
+    up: (db) =>
+      db.exec(`
+        ALTER TABLE missions ADD COLUMN mode TEXT NOT NULL DEFAULT 'sim';  -- 'sim' | 'live'
+        ALTER TABLE missions ADD COLUMN approval TEXT;                     -- 'manual' | 'auto' (solo live)
+        ALTER TABLE missions ADD COLUMN limits TEXT;                       -- JSON { maxTradeUsd, maxLossPct }
+        CREATE TABLE live_txs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          mission_id INTEGER NOT NULL,
+          chain TEXT NOT NULL,
+          kind TEXT NOT NULL,                 -- 'swap' | 'approve'
+          status TEXT NOT NULL,               -- 'confirmed' | 'failed' | 'rejected'
+          summary TEXT NOT NULL,
+          tx_hash TEXT,
+          explorer_url TEXT,
+          usd REAL,
+          error TEXT
+        );
+        CREATE INDEX live_txs_mission ON live_txs (mission_id, id);
+      `),
+  },
 ];
 
 /**

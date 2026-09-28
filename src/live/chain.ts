@@ -82,24 +82,32 @@ export interface WalletBalances {
   errors: Partial<Record<ChainId, string>>;
 }
 
+export type ExtraTokens = Partial<Record<EvmChainId, Array<{ address: string; symbol: string; decimals: number }>>>;
+
+/** Saldos en bruto por cadena (sin valorar). Una cadena que no se pudo leer va en `errors`. */
+export async function readHoldings(pub: WalletPublic, extraEvmTokens: ExtraTokens = {}) {
+  const chains: ChainId[] = ["solana", ...(Object.keys(EVM_CHAINS) as EvmChainId[])];
+  const settled = await Promise.allSettled(
+    chains.map((c) => (c === "solana" ? solanaHoldings(pub.solana) : evmHoldings(c as EvmChainId, pub.evm, extraEvmTokens[c as EvmChainId] ?? []))),
+  );
+  const holdings: Holding[] = [];
+  const errors: Partial<Record<ChainId, string>> = {};
+  settled.forEach((r, i) => (r.status === "fulfilled" ? holdings.push(...r.value) : (errors[chains[i]!] = (r.reason as Error).message)));
+  return { holdings, errors };
+}
+
 /** Saldos de la cartera en las tres cadenas, valorados a precio de liquidación como en el simulador. */
-export async function walletBalances(pub: WalletPublic, extraEvmTokens: Partial<Record<EvmChainId, Array<{ address: string; symbol: string; decimals: number }>>> = {}): Promise<WalletBalances> {
-  const reads: Array<[ChainId, Promise<Holding[]>]> = [
-    ["solana", solanaHoldings(pub.solana)],
-    ...(Object.keys(EVM_CHAINS) as EvmChainId[]).map((c) => [c, evmHoldings(c, pub.evm, extraEvmTokens[c] ?? [])] as [ChainId, Promise<Holding[]>]),
-  ];
-  const out: WalletBalances = { totalUsd: 0, byChain: { solana: 0, base: 0, bsc: 0 }, balances: [], errors: {} };
-  for (const [chain, p] of reads) {
-    try {
-      for (const h of await p) {
-        const v = await getVenue(chain).liquidationValue(h).catch(() => ({ usd: 0, method: "sin precio" }));
-        out.balances.push({ ...h, usd: Number(v.usd.toFixed(4)), valuedBy: v.method });
-        out.byChain[chain] += v.usd;
-        out.totalUsd += v.usd;
-      }
-    } catch (err) {
-      out.errors[chain] = (err as Error).message;
-    }
+export async function walletBalances(pub: WalletPublic, extraEvmTokens: ExtraTokens = {}): Promise<WalletBalances> {
+  const { holdings, errors } = await readHoldings(pub, extraEvmTokens);
+  const out: WalletBalances = { totalUsd: 0, byChain: { solana: 0, base: 0, bsc: 0 }, balances: [], errors };
+  const valued = await Promise.all(
+    holdings.map(async (h) => ({ h, v: await getVenue(h.venue).liquidationValue(h).catch(() => ({ usd: 0, method: "sin precio" })) })),
+  );
+  for (const { h, v } of valued) {
+    const chain = h.venue as ChainId;
+    out.balances.push({ ...h, usd: Number(v.usd.toFixed(4)), valuedBy: v.method });
+    out.byChain[chain] += v.usd;
+    out.totalUsd += v.usd;
   }
   return out;
 }

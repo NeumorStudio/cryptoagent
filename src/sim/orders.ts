@@ -4,7 +4,7 @@
 // periódico (watcher.ts y el servidor MCP mientras está activo).
 import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
-import { binanceMarketOrder, swap } from "./portfolio.js";
+import { assertSimulated, binanceMarketOrder, swap } from "./portfolio.js";
 import type { ChainId, VenueId } from "./types.js";
 import { settleTransfers } from "./transfers.js";
 import { getVenue } from "./venues/index.js";
@@ -75,6 +75,7 @@ export async function placeOrder(args: {
   reasoning: string;
 }) {
   const venue = getVenue(args.venue);
+  if (venue.kind === "cex") assertSimulated(args.missionId, "operar en Binance");
   if (args.condition === "time") return placeTimeOrder({ ...args, venue });
   if (!args.triggerAsset || !(args.triggerPrice! > 0)) throw new Error("Una orden por precio necesita el activo que se vigila y el precio de disparo");
   const triggerPrice = args.triggerPrice!;

@@ -5,7 +5,7 @@ import { db, logJournal, now } from "../db.js";
 import { liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
 import { DEFAULT_ALLOCATION, type Allocation, type ChainId, type Holding } from "./types.js";
 import { settleTransfers } from "./transfers.js";
-import { getVenue } from "./venues/index.js";
+import { allChains, getVenue } from "./venues/index.js";
 
 export interface Mission {
   id: number;
@@ -25,7 +25,22 @@ export interface Mission {
   benchmark: string | null;
   /** Cuándo empezó a trabajar el agente (y arrancó el reloj); null mientras se prepara. */
   started_at: string | null;
+  /** 'sim' (dinero ficticio) o 'live' (la cartera real de la IA). */
+  mode: "sim" | "live";
+  /** Solo live: 'manual' (el usuario aprueba cada operación) o 'auto' (dentro de los límites). */
+  approval: "manual" | "auto" | null;
+  /** Solo live: JSON de MissionLimits. */
+  limits: string | null;
 }
+
+export interface MissionLimits {
+  /** Máximo en USD por operación. */
+  maxTradeUsd: number;
+  /** Pérdida máxima de la misión en %: por debajo, solo se permite vender a estables. */
+  maxLossPct: number;
+}
+
+export const isLive = (m: Pick<Mission, "mode"> | undefined | null) => m?.mode === "live";
 
 export function getMission(id: number): Mission | undefined {
   return db.prepare("SELECT * FROM missions WHERE id = ?").get(id) as Mission | undefined;
@@ -80,21 +95,35 @@ function insertMission(args: {
   instructions?: string;
   allocation: Allocation;
   holdings: Holding[];
+  live?: { approval: "manual" | "auto"; limits: MissionLimits };
 }): number {
   const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
   const id = Number(
     db
-      .prepare("INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(now(), args.initialUsd, args.targetUsd, deadline, args.instructions?.trim() || null, JSON.stringify(args.allocation), JSON.stringify(args.holdings))
-      .lastInsertRowid,
+      .prepare(
+        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        now(),
+        args.initialUsd,
+        args.targetUsd,
+        deadline,
+        args.instructions?.trim() || null,
+        JSON.stringify(args.allocation),
+        JSON.stringify(args.holdings),
+        args.live ? "live" : "sim",
+        args.live?.approval ?? null,
+        args.live ? JSON.stringify(args.live.limits) : null,
+      ).lastInsertRowid,
   );
+  // En una misión real, los saldos son los de la cadena (holdings es su espejo).
   resetPortfolio(id, args.holdings);
   logJournal({
     missionId: id,
     sessionId: null,
     kind: "mission",
     summary:
-      `Misión #${id} iniciada: de ${args.initialUsd} USD a ${args.targetUsd} USD ` +
+      `${args.live ? "Misión REAL" : "Misión"} #${id} iniciada: de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD ` +
       `antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`,
   });
   return id;
@@ -125,14 +154,55 @@ export async function createMission(
     prices[v.id] = price;
   }
   const holdings = planPortfolio(initialUsd, plan, prices);
-  const previous = getActiveMission();
-  if (previous) {
-    db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
-    db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), previous.id);
-    logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misión #${previous.id} cancelada por el usuario al crear una nueva` });
-  }
+  cancelActive();
   // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
   return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings }))!;
+}
+
+function cancelActive() {
+  const previous = getActiveMission();
+  if (!previous) return;
+  db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), previous.id);
+  logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misión #${previous.id} cancelada por el usuario al crear una nueva` });
+}
+
+/**
+ * Misión con la cartera real de la IA. El capital inicial es lo que vale la cartera ahora (a precio de
+ * liquidación) y los saldos son los de la cadena. `holdings` y `totalUsd` los lee quien llama (src/live).
+ */
+export function createLiveMission(args: {
+  holdings: Holding[];
+  totalUsd: number;
+  byChain: Record<ChainId, number>;
+  targetPct: number;
+  durationMinutes: number;
+  instructions?: string;
+  approval: "manual" | "auto";
+  limits: MissionLimits;
+}): Mission {
+  if (!(args.totalUsd >= 1)) throw new Error(`La cartera real vale ${args.totalUsd.toFixed(2)} USD: envíale fondos antes de empezar`);
+  if (!(args.targetPct > 0)) throw new Error("El objetivo debe ser una subida positiva");
+  if (!(args.limits.maxTradeUsd > 0) || !(args.limits.maxLossPct > 0 && args.limits.maxLossPct <= 100)) throw new Error("Límites no válidos");
+  const targetUsd = Number((args.totalUsd * (1 + args.targetPct / 100)).toFixed(2));
+  validate(args.totalUsd, targetUsd, args.durationMinutes);
+  const allocation = Object.fromEntries(
+    Object.entries(args.byChain)
+      .filter(([, v]) => v > 0)
+      .map(([c, v]) => [c, Number(((v / args.totalUsd) * 100).toFixed(1))]),
+  ) as Allocation;
+  cancelActive();
+  return getMission(
+    insertMission({
+      initialUsd: args.totalUsd,
+      targetUsd,
+      durationMinutes: args.durationMinutes,
+      instructions: args.instructions,
+      allocation,
+      holdings: args.holdings,
+      live: { approval: args.approval, limits: args.limits },
+    }),
+  )!;
 }
 
 function remaining(deadline: string) {
@@ -184,6 +254,14 @@ export async function missionStatus(missionId?: number) {
     timeLeft: left.text,
     secondsLeft: left.seconds,
     userInstructions: mission.instructions ?? "ninguna: modo libre",
+    ...(isLive(mission)
+      ? {
+          mode: "REAL: dinero de verdad de la cartera de la IA",
+          approval: mission.approval === "manual" ? "el usuario aprueba cada operación (puede tardar hasta ~90 s)" : "autónoma dentro de los límites",
+          limits: JSON.parse(mission.limits ?? "{}") as MissionLimits,
+          howToTrade: "execute_swap (simulate_swap, Binance, transferencias y puentes no están disponibles en una misión real)",
+        }
+      : { mode: "simulada" }),
   };
 }
 
@@ -216,8 +294,16 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
 }
 
 /** Comprueba una misión y la cierra si ha llegado al objetivo o se le ha acabado el plazo. */
+const lastSync = new Map<number, number>();
+
 async function checkOne(mission: Mission): Promise<string[]> {
   const expired = remaining(mission.deadline).ms <= 0;
+  // Misión real: los saldos se leen de la cadena (como mucho cada 20 s por proceso).
+  if (isLive(mission) && (expired || Date.now() - (lastSync.get(mission.id) ?? 0) > 20_000)) {
+    const { syncHoldings } = await import("../live/sync.js");
+    await syncHoldings(mission.id);
+    lastSync.set(mission.id, Date.now());
+  }
   const v = await valuation(mission.id);
   const value = v.totalUsd;
   // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido.
@@ -240,7 +326,11 @@ async function checkOne(mission: Mission): Promise<string[]> {
   // realizado al vender: el efectivo en stablecoins. Si al cerrar se queda corto y aún hay tiempo,
   // la misión continúa y se reintenta. Lo que no se pudo vender (p. ej. un token sin ruta de venta,
   // que vale 0) no impide cerrarla si el efectivo ya llega al objetivo.
-  const realizedUsd = final.holdings.filter((h) => h.valuedBy === "stable").reduce((s, h) => s + h.usd, 0);
+  // En una misión real, el nativo no se vende (paga la red de las siguientes): cuenta como realizado.
+  const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
+  const realizedUsd = final.holdings
+    .filter((h) => h.valuedBy === "stable" || (isLive(mission) && natives.has(`${h.venue}:${h.asset}`)))
+    .reduce((s, h) => s + h.usd, 0);
   if (reached && !expired && realizedUsd < mission.target_usd) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
     const summary = problems.length

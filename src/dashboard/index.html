@@ -151,6 +151,9 @@
   .bets li { grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
   .legend .chain, .bets .chain { color: var(--muted); font-size: 13px; margin-left: 6px; }
   .bets .pl.up { color: var(--up); } .bets .pl.down { color: var(--down); }
+  .real-band { position: sticky; top: 0; z-index: 5; background: var(--accent); color: #141518; padding: 8px 16px; font-size: 14px; text-align: center; }
+  .real-band b { font-stretch: 130%; letter-spacing: .04em; margin-right: 8px; }
+  .real-band a { color: #141518; font-weight: 700; }
   .real-wallet { margin-top: 8px; }
   .rw-total { font-size: 26px; font-weight: 800; font-stretch: 130%; margin: 0; }
   .rw-sub { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
@@ -228,6 +231,7 @@
 </head>
 <body>
 <div class="banner" id="banner" role="alert">Se ha perdido la conexión con el panel. Comprueba que el panel sigue abierto (npm run dashboard o Claude Code).</div>
+<div class="real-band" id="realBand" hidden><b>DINERO REAL</b> <span id="realBandText"></span></div>
 
 <header class="top">
   <div class="mission">
@@ -585,7 +589,14 @@ function renderChart() {
     add("line", { class: "stem", x1: x, x2: x, y1: y, y2: y - 22 }, g);
     add("path", { class: "cloth", d: `M${x},${y - 22}L${x + 11},${y - 18}L${x},${y - 14}Z`, fill: failed ? "" : (COLOR[tr.venue] ?? "var(--muted)") }, g);
     add("rect", { class: "hit", x: x - 8, y: y - 28, width: 24, height: 32 }, g);
-    const show = () => showTip([el("b", {}, hm(tr.ts)), ` · ${LABEL[tr.venue] ?? tr.venue}`, el("br"), tr.summary], x, y - 22);
+    const show = () => showTip([el("b", {}, hm(tr.ts)), ` · ${LABEL[tr.venue] ?? tr.venue}`, el("br"), tr.summary, ...(tr.explorer ? [el("br"), "Clic para ver la transacción"] : [])], x, y - 22);
+    // Operaciones reales: la bandera abre la transacción en el explorador de la cadena.
+    if (tr.explorer) {
+      g.style.cursor = "pointer";
+      const open = () => window.open(tr.explorer, "_blank", "noopener");
+      g.addEventListener("click", open);
+      g.addEventListener("keydown", (e) => e.key === "Enter" && open());
+    }
     g.addEventListener("pointerenter", show);
     g.addEventListener("focus", show);
     g.addEventListener("pointerleave", () => (tip.style.opacity = 0));
@@ -602,6 +613,17 @@ new ResizeObserver(() => state?.mission && renderChart()).observe($("chartWrap")
 // ── Cartera real (solo lectura; se gestiona en la página del firmante) ──
 function renderRealWallet() {
   const w = state.realWallet;
+  const m = state.mission;
+  const live = m && m.mode === "live" && m.status === "active";
+  $("realBand").hidden = !live;
+  if (live) {
+    const limits = JSON.parse(m.limits || "{}");
+    const pending = w && w.pendingApprovals ? w.pendingApprovals : 0;
+    $("realBandText").replaceChildren(
+      `${m.approval === "manual" ? "Apruebas tú cada operación" : "Autónomo con límites"} · máximo ${usd(limits.maxTradeUsd)} por operación · pérdida máxima ${limits.maxLossPct} %`,
+      ...(pending ? [" · ", el("a", { href: w.walletUrl, target: "_blank", rel: "noopener" }, `${pending} esperando tu aprobación`)] : []),
+    );
+  }
   $("realWallet").hidden = !w;
   if (!w) return;
   $("rwTotal").textContent = usd(w.totalUsd);

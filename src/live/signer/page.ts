@@ -45,6 +45,11 @@ export const WALLET_PAGE = /* html */ `<!doctype html>
   .pill { display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--surface-2); }
   .pill.on { background: var(--up); color: #141518; } .pill.off { background: var(--down); color: #141518; }
   [hidden] { display: none !important; }
+  .approvals { list-style: none; padding: 0; margin: 0 0 28px; display: grid; gap: 10px; }
+  .approvals li { background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; padding: 14px 16px; display: grid; gap: 10px; }
+  .approvals .what { font-size: 17px; font-weight: 600; }
+  .approvals .meta { font-size: 13px; color: var(--muted); }
+  .approvals .row { margin-top: 0; }
 </style>
 </head>
 <body>
@@ -83,6 +88,10 @@ export const WALLET_PAGE = /* html */ `<!doctype html>
   </section>
 
   <section id="wallet" hidden>
+    <div id="approvals" hidden>
+      <h2>Esperan tu aprobación</h2>
+      <ul class="approvals" id="approvalList"></ul>
+    </div>
     <p class="total" id="total">…</p>
     <p class="lead" id="totalSub"></p>
     <table><tbody id="balances"></tbody></table>
@@ -116,7 +125,9 @@ async function load() {
   const status = s.stopped ? '<span class="pill off">parada</span>' : s.unlocked ? '<span class="pill on">desbloqueada</span>' : '<span class="pill">bloqueada</span>';
   $("lead").innerHTML = "Estado: " + status;
   if (!s.unlocked || !s.authed) {
-    $("unlockText").textContent = s.unlocked
+    $("unlockText").textContent = s.unlocked && s.pendingApprovals
+      ? "Hay " + s.pendingApprovals + " operación(es) esperando tu aprobación. Escribe tu contraseña para verlas."
+      : s.unlocked
       ? "La cartera está desbloqueada para el agente. Para ver los saldos o pararla desde este navegador, escribe tu contraseña."
       : s.stopped
         ? "Está parada: el agente no puede operar. Escribe tu contraseña para reanudar."
@@ -170,6 +181,40 @@ $("unlockForm").addEventListener("submit", async (e) => {
   try { await post("/wallet/unlock", { password: new FormData(e.target).get("password") }); e.target.reset(); $("unlockError").textContent = ""; load(); }
   catch (err) { $("unlockError").textContent = err.message; }
 });
+// Aprobaciones: se consultan cada 2 s mientras la página está abierta y desbloqueada.
+let shownIds = "";
+async function loadApprovals() {
+  if ($("wallet").hidden) return;
+  const r = await fetch("/wallet/pending");
+  if (!r.ok) return;
+  const list = await r.json();
+  const ids = list.map((p) => p.id).join(",");
+  $("approvals").hidden = !list.length;
+  if (ids === shownIds) return;
+  shownIds = ids;
+  const names = { solana: "Solana", base: "Base", bsc: "BNB Chain" };
+  $("approvalList").replaceChildren(...list.map((p) => {
+    const li = document.createElement("li");
+    const what = Object.assign(document.createElement("div"), { className: "what", textContent: p.summary });
+    const meta = Object.assign(document.createElement("div"), { className: "meta",
+      textContent: names[p.chain] + " · " + usd(p.usd) + " · misión #" + p.missionId + " · caduca a las " + new Date(p.expiresAt).toLocaleTimeString("es-ES") });
+    const row = Object.assign(document.createElement("div"), { className: "row" });
+    const ok = Object.assign(document.createElement("button"), { textContent: "Aprobar" });
+    const no = Object.assign(document.createElement("button"), { className: "ghost", textContent: "Rechazar" });
+    const decide = async (approve) => { ok.disabled = no.disabled = true; try { await post("/wallet/decide", { id: p.id, approve }); } catch (e) {} shownIds = ""; loadApprovals(); };
+    ok.onclick = () => decide(true);
+    no.onclick = () => decide(false);
+    row.append(ok, no);
+    li.append(what, meta, row);
+    return li;
+  }));
+  if (list.length && document.hidden) document.title = "(" + list.length + ") Cartera de la IA";
+  else document.title = "Cartera de la IA";
+}
+setInterval(loadApprovals, 2000);
+// En la pantalla de desbloqueo, refresca el aviso de operaciones pendientes (nunca mientras se ve la frase).
+setInterval(() => { if (!$("unlock").hidden) load(); }, 5000);
+
 $("refresh").addEventListener("click", loadBalances);
 $("lock").addEventListener("click", async () => { await post("/wallet/lock"); load(); });
 $("stop").addEventListener("click", async () => {

@@ -13,6 +13,19 @@ import { createWallet, readWalletPublic, unlockWallet, walletExists, type Accoun
 import { walletBalances } from "../chain.js";
 import { liveDir, signerInfoFile, type SignerInfo } from "../paths.js";
 import { WALLET_PAGE } from "./page.js";
+import { getMission, type Mission, type MissionLimits } from "../../sim/mission.js";
+import type { ChainId } from "../../sim/types.js";
+import { checkLimits, type EvmTxRequest } from "../policy.js";
+import { PolicyError, sendEvm, sendSolana, type SendResult } from "./send.js";
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 export interface SignerState {
   accounts: Accounts | null;
@@ -21,6 +34,39 @@ export interface SignerState {
   sessions: Set<string>;
   failedUnlocks: number;
   lockedUntil: number;
+  /** Operaciones esperando la aprobación del usuario. */
+  pending: Map<string, PendingIntent>;
+  /** Intenciones aprobadas (por el usuario o por estar dentro de los límites en modo autónomo). */
+  tickets: Map<string, Ticket>;
+}
+
+export interface Intent {
+  missionId: number;
+  chain: ChainId;
+  /** buy: se compra un token; sell: se vende a estables (siempre permitido). */
+  side: "buy" | "sell";
+  usd: number;
+  summary: string;
+}
+interface PendingIntent extends Intent {
+  id: string;
+  createdAt: number;
+  decide: (approved: boolean) => void;
+}
+interface Ticket extends Intent {
+  id: string;
+  expiresAt: number;
+}
+
+/** Cuánto espera una operación la aprobación del usuario. */
+export const APPROVAL_TIMEOUT_MS = 90_000;
+const TICKET_TTL_MS = 3 * 60_000;
+
+export interface SignerDeps {
+  getMission: (id: number) => Mission | undefined;
+  walletValueUsd: () => Promise<number>;
+  sendSolana: (accounts: Accounts, txBase64: string) => Promise<SendResult>;
+  sendEvm: (accounts: Accounts, tx: EvmTxRequest, kind: "swap" | "approve") => Promise<SendResult>;
 }
 
 const MAX_BODY = 16 * 1024;
@@ -53,9 +99,104 @@ function cookieSid(req: IncomingMessage): string | null {
   return m ? m[1]! : null;
 }
 
-export function createSignerServer(opts: { dir: string; token: string }) {
-  const state: SignerState = { accounts: null, stopped: false, sessions: new Set(), failedUnlocks: 0, lockedUntil: 0 };
+export function createSignerServer(opts: { dir: string; token: string; deps?: Partial<SignerDeps> }) {
+  const state: SignerState = {
+    accounts: null,
+    stopped: false,
+    sessions: new Set(),
+    failedUnlocks: 0,
+    lockedUntil: 0,
+    pending: new Map(),
+    tickets: new Map(),
+  };
+  const deps: SignerDeps = {
+    getMission,
+    walletValueUsd: async () => {
+      const pub = readWalletPublic(opts.dir);
+      return pub ? (await walletBalances(pub)).totalUsd : 0;
+    },
+    sendSolana,
+    sendEvm,
+    ...opts.deps,
+  };
   let origin = "";
+
+  /** Rechaza todo lo pendiente (al bloquear o parar). */
+  const rejectAllPending = () => {
+    for (const p of state.pending.values()) p.decide(false);
+    state.pending.clear();
+    state.tickets.clear();
+  };
+
+  const ready = () => {
+    if (state.stopped) throw new HttpError(423, "La cartera está parada: el usuario debe desbloquearla de nuevo en su página");
+    if (!state.accounts) throw new HttpError(423, "La cartera está bloqueada: el usuario debe desbloquearla en su página (/cryptoagent:cartera)");
+    return state.accounts;
+  };
+
+  /** Comprueba los límites y, si hace falta, espera la aprobación del usuario. Devuelve un ticket. */
+  async function approveIntent(intent: Intent): Promise<Ticket> {
+    ready();
+    const mission = deps.getMission(intent.missionId);
+    if (!mission || mission.mode !== "live" || !["active", "closing"].includes(mission.status)) {
+      throw new HttpError(403, "La misión no es una misión real activa");
+    }
+    const limits = JSON.parse(mission.limits ?? "{}") as MissionLimits;
+    if (!(intent.usd >= 0)) throw new HttpError(400, "Valor de la operación no válido");
+    const problems = checkLimits({
+      side: intent.side,
+      usd: intent.usd,
+      maxTradeUsd: limits.maxTradeUsd,
+      maxLossPct: limits.maxLossPct,
+      initialUsd: mission.initial_usd,
+      currentUsd: intent.side === "buy" ? await deps.walletValueUsd() : Infinity,
+    });
+    if (problems.length) throw new HttpError(403, `Fuera de los límites de la misión: ${problems.join("; ")}`);
+    const ticket = (): Ticket => {
+      const t = { ...intent, id: randomBytes(16).toString("hex"), expiresAt: Date.now() + TICKET_TTL_MS };
+      state.tickets.set(t.id, t);
+      return t;
+    };
+    if (mission.approval !== "manual") return ticket();
+    const id = randomBytes(8).toString("hex");
+    const approved = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        state.pending.delete(id);
+        resolve(false);
+      }, APPROVAL_TIMEOUT_MS);
+      state.pending.set(id, {
+        ...intent,
+        id,
+        createdAt: Date.now(),
+        decide: (ok) => {
+          clearTimeout(timer);
+          state.pending.delete(id);
+          resolve(ok);
+        },
+      });
+    });
+    if (!approved) throw new HttpError(403, "El usuario no ha aprobado la operación (la rechazó o no respondió a tiempo)");
+    ready();
+    return ticket();
+  }
+
+  async function sign(body: Record<string, unknown>): Promise<SendResult> {
+    const accounts = ready();
+    const t = state.tickets.get(String(body.ticket ?? ""));
+    if (!t || t.expiresAt < Date.now()) throw new HttpError(403, "Operación no aprobada o aprobación caducada");
+    const kind = body.kind === "approve" ? "approve" : "swap";
+    if (body.chain !== t.chain) throw new HttpError(403, "La cadena no coincide con la operación aprobada");
+    // La transacción se construye tras la aprobación, con un precio nuevo: se admite algo de margen.
+    if (kind === "swap" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operación es mayor que la aprobada");
+    if (kind === "swap") state.tickets.delete(t.id);
+    try {
+      if (t.chain === "solana") return await deps.sendSolana(accounts, String(body.solanaTx ?? ""));
+      return await deps.sendEvm(accounts, body.evmTx as EvmTxRequest, kind);
+    } catch (err) {
+      if (err instanceof PolicyError) throw new HttpError(403, err.message);
+      throw err;
+    }
+  }
 
   const send = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers });
@@ -86,7 +227,21 @@ export function createSignerServer(opts: { dir: string; token: string }) {
       if (url.pathname.startsWith("/api/")) {
         const auth = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
         if (!sameSecret(auth, opts.token)) return send(res, 401, { error: "Token no válido" });
-        if (url.pathname === "/api/status" && req.method === "GET") return send(res, 200, { ...publicState(false), pid: process.pid });
+        if (url.pathname === "/api/status" && req.method === "GET") {
+          return send(res, 200, { ...publicState(false), pid: process.pid, pendingApprovals: state.pending.size });
+        }
+        if (url.pathname === "/api/intent" && req.method === "POST") {
+          const b = await readBody(req);
+          const t = await approveIntent({
+            missionId: Number(b.missionId),
+            chain: b.chain as ChainId,
+            side: b.side === "sell" ? "sell" : "buy",
+            usd: Number(b.usd),
+            summary: String(b.summary ?? "").slice(0, 300),
+          });
+          return send(res, 200, { ticket: t.id, expiresAt: t.expiresAt });
+        }
+        if (url.pathname === "/api/sign" && req.method === "POST") return send(res, 200, await sign(await readBody(req)));
         return send(res, 404, { error: "No existe" });
       }
 
@@ -102,7 +257,11 @@ export function createSignerServer(opts: { dir: string; token: string }) {
       }
       const sid = cookieSid(req);
       const authed = sid !== null && state.sessions.has(sid);
-      if (url.pathname === "/wallet/state" && req.method === "GET") return send(res, 200, publicState(authed));
+      if (url.pathname === "/wallet/state" && req.method === "GET") return send(res, 200, { ...publicState(authed), pendingApprovals: state.pending.size });
+      if (url.pathname === "/wallet/pending" && req.method === "GET") {
+        if (!authed) return send(res, 401, { error: "Desbloquea la cartera con tu contraseña" });
+        return send(res, 200, [...state.pending.values()].map(({ decide: _d, ...p }) => ({ ...p, expiresAt: p.createdAt + APPROVAL_TIMEOUT_MS })));
+      }
       if (url.pathname === "/wallet/balances" && req.method === "GET") {
         const pub = readWalletPublic(opts.dir);
         return pub ? send(res, 200, await walletBalances(pub)) : send(res, 404, { error: "No hay cartera" });
@@ -139,11 +298,18 @@ export function createSignerServer(opts: { dir: string; token: string }) {
         state.accounts = null;
         state.stopped = url.pathname === "/wallet/stop";
         state.sessions.clear();
+        rejectAllPending();
         return send(res, 200, publicState(false));
+      }
+      if (url.pathname === "/wallet/decide") {
+        const p = state.pending.get(String(body.id ?? ""));
+        if (!p) return send(res, 404, { error: "Esa operación ya no está pendiente" });
+        p.decide(body.approve === true);
+        return send(res, 200, { ok: true });
       }
       return send(res, 404, { error: "No existe" });
     } catch (err) {
-      return send(res, 400, { error: (err as Error).message });
+      return send(res, err instanceof HttpError ? err.status : 400, { error: (err as Error).message });
     }
   });
 

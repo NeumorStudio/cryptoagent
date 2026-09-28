@@ -216,8 +216,9 @@ export const SIM_TOOLS = [
       slippage_bps: z.number().int().min(1).max(5000).default(50),
       thesis,
     }),
-    run: async (i, ctx) =>
-      json(
+    run: async (i, ctx) => {
+      if (sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
+      return json(
         await sim.swap({
           missionId: mid(ctx),
           sessionId: ctx.sessionId,
@@ -230,7 +231,45 @@ export const SIM_TOOLS = [
           reasoning: formatThesis(i.thesis),
           meta: tradeMeta(i.thesis),
         }),
-      ),
+      );
+    },
+  }),
+  tool({
+    name: "execute_swap",
+    kind: "trade",
+    journaled: true,
+    description:
+      "Solo en misiones REALES: ejecuta un swap con dinero de verdad desde la cartera de la IA (Solana con Jupiter; Base y BNB Chain con KyberSwap). " +
+      "Mismos parámetros que simulate_swap. Paga la red de verdad (también si la transacción falla) y, si la misión es de aprobación manual, " +
+      "espera hasta ~90 s a que el usuario la apruebe. El firmante aplica los límites de la misión (máximo por operación y pérdida máxima). " +
+      "slippage_bps se aplica en la cadena: si el precio se mueve más, la transacción revierte y solo pagas la red. " +
+      "Siempre queda un poco del nativo (SOL, ETH, BNB) para pagar la red. Devuelve el hash, el enlace al explorador y las cantidades reales.",
+    schema: z.object({
+      chain: chainParam,
+      input: z.string(),
+      output: z.string(),
+      amount: z.number().positive().optional(),
+      sell_all: z.boolean().optional().describe("Vende todo tu saldo del token de entrada (en lugar de amount)"),
+      slippage_bps: z.number().int().min(1).max(5000).default(100),
+      thesis,
+    }),
+    run: async (i, ctx) => {
+      if (!sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
+      return json(
+        await sim.swap({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          chain: i.chain,
+          input: i.input,
+          output: i.output,
+          amount: i.amount,
+          sellAll: i.sell_all,
+          slippageBps: i.slippage_bps,
+          reasoning: formatThesis(i.thesis),
+          meta: tradeMeta(i.thesis),
+        }),
+      );
+    },
   }),
   tool({
     name: "simulate_binance_market_order",

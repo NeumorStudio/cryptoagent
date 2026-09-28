@@ -16,6 +16,15 @@ export type { Holding };
 
 const DUST = 1e-12;
 
+/** ¿La misión opera con dinero real? */
+export function isLiveMission(missionId: number): boolean {
+  return (db.prepare("SELECT mode FROM missions WHERE id = ?").get(missionId) as { mode?: string } | undefined)?.mode === "live";
+}
+
+export function assertSimulated(missionId: number, what: string) {
+  if (isLiveMission(missionId)) throw new Error(`Esta misión es REAL: ${what} no está disponible con dinero real (de momento, solo swaps en Solana, Base y BNB Chain con execute_swap).`);
+}
+
 export function getHoldings(missionId: number): Holding[] {
   return db
     .prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol")
@@ -128,8 +137,9 @@ export async function liquidateAll(missionId: number, sessionId: number | null, 
       );
     }
     // El nativo se vende al final, dejando lo necesario para la fee de esa última transacción.
+    // Con dinero real no se vende: hace falta para pagar la red en las siguientes misiones.
     const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
-    if (nativeLeft > 0.000001) {
+    if (nativeLeft > 0.000001 && !isLiveMission(missionId)) {
       const amount = Number(nativeLeft.toFixed(chain.native.decimals));
       await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning, meta }).catch(
         (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${(err as Error).message}`),
@@ -178,6 +188,11 @@ export async function swap(args: {
   reasoning: string;
   meta?: TradeMeta;
 }) {
+  // Misión real: se ejecuta en la cadena con la cartera de la IA (firma el firmante, no este proceso).
+  if (isLiveMission(args.missionId)) {
+    const { liveSwap } = await import("../live/execute.js");
+    return liveSwap(args);
+  }
   const chain = getChain(args.chain);
   const m = args.missionId;
   const [input, output] = await Promise.all([chain.resolveToken(args.input), chain.resolveToken(args.output)]);
@@ -306,6 +321,7 @@ export async function binanceMarketOrder(args: {
   reasoning: string;
   meta?: TradeMeta;
 }) {
+  assertSimulated(args.missionId, "operar en Binance");
   const info = await market.getSymbolInfo(args.symbol);
   const book = await market.getOrderBook(info.symbol);
   const m = args.missionId;

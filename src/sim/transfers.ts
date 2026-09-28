@@ -10,7 +10,7 @@ import * as market from "../market/binance.js";
 import * as evm from "../market/evm.js";
 import { fromBaseUnits, toBaseUnits } from "../market/jupiter.js";
 import * as lifi from "../market/lifi.js";
-import { applyDeltas, balance, evmAddress } from "./portfolio.js";
+import { applyDeltas, assertSimulated, balance, evmAddress } from "./portfolio.js";
 import { attachPosition, buyIntoPosition, detachPosition, sellFromPosition, type Carry } from "./positions.js";
 import type { ChainId, TradeMeta, VenueId } from "./types.js";
 import { getChain, getVenue, type Delta, type TokenRef } from "./venues/index.js";
@@ -114,6 +114,7 @@ export async function cexTransfer(args: {
   reasoning: string;
 }) {
   const m = args.missionId;
+  assertSimulated(m, "mover dinero con Binance");
   if (!(args.amount > 0)) throw new Error("La cantidad debe ser positiva");
   if (args.from === args.to) throw new Error("El origen y el destino son el mismo");
   if (args.from !== "binance" && args.to !== "binance") {
@@ -320,6 +321,8 @@ export async function bridge(a: {
   meta?: TradeMeta;
 }) {
   const m = a.missionId;
+  assertSimulated(m, "cruzar un puente");
+  assertSimulated(m, "cruzar un puente");
   if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
   const src = getChain(a.fromChain);
   const dst = getChain(a.toChain);

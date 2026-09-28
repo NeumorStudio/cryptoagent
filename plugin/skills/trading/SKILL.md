@@ -2,7 +2,7 @@
 name: trading
 description: Configura y lanza una misión del agente trader. Pregunta capital, objetivo y tiempo, abre el panel en directo si el usuario quiere y pone a trabajar en segundo plano al agente y a su revisor.
 disable-model-invocation: true
-allowed-tools: Agent, mcp__plugin_cryptoagent_cryptosim__mission_status, mcp__plugin_cryptoagent_cryptosim__create_mission, mcp__plugin_cryptoagent_cryptosim__start_dashboard, mcp__plugin_cryptoagent_cryptosim__stop_mission, mcp__plugin_cryptoagent_cryptosim__status_report
+allowed-tools: Agent, mcp__plugin_cryptoagent_cryptosim__mission_status, mcp__plugin_cryptoagent_cryptosim__create_mission, mcp__plugin_cryptoagent_cryptosim__start_dashboard, mcp__plugin_cryptoagent_cryptosim__stop_mission, mcp__plugin_cryptoagent_cryptosim__status_report, mcp__plugin_cryptoagent_cryptosim__wallet_status, mcp__plugin_cryptoagent_cryptosim__start_wallet
 ---
 
 Vas a preparar y lanzar una misión del agente `cryptoagent:trader`, con su revisor `cryptoagent:reviewer` (analiza lo que hace el trader y escribe su memoria). Habla con el usuario en español. Sigue estos pasos en orden.
@@ -23,6 +23,12 @@ Si hay una misión activa, pregunta con AskUserQuestion qué quiere hacer. En la
 - "Detenerla": pregunta con AskUserQuestion si cerrar las posiciones a mercado o dejar la cartera como está, llama a `stop_mission` con `close_positions` según la respuesta, resume el valor final y para aquí.
 
 ## 3. Configurar la misión nueva
+
+Primero, una llamada a AskUserQuestion con una sola pregunta, **Modo** (header "Modo"):
+- "Simulado (Recommended)": dinero ficticio con precios reales. Sigue en el paso 3A.
+- "Real": dinero de verdad de la cartera de la IA. Sigue en el paso 3B.
+
+### 3A. Misión simulada
 
 Haz una sola llamada a AskUserQuestion con estas cuatro preguntas:
 
@@ -48,6 +54,25 @@ Después, en otra llamada a AskUserQuestion, haz dos preguntas:
 
 Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes`, `allocation` con el reparto elegido e `instructions` si las hay; en modo libre no lo envíes).
 
+### 3B. Misión real
+
+1. Llama a `wallet_status`.
+   - Si no hay cartera, o el firmante está apagado, bloqueado o parado: llama a `start_wallet` (abre la página de la cartera en su navegador) y explícale que allí debe crearla o desbloquearla con su contraseña. **Nunca pidas ni aceptes en el chat la frase de recuperación ni la contraseña.** Pregunta con AskUserQuestion si ya está ("Ya está desbloqueada" / "Cancelar") y vuelve a llamar a `wallet_status`.
+   - Si la cartera vale menos de 5 $, dile que le envíe fondos a las direcciones que aparecen (USDC o USDT, y un poco de SOL, ETH o BNB para el gas) y para aquí.
+2. Enseña el saldo real total y por cadena. Después, una llamada a AskUserQuestion con cuatro preguntas:
+   1. **Objetivo** (header "Objetivo"), como ganancia sobre lo que vale la cartera: +5 %, +10 % (Recommended), +25 %.
+   2. **Tiempo** (header "Tiempo"): 15 minutos, 1 hora (Recommended), 6 horas.
+   3. **Aprobación** (header "Aprobación"):
+      - "Yo apruebo cada operación (Recommended)": el agente propone y la operación espera (hasta 90 s) a que la apruebes en la página de la cartera.
+      - "Autónomo con límites": opera solo, dentro de los límites.
+   4. **Límites** (header "Límites"):
+      - "Prudentes (Recommended)": máximo por operación = 25 % del saldo; pérdida máxima = 30 %.
+      - "Amplios": máximo por operación = 50 % del saldo; pérdida máxima = 60 %.
+      - Con "Other", el usuario da sus cifras.
+3. Pregunta también el **Panel** y el **Enfoque**, como en 3A (pueden ir en la misma llamada a AskUserQuestion que las anteriores si caben; si no, en otra).
+4. Crea la misión con `create_mission`: `mode: "live"`, `target_pct`, `duration_minutes`, `approval` (`manual` o `auto`), `max_trade_usd` (en USD, calculado sobre el saldo), `max_loss_pct` e `instructions` si las hay.
+5. Si la aprobación es manual, recuérdale que tenga abierta la página de la cartera (desbloqueada) para aprobar las operaciones.
+
 ## 4. Panel
 
 Solo si el usuario ha dicho que sí:
@@ -67,7 +92,7 @@ No añadas nada más a los prompts: ni ideas, ni estrategias, ni contexto de est
 
 ## 6. Avisar al usuario
 
-Resume en pocas líneas: capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
+Resume en pocas líneas: si es una misión REAL (y su aprobación y límites), capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
 
 ## 7. Mientras dura la misión
 

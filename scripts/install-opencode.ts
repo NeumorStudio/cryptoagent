@@ -101,10 +101,12 @@ Argumentos del usuario: $ARGUMENTS
 (Formato orientativo: capital, objetivo y minutos, p. ej. "20 40 5" = 20 $ de capital, llegar a 40 $, en 5 minutos. Un objetivo en % se aplica sobre el capital.)
 
 1. Llama a \`cryptosim_mission_status\`. Si hay una misión activa, pregunta si continuarla (salta al paso 5 sin crearla), reemplazarla (crea la nueva con \`replace: true\`) o detenerla (\`cryptosim_stop_mission\`, preguntando si cerrar posiciones, y termina).
-2. Completa lo que falte en los argumentos preguntando al usuario: capital (por defecto 1000 $), objetivo (por defecto +5 %), minutos (por defecto 60), instrucciones (por defecto ninguna: modo libre) y reparto:
+2. Primero pregunta el modo: simulado (dinero ficticio, por defecto) o real (dinero de verdad de la cartera de la IA).
+3. Simulado: completa lo que falte en los argumentos preguntando al usuario: capital (por defecto 1000 $), objetivo (por defecto +5 %), minutos (por defecto 60), instrucciones (por defecto ninguna: modo libre) y reparto:
    - con menos de 100 $ de capital, por defecto todo en Solana: {"solana":100};
    - si no, repartido: {"solana":30,"base":25,"bsc":25,"binance":20}.
-3. Crea la misión con \`cryptosim_create_mission\` (capital_usd, target_usd en valor absoluto, duration_minutes, allocation e instructions si las hay).
+   Crea la misión con \`cryptosim_create_mission\` (capital_usd, target_usd en valor absoluto, duration_minutes, allocation e instructions si las hay).
+   Real: llama a \`cryptosim_wallet_status\`. Si no hay cartera o no está desbloqueada, llama a \`cryptosim_start_wallet\` y pide al usuario que la cree o desbloquee en la página que se abre (nunca pidas ni aceptes en el chat la frase ni la contraseña); espera a que te diga que está lista. Enseña el saldo y pregunta: objetivo en % (por defecto +10 %), minutos (por defecto 60), aprobación (manual: aprueba cada operación en la página de la cartera, por defecto; o autónoma con límites), máximo por operación (por defecto 25 % del saldo, en USD), pérdida máxima (por defecto 30 %) e instrucciones. Crea la misión con \`cryptosim_create_mission\` (mode: "live", target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, instructions).
 4. Pregunta si quiere el panel en directo; si sí, \`cryptosim_start_dashboard\` con open_in_system_browser: true.
 5. Lanza el subagente \`reviewer\` con el mensaje exacto "Prepara la misión." y espera a que termine (si falla, sigue: el trader puede trabajar sin briefing).
 6. Lanza el subagente \`trader\` con el mensaje exacto "Trabaja en tu misión." y espera a que termine. Si después \`cryptosim_mission_status\` dice que la misión sigue activa, vuelve a lanzarlo con el mismo mensaje.
@@ -146,7 +148,7 @@ Llama a \`cryptosim_start_wallet\`: abre en el navegador la página de la carter
 - sin cartera: que la cree en la página; verá la frase de recuperación una sola vez y debe apuntarla en papel (puede importarla en MetaMask y Phantom para verla);
 - bloqueada: que escriba su contraseña en la página;
 - desbloqueada: llama a \`cryptosim_wallet_status\` y enseña el total, el saldo por cadena y las direcciones.
-Nunca pidas ni repitas en el chat la frase ni la contraseña. De momento la cartera es solo de lectura: el agente aún no opera con dinero real.
+Nunca pidas ni repitas en el chat la frase ni la contraseña. Para que el agente opere con ella, se crea una misión en modo real con /cryptoagent-trading.
 `,
 };
 const commandsDir = path.join(configDir, "commands");

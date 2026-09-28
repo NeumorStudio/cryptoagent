@@ -39,6 +39,9 @@ const NOT_TOOLS = new Set([
   "interval_due",
   "mission_ended",
   "slippage_bps",
+  "target_pct",
+  "max_trade_usd",
+  "max_loss_pct",
 ]);
 
 const docs = [

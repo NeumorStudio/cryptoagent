@@ -22,7 +22,9 @@ export function isLiveMission(missionId: number): boolean {
 }
 
 export function assertSimulated(missionId: number, what: string) {
-  if (isLiveMission(missionId)) throw new Error(`Esta misión es REAL: ${what} no está disponible con dinero real (de momento, solo swaps en Solana, Base y BNB Chain con execute_swap).`);
+  if (isLiveMission(missionId)) {
+    throw new Error(`Esta misión es REAL: ${what} no está disponible así. Con dinero real se opera con execute_swap (swaps) y execute_bridge (mover estables o el nativo entre cadenas); Binance no está disponible.`);
+  }
 }
 
 export function getHoldings(missionId: number): Holding[] {
@@ -393,13 +395,20 @@ export async function valuation(missionId: number, recordSnapshot = false) {
   // Saldos y tránsito se leen en la misma instantánea: si otro proceso abona una transferencia entre
   // las dos lecturas, se contaría dos veces (en la cartera y en tránsito).
   let holdings: Holding[] = [];
-  let pending: Array<{ id: number; to_venue: VenueId; asset_in: string; symbol_in: string; decimals_in: number; amount_in: number; arrives_at: string }> = [];
+  let pending: Array<{ id: number; to_venue: VenueId; asset_in: string; symbol_in: string; decimals_in: number; amount_in: number; arrives_at: string; carry: string | null }> = [];
   applyAtomically(() => {
     holdings = getHoldings(missionId);
     // Lo que está en tránsito (transferencias y puentes) se valora en su destino.
     pending = db
-      .prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id")
+      .prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at, carry FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id")
       .all(missionId) as typeof pending;
+    // Puente real: si ya ha llegado algo al destino (el saldo supera el de antes del envío), no se cuenta
+    // también en tránsito mientras Li.Fi no lo confirma.
+    for (const t of pending) {
+      const live = t.carry ? (JSON.parse(t.carry) as { live?: { baseline: number } }).live : undefined;
+      if (live) t.amount_in = Math.max(0, t.amount_in - Math.max(0, balance(missionId, t.to_venue, t.asset_in) - live.baseline));
+    }
+    pending = pending.filter((t) => t.amount_in > 0);
   });
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
   const transit = await Promise.all(

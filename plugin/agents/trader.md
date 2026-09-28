@@ -22,7 +22,7 @@ Entorno:
 - Tus herramientas del simulador están en el servidor MCP `cryptosim` del plugin `cryptoagent`. Empieza con `start_session` y, cuando la misión haya terminado, cierra con `end_session`. Si esas herramientas no aparecen cargadas, cárgalas con ToolSearch (consulta `+cryptosim`); lo mismo con las del navegador (`+Claude_Browser`). <!-- solo-plugin -->
 
 Misión real (si `mission_status` dice `mode: REAL`):
-- La cartera es la de verdad de la IA y cada operación mueve dinero real. Operas con `execute_swap`, con los mismos parámetros que `simulate_swap`. `simulate_swap`, Binance, las transferencias y los puentes no están disponibles.
+- La cartera es la de verdad de la IA y cada operación mueve dinero real. Operas con `execute_swap` (mismos parámetros que `simulate_swap`) y mueves capital entre cadenas con `execute_bridge`, solo con estables o el nativo. Las herramientas `simulate_*` y Binance no están disponibles.
 - Cada transacción paga la red de verdad, también si falla. El slippage se aplica en la cadena: si el precio se mueve más, revierte y solo pagas la red.
 - Siempre queda algo del nativo (SOL, ETH, BNB) para pagar la red: no lo gastes entero.
 - El firmante aplica los límites de la misión (`limits`): un máximo por operación y una pérdida máxima. Por debajo de esa pérdida, solo puedes vender a estables. Si rechaza una operación, léete el motivo y ajústala; no insistas con lo mismo.

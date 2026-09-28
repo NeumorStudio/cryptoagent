@@ -259,7 +259,7 @@ export async function missionStatus(missionId?: number) {
           mode: "REAL: dinero de verdad de la cartera de la IA",
           approval: mission.approval === "manual" ? "el usuario aprueba cada operación (puede tardar hasta ~90 s)" : "autónoma dentro de los límites",
           limits: JSON.parse(mission.limits ?? "{}") as MissionLimits,
-          howToTrade: "execute_swap (simulate_swap, Binance, transferencias y puentes no están disponibles en una misión real)",
+          howToTrade: "execute_swap para los swaps y execute_bridge para mover estables o el nativo entre cadenas (simulate_*, Binance y simulate_transfer no están disponibles en una misión real)",
         }
       : { mode: "simulada" }),
   };

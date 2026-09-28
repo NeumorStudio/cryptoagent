@@ -7772,7 +7772,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.16.0";
+    CODE_VERSION = "0.17.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -31355,7 +31355,7 @@ var require_index_cjs = __commonJS({
       return value._bn !== void 0;
     }
     var uniquePublicKeyCounter = 1;
-    var PublicKey2 = class _PublicKey2 extends Struct {
+    var PublicKey3 = class _PublicKey2 extends Struct {
       /**
        * Create a new PublicKey object
        * @param value ed25519 public key as buffer or base-58 encoded string
@@ -31517,9 +31517,9 @@ var require_index_cjs = __commonJS({
         return isOnCurve(pubkey.toBytes());
       }
     };
-    _PublicKey = PublicKey2;
-    PublicKey2.default = new _PublicKey("11111111111111111111111111111111");
-    SOLANA_SCHEMA.set(PublicKey2, {
+    _PublicKey = PublicKey3;
+    PublicKey3.default = new _PublicKey("11111111111111111111111111111111");
+    SOLANA_SCHEMA.set(PublicKey3, {
       kind: "struct",
       fields: [["_bn", "u256"]]
     });
@@ -31551,7 +31551,7 @@ var require_index_cjs = __commonJS({
        * The public key for this account
        */
       get publicKey() {
-        return new PublicKey2(this._publicKey);
+        return new PublicKey3(this._publicKey);
       }
       /**
        * The **unencrypted** secret key for this account. The first 32 bytes
@@ -31562,7 +31562,7 @@ var require_index_cjs = __commonJS({
         return buffer2.Buffer.concat([this._secretKey, this._publicKey], 64);
       }
     };
-    var BPF_LOADER_DEPRECATED_PROGRAM_ID = new PublicKey2("BPFLoader1111111111111111111111111111111111");
+    var BPF_LOADER_DEPRECATED_PROGRAM_ID = new PublicKey3("BPFLoader1111111111111111111111111111111111");
     var PACKET_DATA_SIZE = 1280 - 40 - 8;
     var VERSION_PREFIX_MASK = 127;
     var SIGNATURE_LENGTH_IN_BYTES = 64;
@@ -31795,7 +31795,7 @@ var require_index_cjs = __commonJS({
           const [payerAddress] = writableSigners[0];
           assert8(payerAddress === this.payer.toBase58(), "Expected first writable signer key to be the fee payer");
         }
-        const staticAccountKeys = [...writableSigners.map(([address]) => new PublicKey2(address)), ...readonlySigners.map(([address]) => new PublicKey2(address)), ...writableNonSigners.map(([address]) => new PublicKey2(address)), ...readonlyNonSigners.map(([address]) => new PublicKey2(address))];
+        const staticAccountKeys = [...writableSigners.map(([address]) => new PublicKey3(address)), ...readonlySigners.map(([address]) => new PublicKey3(address)), ...writableNonSigners.map(([address]) => new PublicKey3(address)), ...readonlyNonSigners.map(([address]) => new PublicKey3(address))];
         return [header, staticAccountKeys];
       }
       extractTableLookup(lookupTable) {
@@ -31819,7 +31819,7 @@ var require_index_cjs = __commonJS({
         const drainedKeys = new Array();
         for (const [address, keyMeta] of this.keyMetaMap.entries()) {
           if (keyMetaFilter(keyMeta)) {
-            const key = new PublicKey2(address);
+            const key = new PublicKey3(address);
             const lookupTableIndex = lookupTableEntries.findIndex((entry) => entry.equals(key));
             if (lookupTableIndex >= 0) {
               assert8(lookupTableIndex < 256, "Max lookup table index exceeded");
@@ -31854,7 +31854,7 @@ var require_index_cjs = __commonJS({
         this.instructions = void 0;
         this.indexToProgramIds = /* @__PURE__ */ new Map();
         this.header = args.header;
-        this.accountKeys = args.accountKeys.map((account) => new PublicKey2(account));
+        this.accountKeys = args.accountKeys.map((account) => new PublicKey3(account));
         this.recentBlockhash = args.recentBlockhash;
         this.instructions = args.instructions;
         this.instructions.forEach((ix) => this.indexToProgramIds.set(ix.programIdIndex, this.accountKeys[ix.programIdIndex]));
@@ -31980,7 +31980,7 @@ var require_index_cjs = __commonJS({
         let accountKeys = [];
         for (let i = 0; i < accountCount; i++) {
           const account = guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH);
-          accountKeys.push(new PublicKey2(buffer2.Buffer.from(account)));
+          accountKeys.push(new PublicKey3(buffer2.Buffer.from(account)));
         }
         const recentBlockhash = guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH);
         const instructionCount = decodeLength(byteArray);
@@ -32204,7 +32204,7 @@ var require_index_cjs = __commonJS({
         const staticAccountKeys = [];
         const staticAccountKeysLength = decodeLength(byteArray);
         for (let i = 0; i < staticAccountKeysLength; i++) {
-          staticAccountKeys.push(new PublicKey2(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH)));
+          staticAccountKeys.push(new PublicKey3(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH)));
         }
         const recentBlockhash = bs58__default.default.encode(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH));
         const instructionCount = decodeLength(byteArray);
@@ -32224,7 +32224,7 @@ var require_index_cjs = __commonJS({
         const addressTableLookupsCount = decodeLength(byteArray);
         const addressTableLookups = [];
         for (let i = 0; i < addressTableLookupsCount; i++) {
-          const accountKey = new PublicKey2(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH));
+          const accountKey = new PublicKey3(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH));
           const writableIndexesLength = decodeLength(byteArray);
           const writableIndexes = guardedSplice(byteArray, 0, writableIndexesLength);
           const readonlyIndexesLength = decodeLength(byteArray);
@@ -32330,7 +32330,7 @@ var require_index_cjs = __commonJS({
         const staticAccountKeysLength = guardedShift(byteArray);
         const staticAccountKeys = [];
         for (let i = 0; i < staticAccountKeysLength; i++) {
-          staticAccountKeys.push(new PublicKey2(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH)));
+          staticAccountKeys.push(new PublicKey3(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH)));
         }
         const transactionConfig = {
           computeUnitLimit: null,
@@ -32601,7 +32601,7 @@ var require_index_cjs = __commonJS({
         });
         programIds.forEach((programId) => {
           accountMetas.push({
-            pubkey: new PublicKey2(programId),
+            pubkey: new PublicKey3(programId),
             isSigner: false,
             isWritable: false
           });
@@ -33210,15 +33210,15 @@ Missing signature for public key${sigErrors.missing.length === 1 ? "" : "(s)"} [
     var DEFAULT_TICKS_PER_SLOT = 64;
     var NUM_SLOTS_PER_SECOND = NUM_TICKS_PER_SECOND / DEFAULT_TICKS_PER_SLOT;
     var MS_PER_SLOT = 1e3 / NUM_SLOTS_PER_SECOND;
-    var SYSVAR_CLOCK_PUBKEY = new PublicKey2("SysvarC1ock11111111111111111111111111111111");
-    var SYSVAR_EPOCH_SCHEDULE_PUBKEY = new PublicKey2("SysvarEpochSchedu1e111111111111111111111111");
-    var SYSVAR_INSTRUCTIONS_PUBKEY = new PublicKey2("Sysvar1nstructions1111111111111111111111111");
-    var SYSVAR_RECENT_BLOCKHASHES_PUBKEY = new PublicKey2("SysvarRecentB1ockHashes11111111111111111111");
-    var SYSVAR_RENT_PUBKEY = new PublicKey2("SysvarRent111111111111111111111111111111111");
-    var SYSVAR_REWARDS_PUBKEY = new PublicKey2("SysvarRewards111111111111111111111111111111");
-    var SYSVAR_SLOT_HASHES_PUBKEY = new PublicKey2("SysvarS1otHashes111111111111111111111111111");
-    var SYSVAR_SLOT_HISTORY_PUBKEY = new PublicKey2("SysvarS1otHistory11111111111111111111111111");
-    var SYSVAR_STAKE_HISTORY_PUBKEY = new PublicKey2("SysvarStakeHistory1111111111111111111111111");
+    var SYSVAR_CLOCK_PUBKEY = new PublicKey3("SysvarC1ock11111111111111111111111111111111");
+    var SYSVAR_EPOCH_SCHEDULE_PUBKEY = new PublicKey3("SysvarEpochSchedu1e111111111111111111111111");
+    var SYSVAR_INSTRUCTIONS_PUBKEY = new PublicKey3("Sysvar1nstructions1111111111111111111111111");
+    var SYSVAR_RECENT_BLOCKHASHES_PUBKEY = new PublicKey3("SysvarRecentB1ockHashes11111111111111111111");
+    var SYSVAR_RENT_PUBKEY = new PublicKey3("SysvarRent111111111111111111111111111111111");
+    var SYSVAR_REWARDS_PUBKEY = new PublicKey3("SysvarRewards111111111111111111111111111111");
+    var SYSVAR_SLOT_HASHES_PUBKEY = new PublicKey3("SysvarS1otHashes111111111111111111111111111");
+    var SYSVAR_SLOT_HISTORY_PUBKEY = new PublicKey3("SysvarS1otHistory11111111111111111111111111");
+    var SYSVAR_STAKE_HISTORY_PUBKEY = new PublicKey3("SysvarStakeHistory1111111111111111111111111");
     var SendTransactionError = class extends Error {
       constructor({
         action,
@@ -33409,8 +33409,8 @@ Message: ${transactionMessage}.
       static fromAccountData(buffer3) {
         const nonceAccount = NonceAccountLayout.decode(toBuffer(buffer3), 0);
         return new _NonceAccount({
-          authorizedPubkey: new PublicKey2(nonceAccount.authorizedPubkey),
-          nonce: new PublicKey2(nonceAccount.nonce).toString(),
+          authorizedPubkey: new PublicKey3(nonceAccount.authorizedPubkey),
+          nonce: new PublicKey3(nonceAccount.nonce).toString(),
           feeCalculator: nonceAccount.feeCalculator
         });
       }
@@ -33472,7 +33472,7 @@ Message: ${transactionMessage}.
           newAccountPubkey: instruction.keys[1].pubkey,
           lamports,
           space,
-          programId: new PublicKey2(programId)
+          programId: new PublicKey3(programId)
         };
       }
       /**
@@ -33507,7 +33507,7 @@ Message: ${transactionMessage}.
           toPubkey: instruction.keys[2].pubkey,
           lamports,
           seed,
-          programId: new PublicKey2(programId)
+          programId: new PublicKey3(programId)
         };
       }
       /**
@@ -33538,10 +33538,10 @@ Message: ${transactionMessage}.
         } = decodeData$1(SYSTEM_INSTRUCTION_LAYOUTS.AllocateWithSeed, instruction.data);
         return {
           accountPubkey: instruction.keys[0].pubkey,
-          basePubkey: new PublicKey2(base3),
+          basePubkey: new PublicKey3(base3),
           seed,
           space,
-          programId: new PublicKey2(programId)
+          programId: new PublicKey3(programId)
         };
       }
       /**
@@ -33555,7 +33555,7 @@ Message: ${transactionMessage}.
         } = decodeData$1(SYSTEM_INSTRUCTION_LAYOUTS.Assign, instruction.data);
         return {
           accountPubkey: instruction.keys[0].pubkey,
-          programId: new PublicKey2(programId)
+          programId: new PublicKey3(programId)
         };
       }
       /**
@@ -33571,9 +33571,9 @@ Message: ${transactionMessage}.
         } = decodeData$1(SYSTEM_INSTRUCTION_LAYOUTS.AssignWithSeed, instruction.data);
         return {
           accountPubkey: instruction.keys[0].pubkey,
-          basePubkey: new PublicKey2(base3),
+          basePubkey: new PublicKey3(base3),
           seed,
-          programId: new PublicKey2(programId)
+          programId: new PublicKey3(programId)
         };
       }
       /**
@@ -33592,11 +33592,11 @@ Message: ${transactionMessage}.
         return {
           fromPubkey: instruction.keys[0].pubkey,
           newAccountPubkey: instruction.keys[1].pubkey,
-          basePubkey: new PublicKey2(base3),
+          basePubkey: new PublicKey3(base3),
           seed,
           lamports,
           space,
-          programId: new PublicKey2(programId)
+          programId: new PublicKey3(programId)
         };
       }
       /**
@@ -33610,7 +33610,7 @@ Message: ${transactionMessage}.
         } = decodeData$1(SYSTEM_INSTRUCTION_LAYOUTS.InitializeNonceAccount, instruction.data);
         return {
           noncePubkey: instruction.keys[0].pubkey,
-          authorizedPubkey: new PublicKey2(authorized2)
+          authorizedPubkey: new PublicKey3(authorized2)
         };
       }
       /**
@@ -33653,7 +33653,7 @@ Message: ${transactionMessage}.
         return {
           noncePubkey: instruction.keys[0].pubkey,
           authorizedPubkey: instruction.keys[1].pubkey,
-          newAuthorizedPubkey: new PublicKey2(authorized2)
+          newAuthorizedPubkey: new PublicKey3(authorized2)
         };
       }
       /**
@@ -34062,7 +34062,7 @@ Message: ${transactionMessage}.
         });
       }
     };
-    SystemProgram.programId = new PublicKey2("11111111111111111111111111111111");
+    SystemProgram.programId = new PublicKey3("11111111111111111111111111111111");
     var CHUNK_SIZE = PACKET_DATA_SIZE - 300;
     var Loader = class _Loader {
       /**
@@ -34229,7 +34229,7 @@ Message: ${transactionMessage}.
       }
     };
     Loader.chunkSize = CHUNK_SIZE;
-    var BPF_LOADER_PROGRAM_ID = new PublicKey2("BPFLoader2111111111111111111111111111111111");
+    var BPF_LOADER_PROGRAM_ID = new PublicKey3("BPFLoader2111111111111111111111111111111111");
     var BpfLoader = class {
       /**
        * Minimum number of signatures required to load a program not including
@@ -35027,8 +35027,8 @@ Message: ${transactionMessage}.
           deactivationSlot: meta.deactivationSlot,
           lastExtendedSlot: meta.lastExtendedSlot,
           lastExtendedSlotStartIndex: meta.lastExtendedStartIndex,
-          authority: meta.authority.length !== 0 ? new PublicKey2(meta.authority[0]) : void 0,
-          addresses: addresses.map((address) => new PublicKey2(address))
+          authority: meta.authority.length !== 0 ? new PublicKey3(meta.authority[0]) : void 0,
+          addresses: addresses.map((address) => new PublicKey3(address))
         };
       }
     };
@@ -35070,7 +35070,7 @@ Message: ${transactionMessage}.
       );
       return `${protocol}//${hostish}${websocketPort}${rest}`;
     }
-    var PublicKeyFromString = superstruct.coerce(superstruct.instance(PublicKey2), superstruct.string(), (value) => new PublicKey2(value));
+    var PublicKeyFromString = superstruct.coerce(superstruct.instance(PublicKey3), superstruct.string(), (value) => new PublicKey3(value));
     var RawAccountDataResult = superstruct.tuple([superstruct.string(), superstruct.literal("base64")]);
     var BufferFromRawAccountData = superstruct.coerce(superstruct.instance(buffer2.Buffer), RawAccountDataResult, (value) => buffer2.Buffer.from(value[0], "base64"));
     var BLOCKHASH_CACHE_TIMEOUT_MS = 30 * 1e3;
@@ -35155,7 +35155,7 @@ Message: ${transactionMessage}.
       if (version6 === 0) {
         return new MessageV0({
           header: response.header,
-          staticAccountKeys: response.accountKeys.map((accountKey) => new PublicKey2(accountKey)),
+          staticAccountKeys: response.accountKeys.map((accountKey) => new PublicKey3(accountKey)),
           recentBlockhash: response.recentBlockhash,
           compiledInstructions: response.instructions.map((ix) => ({
             programIdIndex: ix.programIdIndex,
@@ -35171,7 +35171,7 @@ Message: ${transactionMessage}.
         }
         return new MessageV1({
           header: response.header,
-          staticAccountKeys: response.accountKeys.map((accountKey) => new PublicKey2(accountKey)),
+          staticAccountKeys: response.accountKeys.map((accountKey) => new PublicKey3(accountKey)),
           recentBlockhash: response.recentBlockhash,
           compiledInstructions: response.instructions.map((ix) => ({
             programIdIndex: ix.programIdIndex,
@@ -38619,7 +38619,7 @@ Message: ${transactionMessage}.
        * @returns {PublicKey} PublicKey
        */
       get publicKey() {
-        return new PublicKey2(this._keypair.publicKey);
+        return new PublicKey3(this._keypair.publicKey);
       }
       /**
        * The raw secret key for this keypair
@@ -38697,7 +38697,7 @@ Message: ${transactionMessage}.
           lookupTable: instruction.keys[0].pubkey,
           authority: instruction.keys[1].pubkey,
           payer: instruction.keys.length > 2 ? instruction.keys[2].pubkey : void 0,
-          addresses: addresses.map((buffer3) => new PublicKey2(buffer3))
+          addresses: addresses.map((buffer3) => new PublicKey3(buffer3))
         };
       }
       static decodeCloseLookupTable(instruction) {
@@ -38749,7 +38749,7 @@ Message: ${transactionMessage}.
       constructor() {
       }
       static createLookupTable(params) {
-        const [lookupTableAddress, bumpSeed] = PublicKey2.findProgramAddressSync([params.authority.toBuffer(), codecsNumbers.getU64Encoder().encode(params.recentSlot)], this.programId);
+        const [lookupTableAddress, bumpSeed] = PublicKey3.findProgramAddressSync([params.authority.toBuffer(), codecsNumbers.getU64Encoder().encode(params.recentSlot)], this.programId);
         const type = LOOKUP_TABLE_INSTRUCTION_LAYOUTS.CreateLookupTable;
         const data = encodeData3(type, {
           recentSlot: BigInt(params.recentSlot),
@@ -38868,7 +38868,7 @@ Message: ${transactionMessage}.
         });
       }
     };
-    AddressLookupTableProgram.programId = new PublicKey2("AddressLookupTab1e1111111111111111111111111");
+    AddressLookupTableProgram.programId = new PublicKey3("AddressLookupTab1e1111111111111111111111111");
     var ComputeBudgetInstruction = class {
       /**
        * @internal
@@ -39022,7 +39022,7 @@ Message: ${transactionMessage}.
         });
       }
     };
-    ComputeBudgetProgram.programId = new PublicKey2("ComputeBudget111111111111111111111111111111");
+    ComputeBudgetProgram.programId = new PublicKey3("ComputeBudget111111111111111111111111111111");
     var PRIVATE_KEY_BYTES$1 = 64;
     var PUBLIC_KEY_BYTES$1 = 32;
     var SIGNATURE_BYTES = 64;
@@ -39102,7 +39102,7 @@ Message: ${transactionMessage}.
         }
       }
     };
-    Ed25519Program.programId = new PublicKey2("Ed25519SigVerify111111111111111111111111111");
+    Ed25519Program.programId = new PublicKey3("Ed25519SigVerify111111111111111111111111111");
     var ecdsaSign = (msgHash, privKey) => {
       const signature2 = secp256k14.secp256k1.sign(msgHash, privKey);
       return [signature2.toCompactRawBytes(), signature2.recovery];
@@ -39236,9 +39236,9 @@ Message: ${transactionMessage}.
         }
       }
     };
-    Secp256k1Program.programId = new PublicKey2("KeccakSecp256k11111111111111111111111111111");
+    Secp256k1Program.programId = new PublicKey3("KeccakSecp256k11111111111111111111111111111");
     var _Lockup;
-    var STAKE_CONFIG_ID = new PublicKey2("StakeConfig11111111111111111111111111111111");
+    var STAKE_CONFIG_ID = new PublicKey3("StakeConfig11111111111111111111111111111111");
     var Authorized = class {
       /**
        * Create a new Authorized object
@@ -39269,7 +39269,7 @@ Message: ${transactionMessage}.
        */
     };
     _Lockup = Lockup;
-    Lockup.default = new _Lockup(0, 0, PublicKey2.default);
+    Lockup.default = new _Lockup(0, 0, PublicKey3.default);
     var StakeInstruction = class {
       /**
        * @internal
@@ -39307,8 +39307,8 @@ Message: ${transactionMessage}.
         } = decodeData$1(STAKE_INSTRUCTION_LAYOUTS.Initialize, instruction.data);
         return {
           stakePubkey: instruction.keys[0].pubkey,
-          authorized: new Authorized(new PublicKey2(authorized2.staker), new PublicKey2(authorized2.withdrawer)),
-          lockup: new Lockup(lockup2.unixTimestamp, lockup2.epoch, new PublicKey2(lockup2.custodian))
+          authorized: new Authorized(new PublicKey3(authorized2.staker), new PublicKey3(authorized2.withdrawer)),
+          lockup: new Lockup(lockup2.unixTimestamp, lockup2.epoch, new PublicKey3(lockup2.custodian))
         };
       }
       /**
@@ -39337,7 +39337,7 @@ Message: ${transactionMessage}.
         const o = {
           stakePubkey: instruction.keys[0].pubkey,
           authorizedPubkey: instruction.keys[2].pubkey,
-          newAuthorizedPubkey: new PublicKey2(newAuthorized),
+          newAuthorizedPubkey: new PublicKey3(newAuthorized),
           stakeAuthorizationType: {
             index: stakeAuthorizationType
           }
@@ -39363,8 +39363,8 @@ Message: ${transactionMessage}.
           stakePubkey: instruction.keys[0].pubkey,
           authorityBase: instruction.keys[1].pubkey,
           authoritySeed,
-          authorityOwner: new PublicKey2(authorityOwner),
-          newAuthorizedPubkey: new PublicKey2(newAuthorized),
+          authorityOwner: new PublicKey3(authorityOwner),
+          newAuthorizedPubkey: new PublicKey3(newAuthorized),
           stakeAuthorizationType: {
             index: stakeAuthorizationType
           }
@@ -39918,7 +39918,7 @@ Message: ${transactionMessage}.
         });
       }
     };
-    StakeProgram.programId = new PublicKey2("Stake11111111111111111111111111111111111111");
+    StakeProgram.programId = new PublicKey3("Stake11111111111111111111111111111111111111");
     StakeProgram.space = 200;
     var VoteInit = class {
       /** [0, 100] */
@@ -39970,7 +39970,7 @@ Message: ${transactionMessage}.
         return {
           votePubkey: instruction.keys[0].pubkey,
           nodePubkey: instruction.keys[3].pubkey,
-          voteInit: new VoteInit(new PublicKey2(voteInit2.nodePubkey), new PublicKey2(voteInit2.authorizedVoter), new PublicKey2(voteInit2.authorizedWithdrawer), voteInit2.commission)
+          voteInit: new VoteInit(new PublicKey3(voteInit2.nodePubkey), new PublicKey3(voteInit2.authorizedVoter), new PublicKey3(voteInit2.authorizedWithdrawer), voteInit2.commission)
         };
       }
       /**
@@ -39986,7 +39986,7 @@ Message: ${transactionMessage}.
         return {
           votePubkey: instruction.keys[0].pubkey,
           authorizedPubkey: instruction.keys[2].pubkey,
-          newAuthorizedPubkey: new PublicKey2(newAuthorized),
+          newAuthorizedPubkey: new PublicKey3(newAuthorized),
           voteAuthorizationType: {
             index: voteAuthorizationType
           }
@@ -40008,9 +40008,9 @@ Message: ${transactionMessage}.
         } = decodeData$1(VOTE_INSTRUCTION_LAYOUTS.AuthorizeWithSeed, instruction.data);
         return {
           currentAuthorityDerivedKeyBasePubkey: instruction.keys[2].pubkey,
-          currentAuthorityDerivedKeyOwnerPubkey: new PublicKey2(currentAuthorityDerivedKeyOwnerPubkey),
+          currentAuthorityDerivedKeyOwnerPubkey: new PublicKey3(currentAuthorityDerivedKeyOwnerPubkey),
           currentAuthorityDerivedKeySeed,
-          newAuthorizedPubkey: new PublicKey2(newAuthorized),
+          newAuthorizedPubkey: new PublicKey3(newAuthorized),
           voteAuthorizationType: {
             index: voteAuthorizationType
           },
@@ -40301,9 +40301,9 @@ Message: ${transactionMessage}.
         });
       }
     };
-    VoteProgram.programId = new PublicKey2("Vote111111111111111111111111111111111111111");
+    VoteProgram.programId = new PublicKey3("Vote111111111111111111111111111111111111111");
     VoteProgram.space = 3762;
-    var VALIDATOR_INFO_KEY = new PublicKey2("Va1idator1nfo111111111111111111111111111111");
+    var VALIDATOR_INFO_KEY = new PublicKey3("Va1idator1nfo111111111111111111111111111111");
     var InfoString = superstruct.type({
       name: superstruct.string(),
       website: superstruct.optional(superstruct.string()),
@@ -40337,7 +40337,7 @@ Message: ${transactionMessage}.
         if (configKeyCount !== 2) return null;
         const configKeys = [];
         for (let i = 0; i < 2; i++) {
-          const publicKey2 = new PublicKey2(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH));
+          const publicKey2 = new PublicKey3(guardedSplice(byteArray, 0, PUBLIC_KEY_LENGTH));
           const isSigner = guardedShift(byteArray) === 1;
           configKeys.push({
             publicKey: publicKey2,
@@ -40355,7 +40355,7 @@ Message: ${transactionMessage}.
         return null;
       }
     };
-    var VOTE_PROGRAM_ID = new PublicKey2("Vote111111111111111111111111111111111111111");
+    var VOTE_PROGRAM_ID = new PublicKey3("Vote111111111111111111111111111111111111111");
     var VoteAccountLayout = BufferLayout__namespace.struct([
       publicKey("nodePubkey"),
       publicKey("authorizedWithdrawer"),
@@ -40412,8 +40412,8 @@ Message: ${transactionMessage}.
           rootSlot = null;
         }
         return new _VoteAccount({
-          nodePubkey: new PublicKey2(va.nodePubkey),
-          authorizedWithdrawer: new PublicKey2(va.authorizedWithdrawer),
+          nodePubkey: new PublicKey3(va.nodePubkey),
+          authorizedWithdrawer: new PublicKey3(va.authorizedWithdrawer),
           commission: va.commission,
           votes: va.votes,
           rootSlot,
@@ -40430,7 +40430,7 @@ Message: ${transactionMessage}.
     }) {
       return {
         epoch,
-        authorizedVoter: new PublicKey2(authorizedVoter)
+        authorizedVoter: new PublicKey3(authorizedVoter)
       };
     }
     function parsePriorVoters({
@@ -40439,7 +40439,7 @@ Message: ${transactionMessage}.
       targetEpoch
     }) {
       return {
-        authorizedPubkey: new PublicKey2(authorizedPubkey),
+        authorizedPubkey: new PublicKey3(authorizedPubkey),
         epochOfLastAuthorizedSwitch,
         targetEpoch
       };
@@ -40542,7 +40542,7 @@ Message: ${transactionMessage}.
     exports.NonceAccount = NonceAccount;
     exports.PACKET_DATA_SIZE = PACKET_DATA_SIZE;
     exports.PUBLIC_KEY_LENGTH = PUBLIC_KEY_LENGTH;
-    exports.PublicKey = PublicKey2;
+    exports.PublicKey = PublicKey3;
     exports.SIGNATURE_LENGTH_IN_BYTES = SIGNATURE_LENGTH_IN_BYTES;
     exports.SOLANA_SCHEMA = SOLANA_SCHEMA;
     exports.STAKE_CONFIG_ID = STAKE_CONFIG_ID;
@@ -50835,7 +50835,8 @@ var ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 var WSOL_MINT = "So11111111111111111111111111111111111111112";
 var SOLANA_ALLOWED_PROGRAMS = /* @__PURE__ */ new Set([JUPITER_PROGRAM, SYSTEM_PROGRAM, COMPUTE_BUDGET, TOKEN_PROGRAM, TOKEN_2022, ATA_PROGRAM]);
 var ata = (owner, mint, tokenProgram) => import_web3.PublicKey.findProgramAddressSync([owner.toBuffer(), new import_web3.PublicKey(tokenProgram).toBuffer(), new import_web3.PublicKey(mint).toBuffer()], new import_web3.PublicKey(ATA_PROGRAM))[0].toBase58();
-function checkSolanaTx(tx, ownerAddress) {
+function checkSolanaTx(tx, ownerAddress, opts = {}) {
+  const bridge = opts.bridge === true;
   const problems = [];
   const owner = new import_web3.PublicKey(ownerAddress);
   const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
@@ -50845,14 +50846,16 @@ function checkSolanaTx(tx, ownerAddress) {
   for (const ix of tx.message.compiledInstructions) {
     const program = key(ix.programIdIndex);
     const data = ix.data;
-    if (!program || !SOLANA_ALLOWED_PROGRAMS.has(program)) {
+    if (!program || !SOLANA_ALLOWED_PROGRAMS.has(program) && !bridge) {
       problems.push(`programa no permitido: ${program ?? "(desde una tabla de direcciones)"}`);
       continue;
     }
     if (program === SYSTEM_PROGRAM) {
       const type = data.length >= 4 ? new DataView(data.buffer, data.byteOffset).getUint32(0, true) : -1;
       const to = key(ix.accountKeyIndexes[1] ?? -1);
-      if (type !== 2 || !to || !ownAccounts.has(to)) problems.push("transferencia de SOL a una cuenta que no es de la IA");
+      if (type === 2 && to && ownAccounts.has(to)) continue;
+      if (bridge && (type === 0 || type === 2)) continue;
+      problems.push("transferencia de SOL a una cuenta que no es de la IA");
     } else if (program === TOKEN_PROGRAM || program === TOKEN_2022) {
       const op = data[0];
       if (op === 17) continue;
@@ -50860,22 +50863,48 @@ function checkSolanaTx(tx, ownerAddress) {
         if (key(ix.accountKeyIndexes[1] ?? -1) !== ownerAddress) problems.push("cierre de cuenta de token hacia otra cartera");
         continue;
       }
+      if (bridge && (op === 3 || op === 12 || op === 1 || op === 16 || op === 18)) continue;
       problems.push(`instrucci\xF3n de token no permitida (${op})`);
     } else if (program === ATA_PROGRAM) {
       const payer = key(ix.accountKeyIndexes[0] ?? -1);
       const wallet = key(ix.accountKeyIndexes[2] ?? -1);
-      if (payer !== ownerAddress || wallet !== ownerAddress) problems.push("crea una cuenta de token para otra cartera");
+      if (payer !== ownerAddress || wallet !== ownerAddress && !bridge) problems.push("crea una cuenta de token para otra cartera");
     }
   }
   return problems;
+}
+function checkSolanaSpend(ownerAddress, pre, post, budget) {
+  const problems = [];
+  const spentByMint = /* @__PURE__ */ new Map();
+  for (const a of pre) {
+    const after = post.get(a.address);
+    if (a.address === ownerAddress) {
+      const spent2 = a.lamports - (after?.lamports ?? 0n);
+      if (spent2 > budget.lamports) problems.push(`gastar\xEDa ${spent2} lamports de SOL, m\xE1s de lo aprobado (${budget.lamports})`);
+      continue;
+    }
+    if (!a.mint || a.amount === void 0) continue;
+    const spent = a.amount - (after?.amount ?? 0n);
+    if (spent > 0n) spentByMint.set(a.mint, (spentByMint.get(a.mint) ?? 0n) + spent);
+  }
+  for (const [mint, spent] of spentByMint) {
+    const allowed = budget.tokens[mint] ?? 0n;
+    if (spent > allowed) problems.push(`sacar\xEDa ${spent} unidades del token ${mint}, m\xE1s de lo aprobado (${allowed})`);
+  }
+  return problems;
+}
+function parseTokenAccount(data) {
+  if (data.length < 72) return null;
+  return { mint: new import_web3.PublicKey(data.slice(0, 32)).toBase58(), amount: new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) };
 }
 var EVM_ROUTERS = {
   8453: /* @__PURE__ */ new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"]),
   56: /* @__PURE__ */ new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"])
 };
+var LIFI_DIAMOND = "0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae";
 var APPROVE = "0x095ea7b3";
 var MAX_UINT = (1n << 256n) - 1n;
-function checkEvmTx(tx, kind, ownerAddress) {
+function checkEvmTx(tx, kind, ownerAddress, limits) {
   const problems = [];
   const routers = EVM_ROUTERS[tx.chainId];
   if (!routers) return [`cadena no permitida (${tx.chainId})`];
@@ -50886,16 +50915,25 @@ function checkEvmTx(tx, kind, ownerAddress) {
     if (BigInt(tx.value || "0") !== 0n) problems.push("un approve no env\xEDa nativo");
     const spender = "0x" + data.slice(10 + 24, 10 + 64);
     const amount = BigInt("0x" + data.slice(10 + 64));
-    if (!routers.has(spender)) problems.push(`approve a un contrato no permitido (${spender})`);
+    if (!routers.has(spender) && spender !== LIFI_DIAMOND) problems.push(`approve a un contrato no permitido (${spender})`);
     if (amount === MAX_UINT) problems.push("approve ilimitado: solo se aprueba la cantidad exacta");
+    return problems;
+  }
+  if (kind === "bridge") {
+    if (!limits) return ["faltan los l\xEDmites del puente"];
+    if (tx.to.toLowerCase() !== LIFI_DIAMOND) problems.push(`un puente solo puede ir al contrato de Li.Fi (va a ${tx.to})`);
+    if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el puente env\xEDa m\xE1s nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
+    if (limits.destEvm && !data.includes(owner)) problems.push("el destinatario del puente no es la cartera de la IA");
     return problems;
   }
   if (!routers.has(tx.to.toLowerCase())) problems.push(`contrato no permitido (${tx.to})`);
   if (!data.includes(owner)) problems.push("el destinatario del swap no es la cartera de la IA");
+  if (!limits) problems.push("faltan los l\xEDmites del swap");
+  else if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el swap env\xEDa m\xE1s nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
   return problems;
 }
 function checkLimits(c) {
-  if (c.side === "sell") return [];
+  if (c.side === "sell" || c.side === "move") return [];
   const problems = [];
   if (c.usd > c.maxTradeUsd * 1.02) problems.push(`la operaci\xF3n (${c.usd.toFixed(2)} $) supera el m\xE1ximo por operaci\xF3n (${c.maxTradeUsd.toFixed(2)} $)`);
   const floor = c.initialUsd * (1 - c.maxLossPct / 100);
@@ -63088,14 +63126,41 @@ init_chain();
 var PolicyError = class extends Error {
 };
 var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
-async function sendSolana(accounts, txBase64) {
+var TOKEN_PROGRAMS2 = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
+async function sendSolana(accounts, txBase64, opts) {
   const tx = import_web32.VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
-  const problems = checkSolanaTx(tx, accounts.solana.address);
+  const owner = accounts.solana.address;
+  const problems = checkSolanaTx(tx, owner, { bridge: opts.bridge });
   if (problems.length) throw new PolicyError(`El firmante rechaza la transacci\xF3n: ${problems.join("; ")}`);
   const conn = new import_web32.Connection(solanaRpcUrl(), "confirmed");
   tx.sign([import_web32.Keypair.fromSecretKey(accounts.solana.secretKey)]);
-  const sim = await conn.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: false });
+  const writable = await writableAccounts(conn, tx);
+  const ownerKey = new import_web32.PublicKey(owner);
+  const pre = [{ address: owner, lamports: BigInt(await conn.getBalance(ownerKey)) }];
+  for (const programId of TOKEN_PROGRAMS2) {
+    const { value } = await conn.getTokenAccountsByOwner(ownerKey, { programId: new import_web32.PublicKey(programId) });
+    for (const a of value) {
+      if (!writable.has(a.pubkey.toBase58())) continue;
+      const t = parseTokenAccount(a.account.data);
+      if (t) pre.push({ address: a.pubkey.toBase58(), lamports: BigInt(a.account.lamports), ...t });
+    }
+  }
+  if (pre.length > 15) throw new PolicyError("La transacci\xF3n toca demasiadas cuentas de la cartera para comprobarla: no se firma");
+  const sim = await conn.simulateTransaction(tx, {
+    sigVerify: false,
+    replaceRecentBlockhash: false,
+    accounts: { encoding: "base64", addresses: pre.map((a) => a.address) }
+  });
   if (sim.value.err) throw new Error(`La simulaci\xF3n falla, no se env\xEDa: ${JSON.stringify(sim.value.err)} ${(sim.value.logs ?? []).slice(-3).join(" | ")}`);
+  const post = /* @__PURE__ */ new Map();
+  pre.forEach((a, i) => {
+    const acc = sim.value.accounts?.[i];
+    if (!acc) return post.set(a.address, null);
+    const data = Buffer.from(acc.data[0], "base64");
+    post.set(a.address, { address: a.address, lamports: BigInt(acc.lamports), ...a.mint ? parseTokenAccount(data) ?? {} : {} });
+  });
+  const spend = checkSolanaSpend(owner, pre, post, opts.budget);
+  if (spend.length) throw new PolicyError(`El firmante rechaza la transacci\xF3n: ${spend.join("; ")}`);
   const raw = tx.serialize();
   const hash3 = await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
   const deadline = Date.now() + 9e4;
@@ -63110,9 +63175,21 @@ async function sendSolana(accounts, txBase64) {
   }
   return { hash: hash3, ok: false, error: "no se confirm\xF3 a tiempo (puede que no se haya incluido): revisa el explorador" };
 }
+async function writableAccounts(conn, tx) {
+  const msg = tx.message;
+  const keys = msg.staticAccountKeys;
+  const out = /* @__PURE__ */ new Set();
+  keys.forEach((k, i) => msg.isAccountWritable(i) && out.add(k.toBase58()));
+  for (const lookup of msg.addressTableLookups) {
+    const table = (await conn.getAddressLookupTable(lookup.accountKey)).value;
+    if (!table) throw new PolicyError("No se puede leer una tabla de direcciones de la transacci\xF3n: no se firma");
+    for (const i of lookup.writableIndexes) out.add(table.state.addresses[i].toBase58());
+  }
+  return out;
+}
 var VIEM_CHAINS = { 8453: base2, 56: bsc2 };
-async function sendEvm(accounts, tx, kind) {
-  const problems = checkEvmTx(tx, kind, accounts.evm.address);
+async function sendEvm(accounts, tx, kind, limits) {
+  const problems = checkEvmTx(tx, kind, accounts.evm.address, limits);
   if (problems.length) throw new PolicyError(`El firmante rechaza la transacci\xF3n: ${problems.join("; ")}`);
   const chain2 = VIEM_CHAINS[tx.chainId];
   const rpc = Object.values(EVM_CHAINS).find((c) => c.chainId === tx.chainId).rpc;
@@ -63247,13 +63324,22 @@ function createSignerServer(opts) {
     const accounts = ready();
     const t = state.tickets.get(String(body.ticket ?? ""));
     if (!t || t.expiresAt < Date.now()) throw new HttpError(403, "Operaci\xF3n no aprobada o aprobaci\xF3n caducada");
-    const kind = body.kind === "approve" ? "approve" : "swap";
+    const kind = body.kind === "approve" ? "approve" : body.kind === "bridge" ? "bridge" : "swap";
     if (body.chain !== t.chain) throw new HttpError(403, "La cadena no coincide con la operaci\xF3n aprobada");
-    if (kind === "swap" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operaci\xF3n es mayor que la aprobada");
-    if (kind === "swap") state.tickets.delete(t.id);
+    if (kind === "bridge" !== (t.side === "move")) throw new HttpError(403, "El tipo de operaci\xF3n no coincide con la aprobada");
+    if (kind !== "approve" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operaci\xF3n es mayor que la aprobada");
+    if (kind !== "approve") state.tickets.delete(t.id);
     try {
-      if (t.chain === "solana") return await deps.sendSolana(accounts, String(body.solanaTx ?? ""));
-      return await deps.sendEvm(accounts, body.evmTx, kind);
+      if (t.chain === "solana") {
+        const b = body.budget ?? {};
+        const budget = {
+          lamports: BigInt(b.lamports ?? "0"),
+          tokens: Object.fromEntries(Object.entries(b.tokens ?? {}).map(([k, v]) => [k, BigInt(v)]))
+        };
+        return await deps.sendSolana(accounts, String(body.solanaTx ?? ""), { bridge: kind === "bridge", budget });
+      }
+      const l = body.evmLimits ?? {};
+      return await deps.sendEvm(accounts, body.evmTx, kind, { maxValue: BigInt(l.maxValue ?? "0"), destEvm: l.destEvm === true });
     } catch (err) {
       if (err instanceof PolicyError) throw new HttpError(403, err.message);
       throw err;
@@ -63290,7 +63376,7 @@ function createSignerServer(opts) {
           const t = await approveIntent({
             missionId: Number(b.missionId),
             chain: b.chain,
-            side: b.side === "sell" ? "sell" : "buy",
+            side: b.side === "sell" ? "sell" : b.side === "move" ? "move" : "buy",
             usd: Number(b.usd),
             summary: String(b.summary ?? "").slice(0, 300)
           });

@@ -17,14 +17,14 @@ import { requestIntent, signTx } from "./client.js";
 import { livePub, syncHoldings } from "./sync.js";
 
 /** Nativo que se deja siempre para pagar la red de las siguientes transacciones. */
-const NATIVE_RESERVE: Record<ChainId, number> = { solana: 0.01, base: 0.0003, bsc: 0.002 };
+export const NATIVE_RESERVE: Record<ChainId, number> = { solana: 0.01, base: 0.0003, bsc: 0.002 };
 /** Tope de la prioridad que se paga en Solana por transacción (0,001 SOL). */
 const SOLANA_MAX_PRIORITY_LAMPORTS = 1_000_000;
 
 export const explorerTx = (chain: ChainId, hash: string) =>
   chain === "solana" ? `https://solscan.io/tx/${hash}` : chain === "base" ? `https://basescan.org/tx/${hash}` : `https://bscscan.com/tx/${hash}`;
 
-function logTx(missionId: number, chain: ChainId, kind: string, status: string, summary: string, extra: { hash?: string; usd?: number; error?: string } = {}) {
+export function logLiveTx(missionId: number, chain: ChainId, kind: string, status: string, summary: string, extra: { hash?: string; usd?: number; error?: string } = {}) {
   db.prepare("INSERT INTO live_txs (ts, mission_id, chain, kind, status, summary, tx_hash, explorer_url, usd, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     now(),
     missionId,
@@ -95,7 +95,7 @@ export async function liveSwap(args: LiveSwapArgs) {
   try {
     ticket = await requestIntent({ missionId: m, chain: chain.id, side, usd, summary });
   } catch (err) {
-    logTx(m, chain.id, "swap", "rejected", summary, { usd, error: (err as Error).message });
+    logLiveTx(m, chain.id, "swap", "rejected", summary, { usd, error: (err as Error).message });
     throw err;
   }
 
@@ -124,7 +124,7 @@ export async function liveSwap(args: LiveSwapArgs) {
       },
     });
     if (!built.swapTransaction) throw new Error(`Jupiter no construyó la transacción: ${built.error ?? "sin respuesta"}`);
-    res = await signTx({ ticket, chain: "solana", kind: "swap", usd, solanaTx: built.swapTransaction });
+    res = await signTx({ ticket, chain: "solana", kind: "swap", usd, solanaTx: built.swapTransaction, budget: solanaBudget(input, amountIn) });
   } else {
     const c = EVM_CHAINS[evmChain!];
     const headers = { "x-client-id": "cryptoagent" };
@@ -150,17 +150,24 @@ export async function liveSwap(args: LiveSwapArgs) {
       if (allowance < amountIn) {
         const data = `0x095ea7b3${pad32(router)}${amountIn.toString(16).padStart(64, "0")}`;
         const ap = await signTx({ ticket, chain: chain.id, kind: "approve", usd, evmTx: { chainId: c.chainId, to: input.address, data, value: "0" } });
-        logTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
+        logLiveTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve falló (${explorerTx(chain.id, ap.hash)}): ${ap.error}`);
       }
     }
     pre = await evmBalancesAt(evmChain!, pub.evm, [input, output], "latest");
-    res = await signTx({ ticket, chain: chain.id, kind: "swap", usd, evmTx: { chainId: c.chainId, to: router, data: built.data.data, value: built.data.transactionValue } });
+    res = await signTx({
+      ticket,
+      chain: chain.id,
+      kind: "swap",
+      usd,
+      evmTx: { chainId: c.chainId, to: router, data: built.data.data, value: built.data.transactionValue },
+      evmLimits: { maxValue: (isNativeIn ? amountIn : 0n).toString() },
+    });
   }
 
   const link = explorerTx(chain.id, res.hash);
   if (!res.ok) {
-    logTx(m, chain.id, "swap", "failed", summary, { hash: res.hash, usd, error: res.error });
+    logLiveTx(m, chain.id, "swap", "failed", summary, { hash: res.hash, usd, error: res.error });
     logJournal({ missionId: m, sessionId: args.sessionId, kind: "failed_tx", summary: `Swap REAL fallido en ${chain.label}: ${res.error}`, reasoning: args.reasoning, details: { chain: chain.id, txHash: res.hash, explorer: link } });
     await syncHoldings(m).catch(() => undefined);
     throw new Error(`La transacción falló: ${res.error}. ${link}`);
@@ -171,7 +178,7 @@ export async function liveSwap(args: LiveSwapArgs) {
     console.error(`No se pudo reconciliar ${res.hash}: ${(err as Error).message}`);
     return { sold: amount, received: quote.amountOut, networkFee: null as string | null, estimated: true };
   });
-  logTx(m, chain.id, "swap", "confirmed", summary, { hash: res.hash, usd });
+  logLiveTx(m, chain.id, "swap", "confirmed", summary, { hash: res.hash, usd });
   const result = {
     chain: chain.id,
     real: true,
@@ -205,11 +212,23 @@ export async function liveSwap(args: LiveSwapArgs) {
   return result;
 }
 
+/** Holgura de SOL por transacción: comisión, prioridad (≤ 0,001) y la renta de un par de cuentas nuevas. */
+export const SOLANA_FEE_ALLOWANCE = 10_000_000n;
+
+/** Lo máximo que puede bajar la cartera de Solana en una operación que gasta `amountIn` de `input`. */
+export function solanaBudget(input: TokenRef, amountIn: bigint, extraLamports = 0n) {
+  const isSol = input.address === SOL_MINT;
+  return {
+    lamports: ((isSol ? amountIn : 0n) + SOLANA_FEE_ALLOWANCE + extraLamports).toString(),
+    tokens: isSol ? {} : { [input.address]: amountIn.toString() },
+  };
+}
+
 // ─── Reconciliación ─────────────────────────────────────────────────────────
 
 const pad32 = (addr: string) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
 
-async function rawTokenBalance(chain: ChainId, pub: { solana: string; evm: string }, token: TokenRef): Promise<bigint> {
+export async function rawTokenBalance(chain: ChainId, pub: { solana: string; evm: string }, token: TokenRef): Promise<bigint> {
   if (chain !== "solana") return (await evmBalancesAt(chain as EvmChainId, pub.evm, [token], "latest"))[token.address]!;
   const { value } = await solanaRpc<{ value: Array<{ account: { data: { parsed: { info: { tokenAmount: { amount: string } } } } } }> }>(
     "getTokenAccountsByOwner",
@@ -219,7 +238,7 @@ async function rawTokenBalance(chain: ChainId, pub: { solana: string; evm: strin
   return value.reduce((s, a) => s + BigInt(a.account.data.parsed.info.tokenAmount.amount), 0n);
 }
 
-async function erc20Allowance(chain: EvmChainId, token: string, owner: string, spender: string): Promise<bigint> {
+export async function erc20Allowance(chain: EvmChainId, token: string, owner: string, spender: string): Promise<bigint> {
   const [hex] = (await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token, data: `0xdd62ed3e${pad32(owner)}${pad32(spender)}` }, "latest"] }])) as [string];
   return hex && hex !== "0x" ? BigInt(hex) : 0n;
 }

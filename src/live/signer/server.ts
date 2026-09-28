@@ -15,8 +15,8 @@ import { liveDir, signerInfoFile, type SignerInfo } from "../paths.js";
 import { WALLET_PAGE } from "./page.js";
 import { getMission, type Mission, type MissionLimits } from "../../sim/mission.js";
 import type { ChainId } from "../../sim/types.js";
-import { checkLimits, type EvmTxRequest } from "../policy.js";
-import { PolicyError, sendEvm, sendSolana, type SendResult } from "./send.js";
+import { checkLimits, type EvmTxLimits, type EvmTxRequest, type SolanaSpendBudget } from "../policy.js";
+import { PolicyError, sendEvm, sendSolana, type SendResult, type SolanaSendOptions } from "./send.js";
 
 class HttpError extends Error {
   constructor(
@@ -43,8 +43,8 @@ export interface SignerState {
 export interface Intent {
   missionId: number;
   chain: ChainId;
-  /** buy: se compra un token; sell: se vende a estables (siempre permitido). */
-  side: "buy" | "sell";
+  /** buy: se compra un token; sell: se vende a estables; move: puente de estables o nativo entre cadenas propias. */
+  side: "buy" | "sell" | "move";
   usd: number;
   summary: string;
 }
@@ -65,8 +65,8 @@ const TICKET_TTL_MS = 3 * 60_000;
 export interface SignerDeps {
   getMission: (id: number) => Mission | undefined;
   walletValueUsd: () => Promise<number>;
-  sendSolana: (accounts: Accounts, txBase64: string) => Promise<SendResult>;
-  sendEvm: (accounts: Accounts, tx: EvmTxRequest, kind: "swap" | "approve") => Promise<SendResult>;
+  sendSolana: (accounts: Accounts, txBase64: string, opts: SolanaSendOptions) => Promise<SendResult>;
+  sendEvm: (accounts: Accounts, tx: EvmTxRequest, kind: "swap" | "approve" | "bridge", limits?: EvmTxLimits) => Promise<SendResult>;
 }
 
 const MAX_BODY = 16 * 1024;
@@ -184,14 +184,23 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
     const accounts = ready();
     const t = state.tickets.get(String(body.ticket ?? ""));
     if (!t || t.expiresAt < Date.now()) throw new HttpError(403, "Operación no aprobada o aprobación caducada");
-    const kind = body.kind === "approve" ? "approve" : "swap";
+    const kind = body.kind === "approve" ? "approve" : body.kind === "bridge" ? "bridge" : "swap";
     if (body.chain !== t.chain) throw new HttpError(403, "La cadena no coincide con la operación aprobada");
+    if ((kind === "bridge") !== (t.side === "move")) throw new HttpError(403, "El tipo de operación no coincide con la aprobada");
     // La transacción se construye tras la aprobación, con un precio nuevo: se admite algo de margen.
-    if (kind === "swap" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operación es mayor que la aprobada");
-    if (kind === "swap") state.tickets.delete(t.id);
+    if (kind !== "approve" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operación es mayor que la aprobada");
+    if (kind !== "approve") state.tickets.delete(t.id);
     try {
-      if (t.chain === "solana") return await deps.sendSolana(accounts, String(body.solanaTx ?? ""));
-      return await deps.sendEvm(accounts, body.evmTx as EvmTxRequest, kind);
+      if (t.chain === "solana") {
+        const b = (body.budget ?? {}) as { lamports?: string; tokens?: Record<string, string> };
+        const budget: SolanaSpendBudget = {
+          lamports: BigInt(b.lamports ?? "0"),
+          tokens: Object.fromEntries(Object.entries(b.tokens ?? {}).map(([k, v]) => [k, BigInt(v)])),
+        };
+        return await deps.sendSolana(accounts, String(body.solanaTx ?? ""), { bridge: kind === "bridge", budget });
+      }
+      const l = (body.evmLimits ?? {}) as { maxValue?: string; destEvm?: boolean };
+      return await deps.sendEvm(accounts, body.evmTx as EvmTxRequest, kind, { maxValue: BigInt(l.maxValue ?? "0"), destEvm: l.destEvm === true });
     } catch (err) {
       if (err instanceof PolicyError) throw new HttpError(403, err.message);
       throw err;
@@ -235,7 +244,7 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
           const t = await approveIntent({
             missionId: Number(b.missionId),
             chain: b.chain as ChainId,
-            side: b.side === "sell" ? "sell" : "buy",
+            side: b.side === "sell" ? "sell" : b.side === "move" ? "move" : "buy",
             usd: Number(b.usd),
             summary: String(b.summary ?? "").slice(0, 300),
           });

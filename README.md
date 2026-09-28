@@ -97,13 +97,15 @@ O activa la actualización automática de este marketplace en el gestor de plugi
 - **Misiones reales.** `/cryptoagent:trading` pregunta primero el modo. En **real**, el agente opera con el saldo de esa cartera, solo con swaps (Jupiter en Solana, KyberSwap en Base y BNB Chain), y tú eliges:
   - **aprobación**: apruebas cada operación en la página de la cartera, o autónomo;
   - **límites**: máximo por operación y pérdida máxima. Por debajo de la pérdida máxima, solo puede vender a estables.
-- **Qué comprueba el firmante antes de firmar.** Cada transacción:
-  - solo puede ir a Jupiter o al router de KyberSwap, y siempre de vuelta a la propia cartera;
-  - los approves son por la cantidad exacta;
-  - se simula antes de enviarla.
+- **Puentes.** Puede mover estables o el nativo entre sus cadenas con Li.Fi (`execute_bridge`).
+- **Qué comprueba el firmante antes de firmar.**
+  - **Swaps:** solo van a Jupiter o al router de KyberSwap, y lo comprado vuelve a la propia cartera.
+  - **Puentes:** solo van al contrato de Li.Fi, y el destino que devuelve Li.Fi debe ser la propia cartera.
+  - **Nunca sale más de lo aprobado:**
+    - en Base y BNB Chain, los approves son por la cantidad exacta y hay un tope para el nativo;
+    - en Solana, simula cada transacción y comprueba que ningún saldo de la cartera baja más de lo aprobado.
 
-  No existe ninguna forma de enviar fondos a otra dirección. El botón **Parar todo** de la página lo bloquea al instante.
-- **Qué falta todavía.** Los puentes entre cadenas con dinero real llegarán en una próxima versión.
+  No existe ninguna herramienta para enviar fondos a una dirección ajena. El botón **Parar todo** de la página lo bloquea al instante.
 
 ## Qué se simula y cómo
 

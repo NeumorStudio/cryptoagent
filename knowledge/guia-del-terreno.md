@@ -43,8 +43,12 @@ Mover dinero entre sitios (el dinero sale al momento y llega después; mientras 
   camino. Llega en segundos o minutos. `quote_bridge` da una estimación sin gastar nada.
 
 **Misiones reales** (`mission_status` dice `mode: REAL`): la cartera es la de verdad de la IA, en Solana, Base y
-BNB Chain. Solo hay swaps, con `execute_swap`: Jupiter en Solana y KyberSwap en Base y BNB Chain. No hay Binance,
-transferencias ni puentes.
+BNB Chain.
+- **Swaps:** con `execute_swap`, Jupiter en Solana y KyberSwap en Base y BNB Chain.
+- **Puentes entre las propias cadenas:** con `execute_bridge` (Li.Fi), solo con estables o el nativo.
+  - La llegada la confirma Li.Fi; mientras tanto el dinero aparece "en tránsito".
+  - Si un puente falla, normalmente el dinero vuelve a la cadena de origen.
+- **Binance y `simulate_transfer`:** no están disponibles.
 - Cada transacción paga la red real, también si revierte. El slippage se aplica en la cadena.
 - En Base y BNB Chain, la primera venta de un token necesita un approve, que es otra transacción con su gas.
 - Siempre se reserva algo del nativo para el gas: 0,01 SOL, 0,0003 ETH o 0,002 BNB.

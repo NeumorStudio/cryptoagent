@@ -55,7 +55,7 @@ async function runningSigner() {
  * Pide permiso para una operación. En modo manual espera (hasta ~90 s) a que el usuario la apruebe en
  * la página de la cartera; en autónomo, solo comprueba los límites. Devuelve un ticket para firmar.
  */
-export async function requestIntent(intent: { missionId: number; chain: string; side: "buy" | "sell"; usd: number; summary: string }): Promise<string> {
+export async function requestIntent(intent: { missionId: number; chain: string; side: "buy" | "sell" | "move"; usd: number; summary: string }): Promise<string> {
   const info = await runningSigner();
   const r = await api<{ ticket: string }>(info, "/api/intent", { method: "POST", body: JSON.stringify(intent) }, 100_000);
   return r.ticket;
@@ -68,7 +68,18 @@ export interface SignResult {
 }
 
 /** Firma y envía una transacción ya aprobada (el firmante la valida con su política y la simula antes). */
-export async function signTx(body: { ticket: string; chain: string; kind: "swap" | "approve"; usd: number; solanaTx?: string; evmTx?: { chainId: number; to: string; data: string; value: string } }): Promise<SignResult> {
+export async function signTx(body: {
+  ticket: string;
+  chain: string;
+  kind: "swap" | "approve" | "bridge";
+  usd: number;
+  solanaTx?: string;
+  /** Solana: lo máximo que puede bajar en la cartera (unidades base, como texto). */
+  budget?: { lamports: string; tokens: Record<string, string> };
+  evmTx?: { chainId: number; to: string; data: string; value: string };
+  /** EVM: nativo máximo de la transacción y si el destino (puente) es EVM. */
+  evmLimits?: { maxValue: string; destEvm?: boolean };
+}): Promise<SignResult> {
   const info = await runningSigner();
   return api<SignResult>(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 180_000);
 }

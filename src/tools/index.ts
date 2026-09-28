@@ -352,6 +352,42 @@ export const SIM_TOOLS = [
       ),
   }),
   tool({
+    name: "execute_bridge",
+    kind: "trade",
+    journaled: true,
+    description:
+      "Solo en misiones REALES: mueve dinero de verdad entre tus cadenas (Solana, Base, BNB Chain) con Li.Fi. Solo estables (USDC, USDT) " +
+      "o el nativo (SOL, ETH, BNB), de ida y de llegada: para mover un token, véndelo antes con execute_swap. Pagas el gas real en la cadena " +
+      "de origen y la comisión del puente va descontada de lo que recibes. Si la aprobación es manual, espera a que el usuario la apruebe. " +
+      "Mientras llega aparece \"en tránsito\"; la llegada la confirma Li.Fi (segundos o minutos).",
+    schema: z.object({
+      from_chain: chainParam,
+      to_chain: chainParam,
+      token_in: z.string().describe("Estable o nativo que envías (USDC, USDT, SOL, ETH, BNB o su dirección)"),
+      token_out: z.string().describe("Estable o nativo que quieres recibir en la cadena de destino"),
+      amount: z.number().positive(),
+      slippage_bps: z.number().int().min(1).max(5000).default(50),
+      thesis,
+    }),
+    run: async (i, ctx) => {
+      if (!sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es simulada: usa simulate_bridge. execute_bridge solo existe en misiones reales.");
+      const { liveBridge } = await import("../live/bridge.js");
+      return json(
+        await liveBridge({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          fromChain: i.from_chain,
+          toChain: i.to_chain,
+          tokenIn: i.token_in,
+          tokenOut: i.token_out,
+          amount: i.amount,
+          slippageBps: i.slippage_bps,
+          reasoning: formatThesis(i.thesis),
+        }),
+      );
+    },
+  }),
+  tool({
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,

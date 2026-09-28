@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.16.0";
+    CODE_VERSION = "0.17.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9587,6 +9587,9 @@ async function bridgeQuote(q) {
   }).catch((err) => {
     throw new Error(`Li.Fi no encuentra ruta: ${err.message.replace(/^HTTP \d+ en \S+: /, "").slice(0, 200)}`);
   });
+  return parseQuote(res);
+}
+function parseQuote(res) {
   const e = res.estimate;
   if (!e) throw new Error(`Li.Fi no encuentra ruta: ${res.message ?? "respuesta sin estimaci\xF3n"}`);
   return {
@@ -9598,6 +9601,40 @@ async function bridgeQuote(q) {
     fees: (e.feeCosts ?? []).map((f) => ({ name: String(f.name), usd: Number(f.amountUSD ?? 0) })),
     fromUsd: e.fromAmountUSD ? Number(e.fromAmountUSD) : void 0,
     toUsd: e.toAmountUSD ? Number(e.toAmountUSD) : void 0
+  };
+}
+async function bridgeTx(q) {
+  if (!process.env.LIFI_API_KEY && !takeBudget(HOST, BUDGET, WINDOW_MS)) {
+    throw new BudgetExhausted("Se ha agotado el cupo gratuito de Li.Fi (75 consultas cada 2 horas): int\xE9ntalo m\xE1s tarde");
+  }
+  const url2 = `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}`;
+  const res = await fetchJson(url2, {
+    ttlMs: 0,
+    timeoutMs: 3e4,
+    headers: process.env.LIFI_API_KEY ? { "x-lifi-api-key": process.env.LIFI_API_KEY } : void 0
+  }).catch((err) => {
+    throw new Error(`Li.Fi no encuentra ruta: ${err.message.replace(/^HTTP \d+ en \S+: /, "").slice(0, 200)}`);
+  });
+  if (!res.transactionRequest?.data) throw new Error(`Li.Fi no devolvi\xF3 la transacci\xF3n: ${res.message ?? "sin datos"}`);
+  return {
+    ...parseQuote(res),
+    approvalAddress: res.estimate?.approvalAddress,
+    fromAddress: String(res.action?.fromAddress ?? ""),
+    toAddress: String(res.action?.toAddress ?? ""),
+    transactionRequest: res.transactionRequest
+  };
+}
+async function bridgeStatus(a) {
+  const url2 = `https://li.quest/v1/status?txHash=${a.txHash}&fromChain=${LIFI_CHAIN[a.fromChain]}&toChain=${LIFI_CHAIN[a.toChain]}` + (a.tool ? `&bridge=${a.tool}` : "");
+  const res = await fetchJson(url2, {
+    ttlMs: 1e4,
+    headers: process.env.LIFI_API_KEY ? { "x-lifi-api-key": process.env.LIFI_API_KEY } : void 0
+  }).catch((err) => ({ status: /HTTP 404/.test(err.message) ? "NOT_FOUND" : "PENDING", message: err.message }));
+  return {
+    status: res.status ?? "PENDING",
+    substatus: res.substatus,
+    receivedAmount: res.receiving?.amount ? BigInt(res.receiving.amount) : void 0,
+    receivingTxHash: res.receiving?.txHash
   };
 }
 var HOST, WINDOW_MS, BUDGET, LIFI_CHAIN, LIFI_NATIVE, BudgetExhausted;
@@ -9616,6 +9653,413 @@ var init_lifi = __esm({
     };
     BudgetExhausted = class extends Error {
     };
+  }
+});
+
+// src/live/paths.ts
+import path5 from "node:path";
+var liveDir, signerInfoFile;
+var init_paths2 = __esm({
+  "src/live/paths.ts"() {
+    "use strict";
+    init_config();
+    liveDir = () => path5.join(config2.dataDir, "live");
+    signerInfoFile = () => path5.join(liveDir(), "signer.json");
+  }
+});
+
+// src/live/client.ts
+import { spawn } from "node:child_process";
+import { existsSync as existsSync2, readFileSync } from "node:fs";
+function readInfo() {
+  try {
+    return existsSync2(signerInfoFile()) ? JSON.parse(readFileSync(signerInfoFile(), "utf8")) : null;
+  } catch {
+    return null;
+  }
+}
+async function api(info, path8, init = {}, timeoutMs = 5e3) {
+  const res = await fetch(`http://127.0.0.1:${info.port}${path8}`, {
+    ...init,
+    headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body;
+}
+async function signerStatus() {
+  const info = readInfo();
+  if (!info) return null;
+  try {
+    return { info, status: await api(info, "/api/status") };
+  } catch {
+    return null;
+  }
+}
+async function runningSigner() {
+  const s = await signerStatus();
+  if (!s) throw new Error("El firmante de la cartera no est\xE1 en marcha: pide al usuario que la abra y desbloquee con /cryptoagent:cartera");
+  return s.info;
+}
+async function requestIntent(intent) {
+  const info = await runningSigner();
+  const r = await api(info, "/api/intent", { method: "POST", body: JSON.stringify(intent) }, 1e5);
+  return r.ticket;
+}
+async function signTx(body) {
+  const info = await runningSigner();
+  return api(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 18e4);
+}
+async function ensureSigner() {
+  const running2 = await signerStatus();
+  if (running2) return { ...running2, started: false };
+  const entry = asset("signer.mjs", "src/live/signer/main.ts");
+  const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
+  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
+  child.unref();
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    const s = await signerStatus();
+    if (s && s.status.pid === child.pid) return { ...s, started: true };
+  }
+  throw new Error("El firmante no ha arrancado");
+}
+var walletUrl;
+var init_client = __esm({
+  "src/live/client.ts"() {
+    "use strict";
+    init_paths();
+    init_paths2();
+    walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
+  }
+});
+
+// src/live/chain.ts
+async function solanaRpc(method, params, ttlMs = 5e3) {
+  const res = await fetchJson(solanaRpcUrl(), {
+    method: "POST",
+    body: { jsonrpc: "2.0", id: 1, method, params },
+    ttlMs
+  });
+  if (res.error) throw new Error(`RPC de Solana (${method}): ${res.error.message}`);
+  return res.result;
+}
+async function solanaHoldings(owner) {
+  const lamports = (await solanaRpc("getBalance", [owner])).value;
+  const holdings = [{ venue: "solana", asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: lamports / 1e9 }];
+  for (const programId of TOKEN_PROGRAMS) {
+    const { value } = await solanaRpc(
+      "getTokenAccountsByOwner",
+      [owner, { programId }, { encoding: "jsonParsed" }]
+    );
+    for (const a of value) {
+      const { mint, tokenAmount } = a.account.data.parsed.info;
+      const amount = Number(tokenAmount.amount) / 10 ** tokenAmount.decimals;
+      if (amount <= 0) continue;
+      const symbol2 = await getVenue("solana").resolveToken(mint).then((t) => t.symbol, () => `${mint.slice(0, 4)}\u2026`);
+      holdings.push({ venue: "solana", asset: mint, symbol: symbol2, decimals: tokenAmount.decimals, amount });
+    }
+  }
+  return holdings;
+}
+async function evmHoldings(chain, owner, extraTokens) {
+  const venue = getVenue(chain);
+  const seen = /* @__PURE__ */ new Set();
+  const tokens = [...venue.stables, ...extraTokens].filter((t) => {
+    const a = t.address.toLowerCase();
+    if (a === NATIVE || seen.has(a)) return false;
+    seen.add(a);
+    return true;
+  });
+  const results = await rpcBatch(chain, [
+    { method: "eth_getBalance", params: [owner, "latest"] },
+    ...tokens.map((t) => ({ method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, "latest"] }))
+  ]);
+  const holdings = [
+    { venue: chain, asset: NATIVE, symbol: venue.native.symbol, decimals: 18, amount: Number(BigInt(results[0])) / 1e18 }
+  ];
+  tokens.forEach((t, i) => {
+    const raw = results[i + 1];
+    const amount = raw && raw !== "0x" ? Number(BigInt(raw)) / 10 ** t.decimals : 0;
+    if (amount > 0) holdings.push({ venue: chain, asset: t.address.toLowerCase(), symbol: t.symbol, decimals: t.decimals, amount });
+  });
+  return holdings;
+}
+async function readHoldings(pub, extraEvmTokens = {}) {
+  const chains2 = ["solana", ...Object.keys(EVM_CHAINS)];
+  const settled = await Promise.allSettled(
+    chains2.map((c) => c === "solana" ? solanaHoldings(pub.solana) : evmHoldings(c, pub.evm, extraEvmTokens[c] ?? []))
+  );
+  const holdings = [];
+  const errors = {};
+  settled.forEach((r, i) => r.status === "fulfilled" ? holdings.push(...r.value) : errors[chains2[i]] = r.reason.message);
+  return { holdings, errors };
+}
+async function walletBalances(pub, extraEvmTokens = {}) {
+  const { holdings, errors } = await readHoldings(pub, extraEvmTokens);
+  const out = { totalUsd: 0, byChain: { solana: 0, base: 0, bsc: 0 }, balances: [], errors };
+  const valued = await Promise.all(
+    holdings.map(async (h) => ({ h, v: await getVenue(h.venue).liquidationValue(h).catch(() => ({ usd: 0, method: "sin precio" })) }))
+  );
+  for (const { h, v } of valued) {
+    const chain = h.venue;
+    out.balances.push({ ...h, usd: Number(v.usd.toFixed(4)), valuedBy: v.method });
+    out.byChain[chain] += v.usd;
+    out.totalUsd += v.usd;
+  }
+  return out;
+}
+var solanaRpcUrl, TOKEN_PROGRAMS, pad32;
+var init_chain = __esm({
+  "src/live/chain.ts"() {
+    "use strict";
+    init_jupiter();
+    init_evm();
+    init_http();
+    init_venues();
+    solanaRpcUrl = () => process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+    TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
+    pad32 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  }
+});
+
+// src/live/keystore.ts
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import path6 from "node:path";
+function readWalletPublic(dir) {
+  const f = files(dir).pub;
+  return existsSync3(f) ? JSON.parse(readFileSync2(f, "utf8")) : null;
+}
+var SCRYPT, files;
+var init_keystore = __esm({
+  "src/live/keystore.ts"() {
+    "use strict";
+    SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
+    files = (dir) => ({ secret: path6.join(dir, "wallet.enc"), pub: path6.join(dir, "wallet.json") });
+  }
+});
+
+// src/live/sync.ts
+var sync_exports = {};
+__export(sync_exports, {
+  livePub: () => livePub,
+  liveWalletSnapshot: () => liveWalletSnapshot,
+  syncHoldings: () => syncHoldings
+});
+function livePub() {
+  const pub = readWalletPublic(liveDir());
+  if (!pub) throw new Error("No hay cartera real. El usuario debe crearla con /cryptoagent:cartera");
+  return pub;
+}
+function missionTokens(missionId) {
+  const rows = db.prepare("SELECT DISTINCT p.venue, p.asset, p.symbol, t.decimals FROM positions p JOIN token_meta t ON t.chain = p.venue AND t.address = p.asset WHERE p.mission_id = ? AND p.venue IN ('base', 'bsc')").all(missionId);
+  const out = {};
+  for (const r of rows) (out[r.venue] ??= []).push({ address: r.asset, symbol: r.symbol, decimals: r.decimals });
+  return out;
+}
+async function syncHoldings(missionId, extra = {}) {
+  const mission = getMission(missionId);
+  if (!isLive(mission)) return;
+  const tokens = missionTokens(missionId);
+  for (const [c, list] of Object.entries(extra)) (tokens[c] ??= []).push(...list);
+  const { holdings, errors } = await readHoldings(livePub(), tokens);
+  const keep = db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ?").all(missionId).filter((h) => h.venue in errors);
+  resetPortfolio(missionId, [...holdings.filter((h) => h.amount > 0), ...keep]);
+  return { errors };
+}
+async function liveWalletSnapshot() {
+  const pub = livePub();
+  const b = await walletBalances(pub);
+  if (Object.keys(b.errors).length) throw new Error(`No se pudieron leer los saldos de: ${Object.keys(b.errors).join(", ")}. Int\xE9ntalo de nuevo.`);
+  return { pub, ...b, holdings: b.balances.filter((x) => x.amount > 0).map(({ usd: _u, valuedBy: _v, ...h }) => h) };
+}
+var init_sync = __esm({
+  "src/live/sync.ts"() {
+    "use strict";
+    init_db();
+    init_mission();
+    init_portfolio();
+    init_chain();
+    init_keystore();
+    init_paths2();
+  }
+});
+
+// src/live/bridge.ts
+var bridge_exports = {};
+__export(bridge_exports, {
+  liveBridge: () => liveBridge,
+  settleLiveTransfers: () => settleLiveTransfers
+});
+async function liveBridge(a) {
+  const m = a.missionId;
+  if (!isLive(getMission(m))) throw new Error("execute_bridge solo existe en misiones reales");
+  if (a.fromChain === a.toChain) throw new Error("Un puente une dos cadenas distintas: dentro de la misma cadena usa execute_swap");
+  const src = getChain(a.fromChain);
+  const dst = getChain(a.toChain);
+  const [tin, tout] = await Promise.all([src.resolveToken(a.tokenIn), dst.resolveToken(a.tokenOut)]);
+  if (!isMovable(src, tin) || !isMovable(dst, tout)) {
+    throw new Error("Con dinero real, los puentes solo mueven estables (USDC, USDT) o el nativo (SOL, ETH, BNB). Vende antes el token con execute_swap.");
+  }
+  await syncHoldings(m);
+  const have = balance(m, src.id, tin.address);
+  const isNativeIn = tin.address === src.native.address;
+  const spendable = isNativeIn ? Math.max(0, have - NATIVE_RESERVE[src.id]) : have;
+  if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
+  if (a.amount > spendable * 1.000001) {
+    throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}` + (isNativeIn ? ` y se reservan ${NATIVE_RESERVE[src.id]} para la red` : ""));
+  }
+  const nativeLeft = balance(m, src.id, src.native.address) - (isNativeIn ? a.amount : 0);
+  if (nativeLeft < NATIVE_RESERVE[src.id] / 4) throw new Error(`No tienes ${src.native.symbol} suficiente para pagar la red en ${src.label}.`);
+  const usd2 = src.isCash(tin.address) ? a.amount : ((await src.priceUsd([tin.address]))[tin.address] ?? 0) * a.amount;
+  const summary = `Puente: ${a.amount} ${tin.symbol} de ${src.label} \u2192 ${tout.symbol} en ${dst.label} (\u2248 ${usd2.toFixed(2)} $). Motivo: ${a.reasoning.slice(0, 160)}`;
+  let ticket;
+  try {
+    ticket = await requestIntent({ missionId: m, chain: src.id, side: "move", usd: usd2, summary });
+  } catch (err) {
+    logLiveTx(m, src.id, "bridge", "rejected", summary, { usd: usd2, error: err.message });
+    throw err;
+  }
+  const pub = livePub();
+  const addr = (c) => c === "solana" ? pub.solana : pub.evm;
+  const amountIn = !isNativeIn && a.amount >= have * 0.999999 ? await rawTokenBalance(src.id, pub, tin) : toBaseUnits(a.amount * (1 - 1e-9), tin.decimals);
+  const q = await bridgeTx({
+    fromChain: src.id,
+    toChain: dst.id,
+    fromToken: lifiToken(src, tin),
+    toToken: lifiToken(dst, tout),
+    fromAmount: amountIn,
+    fromAddress: addr(src.id),
+    toAddress: addr(dst.id),
+    slippage: a.slippageBps / 1e4
+  });
+  const same = (x, y) => x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
+  if (!same(q.fromAddress, addr(src.id)) || !same(q.toAddress, addr(dst.id))) {
+    throw new Error(`Li.Fi ha devuelto otras direcciones (${q.fromAddress} \u2192 ${q.toAddress}): no se env\xEDa`);
+  }
+  const baseline = balance(m, dst.id, tout.address);
+  let res;
+  if (src.id === "solana") {
+    res = await signTx({ ticket, chain: "solana", kind: "bridge", usd: usd2, solanaTx: q.transactionRequest.data, budget: solanaBudget(tin, amountIn, SOLANA_BRIDGE_EXTRA) });
+  } else {
+    const c = EVM_CHAINS[src.id];
+    if (!isNativeIn) {
+      const spender = q.approvalAddress ?? q.transactionRequest.to;
+      if (await erc20Allowance(src.id, tin.address, pub.evm, spender) < amountIn) {
+        const data = `0x095ea7b3${spender.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${amountIn.toString(16).padStart(64, "0")}`;
+        const ap = await signTx({ ticket, chain: src.id, kind: "approve", usd: usd2, evmTx: { chainId: c.chainId, to: tin.address, data, value: "0" } });
+        logLiveTx(m, src.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${a.amount} ${tin.symbol} a Li.Fi`, { hash: ap.hash, error: ap.error });
+        if (!ap.ok) throw new Error(`El approve fall\xF3 (${explorerTx(src.id, ap.hash)}): ${ap.error}`);
+      }
+    }
+    const fee = EVM_BRIDGE_FEE_CAP[src.id];
+    res = await signTx({
+      ticket,
+      chain: src.id,
+      kind: "bridge",
+      usd: usd2,
+      evmTx: { chainId: c.chainId, to: q.transactionRequest.to, data: q.transactionRequest.data, value: String(BigInt(q.transactionRequest.value ?? "0")) },
+      evmLimits: { maxValue: ((isNativeIn ? amountIn : 0n) + fee).toString(), destEvm: dst.id !== "solana" }
+    });
+  }
+  const link = explorerTx(src.id, res.hash);
+  if (!res.ok) {
+    logLiveTx(m, src.id, "bridge", "failed", summary, { hash: res.hash, usd: usd2, error: res.error });
+    logJournal({ missionId: m, sessionId: a.sessionId, kind: "failed_tx", summary: `Puente REAL fallido en ${src.label}: ${res.error}`, reasoning: a.reasoning, details: { chain: src.id, txHash: res.hash, explorer: link } });
+    await syncHoldings(m).catch(() => void 0);
+    throw new Error(`La transacci\xF3n del puente fall\xF3: ${res.error}. ${link}`);
+  }
+  logLiveTx(m, src.id, "bridge", "confirmed", summary, { hash: res.hash, usd: usd2 });
+  const amountOut = Number(q.toAmount) / 10 ** tout.decimals;
+  const arrivesAt = new Date(Date.now() + Math.max(20, q.durationSeconds) * 1e3).toISOString();
+  const costs = [...q.gas.map((g) => `gas: ${Number(g.amount) / 10 ** g.decimals} ${g.symbol}`), ...q.fees.map((f) => `${f.name}: ${f.usd} $`)];
+  const carry = { live: { txHash: res.hash, tool: q.tool, baseline } };
+  const id = Number(
+    db.prepare(
+      `INSERT INTO transfers (mission_id, session_id, created_at, arrives_at, status, kind, from_venue, to_venue, provider, asset_out, symbol_out, amount_out,
+           asset_in, symbol_in, decimals_in, amount_in, value_usd, costs, carry)
+         VALUES (?, ?, ?, ?, 'pending', 'bridge', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(m, a.sessionId, now(), arrivesAt, src.id, dst.id, `Li.Fi (${q.tool})`, tin.address, tin.symbol, Number(amountIn) / 10 ** tin.decimals, tout.address, tout.symbol, tout.decimals, amountOut, q.toUsd ?? usd2, JSON.stringify(costs), JSON.stringify(carry)).lastInsertRowid
+  );
+  const result = {
+    real: true,
+    transferId: id,
+    bridge: `Li.Fi (${q.tool})`,
+    txHash: res.hash,
+    explorer: link,
+    sent: `${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} desde ${src.label}`,
+    willReceive: `~${amountOut} ${tout.symbol} en ${dst.label}`,
+    costs,
+    note: `Llega hacia las ${hhmm(arrivesAt)} (lo confirma Li.Fi). Mientras tanto aparece como "en tr\xE1nsito".`
+  };
+  logJournal({
+    missionId: m,
+    sessionId: a.sessionId,
+    kind: "transfer",
+    summary: `Puente REAL ${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} ${src.label} \u2192 ~${Number(amountOut.toPrecision(6))} ${tout.symbol} ${dst.label}`,
+    reasoning: a.reasoning,
+    details: { chain: src.id, from: src.id, ...result }
+  });
+  await syncHoldings(m).catch(() => void 0);
+  return result;
+}
+async function settleLiveTransfers(missionId) {
+  const rows = db.prepare(
+    `SELECT t.* FROM transfers t JOIN missions m ON m.id = t.mission_id
+       WHERE t.status = 'pending' AND m.mode = 'live' ${missionId !== void 0 ? "AND t.mission_id = ?" : ""} ORDER BY t.id`
+  ).all(...missionId !== void 0 ? [missionId] : []);
+  const log = [];
+  for (const t of rows) {
+    const carry = JSON.parse(t.carry ?? "{}");
+    if (!carry.live) continue;
+    if (Date.now() - (lastPoll.get(t.id) ?? 0) < POLL_MS) continue;
+    lastPoll.set(t.id, Date.now());
+    const st = await bridgeStatus({ txHash: carry.live.txHash, fromChain: t.from_venue, toChain: t.to_venue, tool: carry.live.tool });
+    if (st.status === "DONE") {
+      const received = st.receivedAmount !== void 0 ? Number(st.receivedAmount) / 10 ** t.decimals_in : t.amount_in;
+      if (!db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, t.id).changes) continue;
+      const summary = `Llegan ${Number(received.toPrecision(8))} ${t.symbol_in} a ${getChain(t.to_venue).label} (puente real #${t.id})`;
+      logJournal({
+        missionId: t.mission_id,
+        sessionId: null,
+        kind: "transfer_arrived",
+        summary,
+        details: st.receivingTxHash ? { txHash: st.receivingTxHash, explorer: explorerTx(t.to_venue, st.receivingTxHash) } : void 0
+      });
+      await syncHoldings(t.mission_id).catch(() => void 0);
+      log.push(summary);
+    } else if (st.status === "FAILED" || st.status === "INVALID") {
+      if (!db.prepare("UPDATE transfers SET status = 'failed', settled_at = ? WHERE id = ? AND status = 'pending'").run(now(), t.id).changes) continue;
+      const summary = `El puente real #${t.id} ha fallado (${st.substatus ?? st.status}). Normalmente el dinero vuelve a ${getChain(t.from_venue).label}: revisa el explorador.`;
+      logJournal({ missionId: t.mission_id, sessionId: null, kind: "mission", summary, details: { explorer: explorerTx(t.from_venue, carry.live.txHash) } });
+      await syncHoldings(t.mission_id).catch(() => void 0);
+      log.push(summary);
+    }
+  }
+  return log;
+}
+var EVM_BRIDGE_FEE_CAP, SOLANA_BRIDGE_EXTRA, isMovable, lifiToken, hhmm, lastPoll, POLL_MS;
+var init_bridge = __esm({
+  "src/live/bridge.ts"() {
+    "use strict";
+    init_db();
+    init_evm();
+    init_lifi();
+    init_jupiter();
+    init_mission();
+    init_portfolio();
+    init_venues();
+    init_client();
+    init_execute();
+    init_sync();
+    EVM_BRIDGE_FEE_CAP = { base: 500000000000000n, bsc: 3000000000000000n };
+    SOLANA_BRIDGE_EXTRA = 20000000n;
+    isMovable = (chain, t) => chain.isCash(t.address) || t.address === chain.native.address;
+    lifiToken = (chain, t) => t.address === chain.native.address ? LIFI_NATIVE[chain.id] : t.address;
+    hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    lastPoll = /* @__PURE__ */ new Map();
+    POLL_MS = 2e4;
   }
 });
 
@@ -9734,13 +10178,13 @@ async function cexTransfer(args) {
     willReceive: received,
     costs: costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`),
     arrivesAt,
-    note: `Llega hacia las ${hhmm(arrivesAt)}. Mientras tanto aparece en tu cartera como "en tr\xE1nsito".`
+    note: `Llega hacia las ${hhmm2(arrivesAt)}. Mientras tanto aparece en tu cartera como "en tr\xE1nsito".`
   };
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
     kind: "transfer",
-    summary: `Transferencia ${args.amount} ${args.asset} ${getVenue(args.from).label} \u2192 ${getVenue(args.to).label} (llega hacia las ${hhmm(arrivesAt)})`,
+    summary: `Transferencia ${args.amount} ${args.asset} ${getVenue(args.from).label} \u2192 ${getVenue(args.to).label} (llega hacia las ${hhmm2(arrivesAt)})`,
     reasoning: args.reasoning,
     details: result
   });
@@ -9785,8 +10229,8 @@ async function liveEstimate(missionId, from, to, tin, tout, amount, slippageBps)
   const q = await bridgeQuote({
     fromChain: from,
     toChain: to,
-    fromToken: lifiToken(from, tin),
-    toToken: lifiToken(to, tout),
+    fromToken: lifiToken2(from, tin),
+    toToken: lifiToken2(to, tout),
     fromAmount: toBaseUnits(amount, tin.decimals),
     fromAddress: address(from),
     toAddress: address(to),
@@ -9822,7 +10266,6 @@ async function quoteBridge(a) {
 }
 async function bridge(a) {
   const m = a.missionId;
-  assertSimulated(m, "cruzar un puente");
   assertSimulated(m, "cruzar un puente");
   if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
   const src = getChain(a.fromChain);
@@ -9879,21 +10322,23 @@ async function bridge(a) {
     costs,
     arrivesAt,
     ...e.estimated ? { warning: "Se ha agotado el cupo gratuito de Li.Fi: el coste y la duraci\xF3n son una estimaci\xF3n." } : {},
-    note: `Llega hacia las ${hhmm(arrivesAt)}. Mientras tanto aparece en tu cartera como "en tr\xE1nsito".`
+    note: `Llega hacia las ${hhmm2(arrivesAt)}. Mientras tanto aparece en tu cartera como "en tr\xE1nsito".`
   };
   logJournal({
     missionId: m,
     sessionId: a.sessionId,
     kind: "transfer",
-    summary: `Puente ${a.amount} ${tin.symbol} ${src.label} \u2192 ${Number(e.amountOut.toPrecision(6))} ${tout.symbol} ${dst.label} (llega hacia las ${hhmm(arrivesAt)})`,
+    summary: `Puente ${a.amount} ${tin.symbol} ${src.label} \u2192 ${Number(e.amountOut.toPrecision(6))} ${tout.symbol} ${dst.label} (llega hacia las ${hhmm2(arrivesAt)})`,
     reasoning: a.reasoning,
     details: result
   });
   return result;
 }
 async function settleTransfers(opts = {}) {
-  const rows = opts.force && opts.missionId !== void 0 ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? ORDER BY id").all(opts.missionId) : opts.missionId !== void 0 ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? AND arrives_at <= ? ORDER BY id").all(opts.missionId, now()) : db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND arrives_at <= ? ORDER BY id").all(now());
-  const log = [];
+  const { settleLiveTransfers: settleLiveTransfers2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
+  const log = await settleLiveTransfers2(opts.missionId).catch((err) => [`Error consultando puentes reales: ${err.message}`]);
+  const simOnly = "AND mission_id NOT IN (SELECT id FROM missions WHERE mode = 'live')";
+  const rows = opts.force && opts.missionId !== void 0 ? db.prepare(`SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? ${simOnly} ORDER BY id`).all(opts.missionId) : opts.missionId !== void 0 ? db.prepare(`SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? AND arrives_at <= ? ${simOnly} ORDER BY id`).all(opts.missionId, now()) : db.prepare(`SELECT * FROM transfers WHERE status = 'pending' AND arrives_at <= ? ${simOnly} ORDER BY id`).all(now());
   for (const t of rows) {
     db.exec("SAVEPOINT settle");
     try {
@@ -9927,7 +10372,7 @@ async function settleTransfers(opts = {}) {
   }
   return log;
 }
-var DUST4, TRANSFER_ASSETS, NETWORKS_FOR, NETWORK, DEPOSIT_MINUTES, EVM_SEND_GAS, hhmm, inMinutes, lifiToken, STATIC_BRIDGE;
+var DUST4, TRANSFER_ASSETS, NETWORKS_FOR, NETWORK, DEPOSIT_MINUTES, EVM_SEND_GAS, hhmm2, inMinutes, lifiToken2, STATIC_BRIDGE;
 var init_transfers = __esm({
   "src/sim/transfers.ts"() {
     "use strict";
@@ -9952,173 +10397,10 @@ var init_transfers = __esm({
     NETWORK = { solana: "SOL", base: "BASE", bsc: "BSC" };
     DEPOSIT_MINUTES = { solana: 1, base: 2, bsc: 1 };
     EVM_SEND_GAS = { token: 65000n, native: 21000n };
-    hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    hhmm2 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
     inMinutes = (m) => new Date(Date.now() + m * 6e4).toISOString();
-    lifiToken = (chain, t) => t.address === getChain(chain).native.address ? LIFI_NATIVE[chain] : t.address;
+    lifiToken2 = (chain, t) => t.address === getChain(chain).native.address ? LIFI_NATIVE[chain] : t.address;
     STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solana: 5e-5, base: 5e-6, bsc: 3e-5 } };
-  }
-});
-
-// src/live/chain.ts
-async function solanaRpc(method, params, ttlMs = 5e3) {
-  const res = await fetchJson(solanaRpcUrl(), {
-    method: "POST",
-    body: { jsonrpc: "2.0", id: 1, method, params },
-    ttlMs
-  });
-  if (res.error) throw new Error(`RPC de Solana (${method}): ${res.error.message}`);
-  return res.result;
-}
-async function solanaHoldings(owner) {
-  const lamports = (await solanaRpc("getBalance", [owner])).value;
-  const holdings = [{ venue: "solana", asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: lamports / 1e9 }];
-  for (const programId of TOKEN_PROGRAMS) {
-    const { value } = await solanaRpc(
-      "getTokenAccountsByOwner",
-      [owner, { programId }, { encoding: "jsonParsed" }]
-    );
-    for (const a of value) {
-      const { mint, tokenAmount } = a.account.data.parsed.info;
-      const amount = Number(tokenAmount.amount) / 10 ** tokenAmount.decimals;
-      if (amount <= 0) continue;
-      const symbol2 = await getVenue("solana").resolveToken(mint).then((t) => t.symbol, () => `${mint.slice(0, 4)}\u2026`);
-      holdings.push({ venue: "solana", asset: mint, symbol: symbol2, decimals: tokenAmount.decimals, amount });
-    }
-  }
-  return holdings;
-}
-async function evmHoldings(chain, owner, extraTokens) {
-  const venue = getVenue(chain);
-  const seen = /* @__PURE__ */ new Set();
-  const tokens = [...venue.stables, ...extraTokens].filter((t) => {
-    const a = t.address.toLowerCase();
-    if (a === NATIVE || seen.has(a)) return false;
-    seen.add(a);
-    return true;
-  });
-  const results = await rpcBatch(chain, [
-    { method: "eth_getBalance", params: [owner, "latest"] },
-    ...tokens.map((t) => ({ method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, "latest"] }))
-  ]);
-  const holdings = [
-    { venue: chain, asset: NATIVE, symbol: venue.native.symbol, decimals: 18, amount: Number(BigInt(results[0])) / 1e18 }
-  ];
-  tokens.forEach((t, i) => {
-    const raw = results[i + 1];
-    const amount = raw && raw !== "0x" ? Number(BigInt(raw)) / 10 ** t.decimals : 0;
-    if (amount > 0) holdings.push({ venue: chain, asset: t.address.toLowerCase(), symbol: t.symbol, decimals: t.decimals, amount });
-  });
-  return holdings;
-}
-async function readHoldings(pub, extraEvmTokens = {}) {
-  const chains2 = ["solana", ...Object.keys(EVM_CHAINS)];
-  const settled = await Promise.allSettled(
-    chains2.map((c) => c === "solana" ? solanaHoldings(pub.solana) : evmHoldings(c, pub.evm, extraEvmTokens[c] ?? []))
-  );
-  const holdings = [];
-  const errors = {};
-  settled.forEach((r, i) => r.status === "fulfilled" ? holdings.push(...r.value) : errors[chains2[i]] = r.reason.message);
-  return { holdings, errors };
-}
-async function walletBalances(pub, extraEvmTokens = {}) {
-  const { holdings, errors } = await readHoldings(pub, extraEvmTokens);
-  const out = { totalUsd: 0, byChain: { solana: 0, base: 0, bsc: 0 }, balances: [], errors };
-  const valued = await Promise.all(
-    holdings.map(async (h) => ({ h, v: await getVenue(h.venue).liquidationValue(h).catch(() => ({ usd: 0, method: "sin precio" })) }))
-  );
-  for (const { h, v } of valued) {
-    const chain = h.venue;
-    out.balances.push({ ...h, usd: Number(v.usd.toFixed(4)), valuedBy: v.method });
-    out.byChain[chain] += v.usd;
-    out.totalUsd += v.usd;
-  }
-  return out;
-}
-var solanaRpcUrl, TOKEN_PROGRAMS, pad32;
-var init_chain = __esm({
-  "src/live/chain.ts"() {
-    "use strict";
-    init_jupiter();
-    init_evm();
-    init_http();
-    init_venues();
-    solanaRpcUrl = () => process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
-    TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
-    pad32 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-  }
-});
-
-// src/live/keystore.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync, writeFileSync } from "node:fs";
-import path5 from "node:path";
-function readWalletPublic(dir) {
-  const f = files(dir).pub;
-  return existsSync2(f) ? JSON.parse(readFileSync(f, "utf8")) : null;
-}
-var SCRYPT, files;
-var init_keystore = __esm({
-  "src/live/keystore.ts"() {
-    "use strict";
-    SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
-    files = (dir) => ({ secret: path5.join(dir, "wallet.enc"), pub: path5.join(dir, "wallet.json") });
-  }
-});
-
-// src/live/paths.ts
-import path6 from "node:path";
-var liveDir, signerInfoFile;
-var init_paths2 = __esm({
-  "src/live/paths.ts"() {
-    "use strict";
-    init_config();
-    liveDir = () => path6.join(config2.dataDir, "live");
-    signerInfoFile = () => path6.join(liveDir(), "signer.json");
-  }
-});
-
-// src/live/sync.ts
-var sync_exports = {};
-__export(sync_exports, {
-  livePub: () => livePub,
-  liveWalletSnapshot: () => liveWalletSnapshot,
-  syncHoldings: () => syncHoldings
-});
-function livePub() {
-  const pub = readWalletPublic(liveDir());
-  if (!pub) throw new Error("No hay cartera real. El usuario debe crearla con /cryptoagent:cartera");
-  return pub;
-}
-function missionTokens(missionId) {
-  const rows = db.prepare("SELECT DISTINCT p.venue, p.asset, p.symbol, t.decimals FROM positions p JOIN token_meta t ON t.chain = p.venue AND t.address = p.asset WHERE p.mission_id = ? AND p.venue IN ('base', 'bsc')").all(missionId);
-  const out = {};
-  for (const r of rows) (out[r.venue] ??= []).push({ address: r.asset, symbol: r.symbol, decimals: r.decimals });
-  return out;
-}
-async function syncHoldings(missionId, extra = {}) {
-  const mission = getMission(missionId);
-  if (!isLive(mission)) return;
-  const tokens = missionTokens(missionId);
-  for (const [c, list] of Object.entries(extra)) (tokens[c] ??= []).push(...list);
-  const { holdings, errors } = await readHoldings(livePub(), tokens);
-  const keep = db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ?").all(missionId).filter((h) => h.venue in errors);
-  resetPortfolio(missionId, [...holdings.filter((h) => h.amount > 0), ...keep]);
-  return { errors };
-}
-async function liveWalletSnapshot() {
-  const pub = livePub();
-  const b = await walletBalances(pub);
-  if (Object.keys(b.errors).length) throw new Error(`No se pudieron leer los saldos de: ${Object.keys(b.errors).join(", ")}. Int\xE9ntalo de nuevo.`);
-  return { pub, ...b, holdings: b.balances.filter((x) => x.amount > 0).map(({ usd: _u, valuedBy: _v, ...h }) => h) };
-}
-var init_sync = __esm({
-  "src/live/sync.ts"() {
-    "use strict";
-    init_db();
-    init_mission();
-    init_portfolio();
-    init_chain();
-    init_keystore();
-    init_paths2();
   }
 });
 
@@ -10275,7 +10557,7 @@ async function missionStatus(missionId) {
       mode: "REAL: dinero de verdad de la cartera de la IA",
       approval: mission.approval === "manual" ? "el usuario aprueba cada operaci\xF3n (puede tardar hasta ~90 s)" : "aut\xF3noma dentro de los l\xEDmites",
       limits: JSON.parse(mission.limits ?? "{}"),
-      howToTrade: "execute_swap (simulate_swap, Binance, transferencias y puentes no est\xE1n disponibles en una misi\xF3n real)"
+      howToTrade: "execute_swap para los swaps y execute_bridge para mover estables o el nativo entre cadenas (simulate_*, Binance y simulate_transfer no est\xE1n disponibles en una misi\xF3n real)"
     } : { mode: "simulada" }
   };
 }
@@ -10362,80 +10644,19 @@ var init_mission = __esm({
   }
 });
 
-// src/live/client.ts
-import { spawn } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
-function readInfo() {
-  try {
-    return existsSync3(signerInfoFile()) ? JSON.parse(readFileSync2(signerInfoFile(), "utf8")) : null;
-  } catch {
-    return null;
-  }
-}
-async function api(info, path8, init = {}, timeoutMs = 5e3) {
-  const res = await fetch(`http://127.0.0.1:${info.port}${path8}`, {
-    ...init,
-    headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
-    signal: AbortSignal.timeout(timeoutMs)
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-  return body;
-}
-async function signerStatus() {
-  const info = readInfo();
-  if (!info) return null;
-  try {
-    return { info, status: await api(info, "/api/status") };
-  } catch {
-    return null;
-  }
-}
-async function runningSigner() {
-  const s = await signerStatus();
-  if (!s) throw new Error("El firmante de la cartera no est\xE1 en marcha: pide al usuario que la abra y desbloquee con /cryptoagent:cartera");
-  return s.info;
-}
-async function requestIntent(intent) {
-  const info = await runningSigner();
-  const r = await api(info, "/api/intent", { method: "POST", body: JSON.stringify(intent) }, 1e5);
-  return r.ticket;
-}
-async function signTx(body) {
-  const info = await runningSigner();
-  return api(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 18e4);
-}
-async function ensureSigner() {
-  const running2 = await signerStatus();
-  if (running2) return { ...running2, started: false };
-  const entry = asset("signer.mjs", "src/live/signer/main.ts");
-  const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
-  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
-  child.unref();
-  for (let i = 0; i < 50; i++) {
-    await new Promise((r) => setTimeout(r, 200));
-    const s = await signerStatus();
-    if (s && s.status.pid === child.pid) return { ...s, started: true };
-  }
-  throw new Error("El firmante no ha arrancado");
-}
-var walletUrl;
-var init_client = __esm({
-  "src/live/client.ts"() {
-    "use strict";
-    init_paths();
-    init_paths2();
-    walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
-  }
-});
-
 // src/live/execute.ts
 var execute_exports = {};
 __export(execute_exports, {
+  NATIVE_RESERVE: () => NATIVE_RESERVE,
+  SOLANA_FEE_ALLOWANCE: () => SOLANA_FEE_ALLOWANCE,
+  erc20Allowance: () => erc20Allowance,
   explorerTx: () => explorerTx,
-  liveSwap: () => liveSwap
+  liveSwap: () => liveSwap,
+  logLiveTx: () => logLiveTx,
+  rawTokenBalance: () => rawTokenBalance,
+  solanaBudget: () => solanaBudget
 });
-function logTx(missionId, chain, kind, status, summary, extra = {}) {
+function logLiveTx(missionId, chain, kind, status, summary, extra = {}) {
   db.prepare("INSERT INTO live_txs (ts, mission_id, chain, kind, status, summary, tx_hash, explorer_url, usd, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     now(),
     missionId,
@@ -10485,7 +10706,7 @@ async function liveSwap(args) {
   try {
     ticket = await requestIntent({ missionId: m, chain: chain.id, side, usd: usd2, summary });
   } catch (err) {
-    logTx(m, chain.id, "swap", "rejected", summary, { usd: usd2, error: err.message });
+    logLiveTx(m, chain.id, "swap", "rejected", summary, { usd: usd2, error: err.message });
     throw err;
   }
   const pub = livePub();
@@ -10507,7 +10728,7 @@ async function liveSwap(args) {
       }
     });
     if (!built.swapTransaction) throw new Error(`Jupiter no construy\xF3 la transacci\xF3n: ${built.error ?? "sin respuesta"}`);
-    res = await signTx({ ticket, chain: "solana", kind: "swap", usd: usd2, solanaTx: built.swapTransaction });
+    res = await signTx({ ticket, chain: "solana", kind: "swap", usd: usd2, solanaTx: built.swapTransaction, budget: solanaBudget(input2, amountIn) });
   } else {
     const c = EVM_CHAINS[evmChain];
     const headers = { "x-client-id": "cryptoagent" };
@@ -10532,16 +10753,23 @@ async function liveSwap(args) {
       if (allowance < amountIn) {
         const data = `0x095ea7b3${pad322(router)}${amountIn.toString(16).padStart(64, "0")}`;
         const ap = await signTx({ ticket, chain: chain.id, kind: "approve", usd: usd2, evmTx: { chainId: c.chainId, to: input2.address, data, value: "0" } });
-        logTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input2.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
+        logLiveTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input2.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve fall\xF3 (${explorerTx(chain.id, ap.hash)}): ${ap.error}`);
       }
     }
     pre = await evmBalancesAt(evmChain, pub.evm, [input2, output2], "latest");
-    res = await signTx({ ticket, chain: chain.id, kind: "swap", usd: usd2, evmTx: { chainId: c.chainId, to: router, data: built.data.data, value: built.data.transactionValue } });
+    res = await signTx({
+      ticket,
+      chain: chain.id,
+      kind: "swap",
+      usd: usd2,
+      evmTx: { chainId: c.chainId, to: router, data: built.data.data, value: built.data.transactionValue },
+      evmLimits: { maxValue: (isNativeIn ? amountIn : 0n).toString() }
+    });
   }
   const link = explorerTx(chain.id, res.hash);
   if (!res.ok) {
-    logTx(m, chain.id, "swap", "failed", summary, { hash: res.hash, usd: usd2, error: res.error });
+    logLiveTx(m, chain.id, "swap", "failed", summary, { hash: res.hash, usd: usd2, error: res.error });
     logJournal({ missionId: m, sessionId: args.sessionId, kind: "failed_tx", summary: `Swap REAL fallido en ${chain.label}: ${res.error}`, reasoning: args.reasoning, details: { chain: chain.id, txHash: res.hash, explorer: link } });
     await syncHoldings(m).catch(() => void 0);
     throw new Error(`La transacci\xF3n fall\xF3: ${res.error}. ${link}`);
@@ -10550,7 +10778,7 @@ async function liveSwap(args) {
     console.error(`No se pudo reconciliar ${res.hash}: ${err.message}`);
     return { sold: amount, received: quote2.amountOut, networkFee: null, estimated: true };
   });
-  logTx(m, chain.id, "swap", "confirmed", summary, { hash: res.hash, usd: usd2 });
+  logLiveTx(m, chain.id, "swap", "confirmed", summary, { hash: res.hash, usd: usd2 });
   const result = {
     chain: chain.id,
     real: true,
@@ -10582,6 +10810,13 @@ async function liveSwap(args) {
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   await syncHoldings(m, evmChain ? { [evmChain]: [output2].filter((t) => t.address !== NATIVE) } : {}).catch(() => void 0);
   return result;
+}
+function solanaBudget(input2, amountIn, extraLamports = 0n) {
+  const isSol = input2.address === SOL_MINT;
+  return {
+    lamports: ((isSol ? amountIn : 0n) + SOLANA_FEE_ALLOWANCE + extraLamports).toString(),
+    tokens: isSol ? {} : { [input2.address]: amountIn.toString() }
+  };
 }
 async function rawTokenBalance(chain, pub, token2) {
   if (chain !== "solana") return (await evmBalancesAt(chain, pub.evm, [token2], "latest"))[token2.address];
@@ -10633,7 +10868,7 @@ async function reconcile(chain, hash2, pub, input2, output2, pre) {
   };
   return { sold: -delta(input2), received: delta(output2), networkFee: `${fromBaseUnits(gas, 18)} ${getChain(chain).native.symbol}` };
 }
-var NATIVE_RESERVE, SOLANA_MAX_PRIORITY_LAMPORTS, explorerTx, pad322;
+var NATIVE_RESERVE, SOLANA_MAX_PRIORITY_LAMPORTS, explorerTx, SOLANA_FEE_ALLOWANCE, pad322;
 var init_execute = __esm({
   "src/live/execute.ts"() {
     "use strict";
@@ -10651,6 +10886,7 @@ var init_execute = __esm({
     NATIVE_RESERVE = { solana: 0.01, base: 3e-4, bsc: 2e-3 };
     SOLANA_MAX_PRIORITY_LAMPORTS = 1e6;
     explorerTx = (chain, hash2) => chain === "solana" ? `https://solscan.io/tx/${hash2}` : chain === "base" ? `https://basescan.org/tx/${hash2}` : `https://bscscan.com/tx/${hash2}`;
+    SOLANA_FEE_ALLOWANCE = 10000000n;
     pad322 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
   }
 });
@@ -10661,7 +10897,9 @@ function isLiveMission(missionId) {
   return db.prepare("SELECT mode FROM missions WHERE id = ?").get(missionId)?.mode === "live";
 }
 function assertSimulated(missionId, what) {
-  if (isLiveMission(missionId)) throw new Error(`Esta misi\xF3n es REAL: ${what} no est\xE1 disponible con dinero real (de momento, solo swaps en Solana, Base y BNB Chain con execute_swap).`);
+  if (isLiveMission(missionId)) {
+    throw new Error(`Esta misi\xF3n es REAL: ${what} no est\xE1 disponible as\xED. Con dinero real se opera con execute_swap (swaps) y execute_bridge (mover estables o el nativo entre cadenas); Binance no est\xE1 disponible.`);
+  }
 }
 function getHoldings(missionId) {
   return db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ? AND amount > ? ORDER BY venue, symbol").all(missionId, DUST5);
@@ -10926,7 +11164,12 @@ async function valuation(missionId, recordSnapshot = false) {
   let pending = [];
   applyAtomically(() => {
     holdings = getHoldings(missionId);
-    pending = db.prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id").all(missionId);
+    pending = db.prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at, carry FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id").all(missionId);
+    for (const t of pending) {
+      const live = t.carry ? JSON.parse(t.carry).live : void 0;
+      if (live) t.amount_in = Math.max(0, t.amount_in - Math.max(0, balance(missionId, t.to_venue, t.asset_in) - live.baseline));
+    }
+    pending = pending.filter((t) => t.amount_in > 0);
   });
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h) })));
   const transit = await Promise.all(
@@ -16665,8 +16908,8 @@ function anchor(source) {
 }
 var date = /* @__PURE__ */ anchor(dateSource);
 function timeSource(args) {
-  const hhmm3 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
-  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm3}` : args.precision === 0 ? `${hhmm3}:[0-5]\\d` : `${hhmm3}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm3}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm3}(?::[0-5]\\d(?:\\.\\d+)?)?`;
+  const hhmm4 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
+  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm4}` : args.precision === 0 ? `${hhmm4}:[0-5]\\d` : `${hhmm4}:[0-5]\\d\\.\\d{${args.precision}}` : args.seconds ? `${hhmm4}:[0-5]\\d(?:\\.\\d+)?` : `${hhmm4}(?::[0-5]\\d(?:\\.\\d+)?)?`;
   return regex;
 }
 function time(args) {
@@ -41405,6 +41648,38 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     )
   }),
   tool({
+    name: "execute_bridge",
+    kind: "trade",
+    journaled: true,
+    description: 'Solo en misiones REALES: mueve dinero de verdad entre tus cadenas (Solana, Base, BNB Chain) con Li.Fi. Solo estables (USDC, USDT) o el nativo (SOL, ETH, BNB), de ida y de llegada: para mover un token, v\xE9ndelo antes con execute_swap. Pagas el gas real en la cadena de origen y la comisi\xF3n del puente va descontada de lo que recibes. Si la aprobaci\xF3n es manual, espera a que el usuario la apruebe. Mientras llega aparece "en tr\xE1nsito"; la llegada la confirma Li.Fi (segundos o minutos).',
+    schema: external_exports.object({
+      from_chain: chainParam,
+      to_chain: chainParam,
+      token_in: external_exports.string().describe("Estable o nativo que env\xEDas (USDC, USDT, SOL, ETH, BNB o su direcci\xF3n)"),
+      token_out: external_exports.string().describe("Estable o nativo que quieres recibir en la cadena de destino"),
+      amount: external_exports.number().positive(),
+      slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
+      thesis
+    }),
+    run: async (i, ctx) => {
+      if (!isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es simulada: usa simulate_bridge. execute_bridge solo existe en misiones reales.");
+      const { liveBridge: liveBridge2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
+      return json2(
+        await liveBridge2({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          fromChain: i.from_chain,
+          toChain: i.to_chain,
+          tokenIn: i.token_in,
+          tokenOut: i.token_out,
+          amount: i.amount,
+          slippageBps: i.slippage_bps,
+          reasoning: formatThesis(i.thesis)
+        })
+      );
+    }
+  }),
+  tool({
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
@@ -42304,7 +42579,7 @@ init_portfolio();
 init_positions();
 var usd = (n3) => `${n3.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
 var pct = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
-var hhmm2 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+var hhmm3 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
   return min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`;
@@ -42334,7 +42609,7 @@ async function statusReport(missionId) {
     }
     const orders = listOrders(m.id, "open");
     if (orders.length) {
-      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => o.condition === "time" ? `#${o.id} a las ${hhmm2(o.executes_at)}` : `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
+      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => o.condition === "time" ? `#${o.id} a las ${hhmm3(o.executes_at)}` : `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
     }
   }
   const closed = listPositions(m.id).filter((p) => p.status === "closed");
@@ -42348,16 +42623,16 @@ async function statusReport(missionId) {
     lines.push("", "\xDAltimos movimientos:");
     for (const j of recent) {
       const why = j.reasoning?.match(/^Por qué: (.*)$/m)?.[1];
-      lines.push(`- ${hhmm2(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
+      lines.push(`- ${hhmm3(j.ts)} ${j.summary}${why ? ` \xB7 ${why.slice(0, 120)}` : ""}`);
     }
   }
   const notes = db.prepare("SELECT ts, title FROM activity WHERE kind = 'thought' AND mission_id = ? ORDER BY id DESC LIMIT 2").all(m.id);
   if (notes.length) {
     lines.push("", "\xDAltima nota del agente:");
-    for (const n3 of notes) lines.push(`- ${hhmm2(n3.ts)} ${n3.title.slice(0, 220)}`);
+    for (const n3 of notes) lines.push(`- ${hhmm3(n3.ts)} ${n3.title.slice(0, 220)}`);
   }
   const review = db.prepare("SELECT ts, title, body FROM activity WHERE kind = 'review' AND mission_id = ? ORDER BY id DESC LIMIT 1").get(m.id);
-  if (review) lines.push("", `Revisor (${hhmm2(review.ts)}): ${review.title}${review.body ? ` \xB7 ${review.body.slice(0, 200)}` : ""}`);
+  if (review) lines.push("", `Revisor (${hhmm3(review.ts)}): ${review.title}${review.body ? ` \xB7 ${review.body.slice(0, 200)}` : ""}`);
   const requests = listCapabilityRequests("open");
   if (requests.length) {
     lines.push("", `El agente pide (${requests.length}, rev\xEDsalas con /cryptoagent:peticiones):`);

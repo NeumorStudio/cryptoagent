@@ -322,7 +322,6 @@ export async function bridge(a: {
 }) {
   const m = a.missionId;
   assertSimulated(m, "cruzar un puente");
-  assertSimulated(m, "cruzar un puente");
   if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
   const src = getChain(a.fromChain);
   const dst = getChain(a.toChain);
@@ -403,14 +402,17 @@ export async function bridge(a: {
  * aunque varios procesos lo llamen a la vez, se abona una sola vez.
  */
 export async function settleTransfers(opts: { missionId?: number; force?: boolean } = {}): Promise<string[]> {
+  // Los puentes con dinero real no se abonan con un temporizador: los confirma Li.Fi y el saldo se lee de la cadena.
+  const { settleLiveTransfers } = await import("../live/bridge.js");
+  const log: string[] = await settleLiveTransfers(opts.missionId).catch((err) => [`Error consultando puentes reales: ${(err as Error).message}`]);
+  const simOnly = "AND mission_id NOT IN (SELECT id FROM missions WHERE mode = 'live')";
   const rows = (
     opts.force && opts.missionId !== undefined
-      ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? ORDER BY id").all(opts.missionId)
+      ? db.prepare(`SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? ${simOnly} ORDER BY id`).all(opts.missionId)
       : opts.missionId !== undefined
-        ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? AND arrives_at <= ? ORDER BY id").all(opts.missionId, now())
-        : db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND arrives_at <= ? ORDER BY id").all(now())
+        ? db.prepare(`SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? AND arrives_at <= ? ${simOnly} ORDER BY id`).all(opts.missionId, now())
+        : db.prepare(`SELECT * FROM transfers WHERE status = 'pending' AND arrives_at <= ? ${simOnly} ORDER BY id`).all(now())
   ) as unknown as TransferRow[];
-  const log: string[] = [];
   for (const t of rows) {
     // Reclamarla y abonar el saldo van juntos: una transferencia en 'settling' ya está en la cartera
     // y deja de contar como "en tránsito" (si no, la valoración la contaría dos veces).

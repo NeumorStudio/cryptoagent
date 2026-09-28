@@ -6,7 +6,7 @@
 //   slippage permitido, el swap revierte y el gas se pierde igualmente. Un honeypot no se puede vender.
 import * as binanceMarket from "../../market/binance.js";
 import * as evm from "../../market/evm.js";
-import { fetchJson } from "../../market/http.js";
+import { fetchJson, isNoRouteError } from "../../market/http.js";
 import { fromBaseUnits, toBaseUnits } from "../../market/jupiter.js";
 import type { Features } from "../types.js";
 import type { ChainAdapter, CostLine, Delta, Settlement, SwapQuote, TokenRef, WalletView } from "./types.js";
@@ -227,7 +227,9 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         const q = await evm.quote(cfg.id, token, cfg.cash, toBaseUnits(h.amount, h.decimals));
         const usd = fromBaseUnits(q.amountOut, cfg.cash.decimals) * (1 - (sec.sellTaxPct ?? 0) / 100);
         return { usd, method: `liquidación ${q.source}${sec.sellTaxPct ? ` (con ${sec.sellTaxPct} % de impuesto)` : ""}`, reliable: true };
-      } catch {
+      } catch (err) {
+        // Sin ruta de venta: no se puede cobrar, así que vale 0 (si vuelve a haber ruta, volverá a valer).
+        if (isNoRouteError(err)) return { usd: 0, method: "sin ruta de venta: ahora no se puede vender", reliable: true };
         const p = (await priceUsd([asset]).catch(() => ({}) as Record<string, number>))[asset];
         return { usd: (p ?? 0) * h.amount, method: "precio spot (sin cotización de venta)", reliable: false };
       }

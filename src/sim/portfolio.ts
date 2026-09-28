@@ -374,12 +374,18 @@ export const evmAddress = (missionId: number) => `0x${createHash("sha256").updat
 // ─── Valoración a precio de mercado ─────────────────────────────────────────
 
 export async function valuation(missionId: number, recordSnapshot = false) {
-  const holdings = getHoldings(missionId);
+  // Saldos y tránsito se leen en la misma instantánea: si otro proceso abona una transferencia entre
+  // las dos lecturas, se contaría dos veces (en la cartera y en tránsito).
+  let holdings: Holding[] = [];
+  let pending: Array<{ id: number; to_venue: VenueId; asset_in: string; symbol_in: string; decimals_in: number; amount_in: number; arrives_at: string }> = [];
+  applyAtomically(() => {
+    holdings = getHoldings(missionId);
+    // Lo que está en tránsito (transferencias y puentes) se valora en su destino.
+    pending = db
+      .prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id")
+      .all(missionId) as typeof pending;
+  });
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
-  // Lo que está en tránsito (transferencias y puentes) se valora en su destino.
-  const pending = db
-    .prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status IN ('pending', 'settling') ORDER BY id")
-    .all(missionId) as Array<{ id: number; to_venue: VenueId; asset_in: string; symbol_in: string; decimals_in: number; amount_in: number; arrives_at: string }>;
   const transit = await Promise.all(
     pending.map(async (t) => ({
       ...t,

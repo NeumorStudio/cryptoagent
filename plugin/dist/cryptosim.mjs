@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.14.1";
+var CODE_VERSION = "0.14.2";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -37423,8 +37423,11 @@ var MIN_INTERVAL_MS = {
   // KyberSwap admite unas 30 peticiones cada 10 s.
   "aggregator-api.kyberswap.com": 350,
   // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
-  "api.gopluslabs.io": 2e3
+  "api.gopluslabs.io": 2e3,
+  // Binance limita por "peso" (6000 por minuto e IP); si se pasa, bloquea la IP (HTTP 418).
+  "api.binance.com": 100
 };
+var DEFAULT_BAN_MS = 2 * 6e4;
 var COOLDOWN_MS = 6e3;
 db.exec("CREATE TABLE IF NOT EXISTS http_pacing (host TEXT PRIMARY KEY, next_at INTEGER NOT NULL)");
 var reserveStmt = db.prepare(
@@ -37434,6 +37437,17 @@ var reserveStmt = db.prepare(
 var cooldownStmt = db.prepare(
   "INSERT INTO http_pacing (host, next_at) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET next_at = max(next_at, excluded.next_at)"
 );
+db.exec("CREATE TABLE IF NOT EXISTS http_blocked (host TEXT PRIMARY KEY, until INTEGER NOT NULL)");
+var blockedStmt = db.prepare("SELECT until FROM http_blocked WHERE host = ?");
+var blockStmt = db.prepare(
+  "INSERT INTO http_blocked (host, until) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET until = max(until, excluded.until)"
+);
+function banUntil(res, body) {
+  const stated = Number(body.match(/banned until (\d{12,})/)?.[1]);
+  if (Number.isFinite(stated) && stated > Date.now()) return stated;
+  const retryAfter = Number(res.headers.get("retry-after"));
+  return Date.now() + (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1e3 : DEFAULT_BAN_MS);
+}
 async function pace(host) {
   const interval = MIN_INTERVAL_MS[host];
   if (!interval) return;
@@ -37465,6 +37479,11 @@ var fetchImpl = (...args) => fetch(...args);
 async function request(url2, opts) {
   const host = new URL(url2).host;
   for (let attempt2 = 0; ; attempt2++) {
+    const blocked = blockedStmt.get(host)?.until ?? 0;
+    if (blocked > Date.now()) {
+      const hora = new Date(blocked).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      throw new Error(`${host} ha bloqueado temporalmente esta IP por exceso de peticiones (hasta las ${hora}); no se le llama hasta entonces`);
+    }
     await pace(host);
     await acquire(host);
     let res;
@@ -37484,6 +37503,10 @@ async function request(url2, opts) {
       body = await res.text();
     } finally {
       release(host);
+    }
+    if (res.status === 418) {
+      blockStmt.run(host, banUntil(res, body));
+      return { status: res.status, body };
     }
     if ((res.status === 429 || res.status === 503) && attempt2 < MAX_RETRIES) {
       const retryAfter = Number(res.headers.get("retry-after"));
@@ -37513,6 +37536,11 @@ function fetchText(url2, opts = {}) {
     for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
   }
   return value;
+}
+function isNoRouteError(err) {
+  const msg = String(err?.message ?? err);
+  if (/HTTP (408|429|5\d\d)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND/i.test(msg)) return false;
+  return /HTTP 40[04]|COULD_NOT_FIND|NO_ROUTE|No routes|not tradable|TOKEN_NOT_TRADABLE/i.test(msg);
 }
 async function fetchJson(url2, a = {}, ttlMs) {
   const opts = typeof a === "number" ? { timeoutMs: a, ttlMs } : a;
@@ -37558,7 +37586,7 @@ async function getSymbolInfo(symbol2) {
 }
 async function getOrderBook(symbol2) {
   const raw = await fetchJson(
-    `${BASE}/depth?symbol=${symbol2.toUpperCase()}&limit=5000`,
+    `${BASE}/depth?symbol=${symbol2.toUpperCase()}&limit=100`,
     15e3,
     2e3
     // determina el precio de ejecución: caché muy corta
@@ -38045,7 +38073,8 @@ function evmAdapter(cfg) {
         const q = await quote(cfg.id, token2, cfg.cash, toBaseUnits(h.amount, h.decimals));
         const usd2 = fromBaseUnits(q.amountOut, cfg.cash.decimals) * (1 - (sec.sellTaxPct ?? 0) / 100);
         return { usd: usd2, method: `liquidaci\xF3n ${q.source}${sec.sellTaxPct ? ` (con ${sec.sellTaxPct} % de impuesto)` : ""}`, reliable: true };
-      } catch {
+      } catch (err) {
+        if (isNoRouteError(err)) return { usd: 0, method: "sin ruta de venta: ahora no se puede vender", reliable: true };
         const p = (await priceUsd2([asset2]).catch(() => ({})))[asset2];
         return { usd: (p ?? 0) * h.amount, method: "precio spot (sin cotizaci\xF3n de venta)", reliable: false };
       }
@@ -38500,7 +38529,8 @@ var solana = {
     try {
       const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 1e4);
       return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter", reliable: true };
-    } catch {
+    } catch (err) {
+      if (isNoRouteError(err)) return { usd: 0, method: "sin ruta de venta: ahora no se puede vender", reliable: true };
       const info = await getTokenInfo(h.asset).catch(() => null);
       return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotizaci\xF3n de venta)", reliable: false };
     }
@@ -38936,9 +38966,13 @@ async function binanceMarketOrder(args) {
 }
 var evmAddress = (missionId) => `0x${createHash("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
 async function valuation(missionId, recordSnapshot = false) {
-  const holdings = getHoldings(missionId);
+  let holdings = [];
+  let pending = [];
+  applyAtomically(() => {
+    holdings = getHoldings(missionId);
+    pending = db.prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id").all(missionId);
+  });
   const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h) })));
-  const pending = db.prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status IN ('pending', 'settling') ORDER BY id").all(missionId);
   const transit = await Promise.all(
     pending.map(async (t) => ({
       ...t,
@@ -39333,9 +39367,21 @@ async function settleTransfers(opts = {}) {
   const rows = opts.force && opts.missionId !== void 0 ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? ORDER BY id").all(opts.missionId) : opts.missionId !== void 0 ? db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND mission_id = ? AND arrives_at <= ? ORDER BY id").all(opts.missionId, now()) : db.prepare("SELECT * FROM transfers WHERE status = 'pending' AND arrives_at <= ? ORDER BY id").all(now());
   const log = [];
   for (const t of rows) {
-    if (!db.prepare("UPDATE transfers SET status = 'settling' WHERE id = ? AND status = 'pending'").run(t.id).changes) continue;
+    db.exec("SAVEPOINT settle");
     try {
+      if (!db.prepare("UPDATE transfers SET status = 'settling' WHERE id = ? AND status = 'pending'").run(t.id).changes) {
+        db.exec("RELEASE settle");
+        continue;
+      }
       applyDeltas(t.mission_id, t.to_venue, [{ asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in }]);
+      db.exec("RELEASE settle");
+    } catch (err) {
+      db.exec("ROLLBACK TO settle");
+      db.exec("RELEASE settle");
+      log.push(`No se pudo abonar la transferencia #${t.id}: ${err.message}`);
+      continue;
+    }
+    try {
       const carry = t.carry ? JSON.parse(t.carry) : null;
       if (carry?.move) {
         await attachPosition({ missionId: t.mission_id, venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, received: t.amount_in, carry: carry.move });
@@ -39347,8 +39393,8 @@ async function settleTransfers(opts = {}) {
       logJournal({ missionId: t.mission_id, sessionId: null, kind: "transfer_arrived", summary });
       log.push(summary);
     } catch (err) {
-      db.prepare("UPDATE transfers SET status = 'pending' WHERE id = ?").run(t.id);
-      log.push(`No se pudo abonar la transferencia #${t.id}: ${err.message}`);
+      db.prepare("UPDATE transfers SET status = 'settled', settled_at = ? WHERE id = ?").run(now(), t.id);
+      log.push(`Transferencia #${t.id} abonada, pero no se pudo trasladar su coste base: ${err.message}`);
     }
   }
   return log;

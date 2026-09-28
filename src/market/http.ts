@@ -18,7 +18,11 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   "aggregator-api.kyberswap.com": 350,
   // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
   "api.gopluslabs.io": 2_000,
+  // Binance limita por "peso" (6000 por minuto e IP); si se pasa, bloquea la IP (HTTP 418).
+  "api.binance.com": 100,
 };
+/** Duración del bloqueo si el servicio no dice hasta cuándo. */
+const DEFAULT_BAN_MS = 2 * 60_000;
 /** Pausa común para todos cuando el servicio responde 429. */
 const COOLDOWN_MS = 6_000;
 
@@ -30,6 +34,21 @@ const reserveStmt = db.prepare(
 const cooldownStmt = db.prepare(
   "INSERT INTO http_pacing (host, next_at) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET next_at = max(next_at, excluded.next_at)",
 );
+
+// Servicios que han bloqueado la IP (compartido entre procesos): no se les llama hasta que termine,
+// porque insistir durante un bloqueo lo alarga.
+db.exec("CREATE TABLE IF NOT EXISTS http_blocked (host TEXT PRIMARY KEY, until INTEGER NOT NULL)");
+const blockedStmt = db.prepare("SELECT until FROM http_blocked WHERE host = ?");
+const blockStmt = db.prepare(
+  "INSERT INTO http_blocked (host, until) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET until = max(until, excluded.until)",
+);
+
+function banUntil(res: Response, body: string): number {
+  const stated = Number(body.match(/banned until (\d{12,})/)?.[1]);
+  if (Number.isFinite(stated) && stated > Date.now()) return stated;
+  const retryAfter = Number(res.headers.get("retry-after"));
+  return Date.now() + (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : DEFAULT_BAN_MS);
+}
 
 /** Reserva el siguiente turno del servicio y espera a que llegue. */
 async function pace(host: string) {
@@ -90,6 +109,11 @@ export interface RequestOpts {
 async function request(url: string, opts: RequestOpts & { timeoutMs: number }): Promise<{ status: number; body: string }> {
   const host = new URL(url).host;
   for (let attempt = 0; ; attempt++) {
+    const blocked = (blockedStmt.get(host) as { until: number } | undefined)?.until ?? 0;
+    if (blocked > Date.now()) {
+      const hora = new Date(blocked).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      throw new Error(`${host} ha bloqueado temporalmente esta IP por exceso de peticiones (hasta las ${hora}); no se le llama hasta entonces`);
+    }
     await pace(host);
     await acquire(host);
     let res: Response;
@@ -109,6 +133,11 @@ async function request(url: string, opts: RequestOpts & { timeoutMs: number }): 
       body = await res.text();
     } finally {
       release(host);
+    }
+    // IP bloqueada: se anota para todos los procesos y no se reintenta.
+    if (res.status === 418) {
+      blockStmt.run(host, banUntil(res, body));
+      return { status: res.status, body };
     }
     // Demasiadas peticiones o servicio saturado: esperar y reintentar.
     if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
@@ -147,6 +176,16 @@ export function fetchText(url: string, opts: RequestOpts = {}): Promise<{ status
     for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
   }
   return value;
+}
+
+/**
+ * ¿El agregador ha contestado que no hay ruta (el token no se puede vender), o solo ha fallado la red?
+ * Lo primero es un dato: el token vale 0 ahora mismo. Lo segundo es transitorio.
+ */
+export function isNoRouteError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err);
+  if (/HTTP (408|429|5\d\d)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND/i.test(msg)) return false;
+  return /HTTP 40[04]|COULD_NOT_FIND|NO_ROUTE|No routes|not tradable|TOKEN_NOT_TRADABLE/i.test(msg);
 }
 
 export async function fetchJson<T = unknown>(url: string, timeoutMs?: number, ttlMs?: number): Promise<T>;

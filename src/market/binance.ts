@@ -40,7 +40,7 @@ export type Level = [number, number]; // [precio, cantidad base]
 
 export async function getOrderBook(symbol: string): Promise<{ bids: Level[]; asks: Level[] }> {
   const raw = await fetchJson<{ bids: [string, string][]; asks: [string, string][] }>(
-    `${BASE}/depth?symbol=${symbol.toUpperCase()}&limit=5000`,
+    `${BASE}/depth?symbol=${symbol.toUpperCase()}&limit=100`,
     15_000,
     2_000, // determina el precio de ejecución: caché muy corta
   );

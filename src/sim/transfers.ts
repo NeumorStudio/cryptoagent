@@ -409,9 +409,23 @@ export async function settleTransfers(opts: { missionId?: number; force?: boolea
   ) as unknown as TransferRow[];
   const log: string[] = [];
   for (const t of rows) {
-    if (!db.prepare("UPDATE transfers SET status = 'settling' WHERE id = ? AND status = 'pending'").run(t.id).changes) continue;
+    // Reclamarla y abonar el saldo van juntos: una transferencia en 'settling' ya está en la cartera
+    // y deja de contar como "en tránsito" (si no, la valoración la contaría dos veces).
+    db.exec("SAVEPOINT settle");
     try {
+      if (!db.prepare("UPDATE transfers SET status = 'settling' WHERE id = ? AND status = 'pending'").run(t.id).changes) {
+        db.exec("RELEASE settle");
+        continue;
+      }
       applyDeltas(t.mission_id, t.to_venue, [{ asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in }]);
+      db.exec("RELEASE settle");
+    } catch (err) {
+      db.exec("ROLLBACK TO settle");
+      db.exec("RELEASE settle");
+      log.push(`No se pudo abonar la transferencia #${t.id}: ${(err as Error).message}`);
+      continue;
+    }
+    try {
       const carry = t.carry ? (JSON.parse(t.carry) as CarryInfo) : null;
       if (carry?.move) {
         await attachPosition({ missionId: t.mission_id, venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, received: t.amount_in, carry: carry.move });
@@ -423,8 +437,9 @@ export async function settleTransfers(opts: { missionId?: number; force?: boolea
       logJournal({ missionId: t.mission_id, sessionId: null, kind: "transfer_arrived", summary });
       log.push(summary);
     } catch (err) {
-      db.prepare("UPDATE transfers SET status = 'pending' WHERE id = ?").run(t.id);
-      log.push(`No se pudo abonar la transferencia #${t.id}: ${(err as Error).message}`);
+      // El saldo ya está abonado: no se vuelve a 'pending' (se abonaría dos veces); solo falla el coste base.
+      db.prepare("UPDATE transfers SET status = 'settled', settled_at = ? WHERE id = ?").run(now(), t.id);
+      log.push(`Transferencia #${t.id} abonada, pero no se pudo trasladar su coste base: ${(err as Error).message}`);
     }
   }
   return log;
@@ -433,7 +448,7 @@ export async function settleTransfers(opts: { missionId?: number; force?: boolea
 /** Transferencias en tránsito de una misión (para la cartera). */
 export function pendingTransfers(missionId: number) {
   return db
-    .prepare("SELECT id, kind, from_venue, to_venue, provider, symbol_out, amount_out, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status IN ('pending', 'settling') ORDER BY id")
+    .prepare("SELECT id, kind, from_venue, to_venue, provider, symbol_out, amount_out, asset_in, symbol_in, decimals_in, amount_in, arrives_at FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id")
     .all(missionId) as unknown as Array<Pick<TransferRow, "id" | "kind" | "from_venue" | "to_venue" | "provider" | "symbol_out" | "amount_out" | "asset_in" | "symbol_in" | "decimals_in" | "amount_in" | "arrives_at">>;
 }
 

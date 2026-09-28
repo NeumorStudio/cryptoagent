@@ -1,7 +1,7 @@
 // Solana: monedero propio, swaps con Jupiter (agregador de DEX de mainnet).
 import { config } from "../../config.js";
 import * as binance from "../../market/binance.js";
-import { fetchJson } from "../../market/http.js";
+import { fetchJson, isNoRouteError } from "../../market/http.js";
 import { SOL_MINT, USDC_MINT, fromBaseUnits, getQuote, getTokenInfo, resolveMint, toBaseUnits } from "../../market/jupiter.js";
 import * as research from "../../market/research.js";
 import type { Features } from "../types.js";
@@ -155,7 +155,9 @@ export const solana: ChainAdapter = {
       // Valor de liquidación: cuánto USDC darían hoy vendiéndolo todo.
       const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 10_000);
       return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidación Jupiter", reliable: true };
-    } catch {
+    } catch (err) {
+      // Sin ruta de venta: no se puede cobrar, así que vale 0 (si vuelve a haber ruta, volverá a valer).
+      if (isNoRouteError(err)) return { usd: 0, method: "sin ruta de venta: ahora no se puede vender", reliable: true };
       const info = await getTokenInfo(h.asset).catch(() => null);
       return { usd: (info?.usdPrice ?? 0) * h.amount, method: "precio spot (sin cotización de venta)", reliable: false };
     }

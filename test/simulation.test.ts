@@ -100,6 +100,16 @@ test("transferir SOL a Binance mueve su coste y se mide al venderlo allí", asyn
   assert.equal(v.inTransit?.[0]?.transferId, t.transferId);
   assert.ok(v.inTransit![0]!.usd > 50);
   assert.deepEqual(await settleTransfers({ missionId: m }), [], "todavía no ha llegado");
+  // Una transferencia ya abonada (en 'settling') cuenta en la cartera, no también en tránsito.
+  const before = (await valuation(m)).totalUsd;
+  db.prepare("UPDATE transfers SET status = 'settling' WHERE id = ?").run(t.transferId);
+  const row = db.prepare("SELECT asset_in, symbol_in, decimals_in, amount_in FROM transfers WHERE id = ?").get(t.transferId) as any;
+  db.prepare("INSERT INTO holdings (mission_id, venue, asset, symbol, decimals, amount) VALUES (?, 'binance', ?, ?, ?, ?)").run(m, row.asset_in, row.symbol_in, row.decimals_in, row.amount_in);
+  const during = await valuation(m);
+  assert.equal(during.inTransit, undefined);
+  close(during.totalUsd, before, 0.5);
+  db.prepare("DELETE FROM holdings WHERE mission_id = ? AND venue = 'binance' AND asset = ?").run(m, row.asset_in);
+  db.prepare("UPDATE transfers SET status = 'pending' WHERE id = ?").run(t.transferId);
   assert.equal((await settleTransfers({ missionId: m, force: true })).length, 1);
   assert.equal((await settleTransfers({ missionId: m, force: true })).length, 0, "se abona una sola vez");
   const onBinance = listPositions(m).find((x) => x.venue === "binance" && x.asset === "SOL")!;

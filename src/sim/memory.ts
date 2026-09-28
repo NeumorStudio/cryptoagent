@@ -48,6 +48,10 @@ export const CONDITION_FIELDS = [
   "mcapUsd",
   "priceChange5mPct",
   "priceChange1hPct",
+  "priceChange24hPct",
+  "buyVolume5mUsd",
+  "sellVolume5mUsd",
+  "buySellRatio5m",
   "holders",
   "topHoldersPct",
   "netBuyers5m",
@@ -113,9 +117,20 @@ function summarizeTrades(ps: Pos[]) {
     wins: ps.filter((p) => outcome(p) === "win").length,
     losses: ps.filter((p) => outcome(p) === "loss").length,
     avgPnlPct: Number(avg.toFixed(1)),
+    // Además de ganar o perder: cuánto. Una misión con objetivo alto necesita movimientos grandes.
+    bestPct: Number(Math.max(...ps.map((p) => p.pnlPct ?? 0)).toFixed(1)),
+    worstPct: Number(Math.min(...ps.map((p) => p.pnlPct ?? 0)).toFixed(1)),
+    bigWins: ps.filter((p) => (p.pnlPct ?? 0) >= BIG_WIN_PCT).length,
     positionIds: ps.map((p) => p.id),
   };
 }
+
+/** A partir de qué subida una operación cuenta como "grande" en la evidencia. */
+const BIG_WIN_PCT = 20;
+
+/** Cuánto se movieron las operaciones: media, mejor y cuántas dieron un movimiento grande. */
+const magnitude = (t: { trades: number; avgPnlPct?: number; bestPct?: number; bigWins?: number }) =>
+  t.trades ? `; media ${t.avgPnlPct} %, mejor ${t.bestPct} %, ${t.bigWins} de ${t.trades} con +${BIG_WIN_PCT} % o más` : "";
 
 interface BeliefRow {
   id: number;
@@ -138,7 +153,7 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
   const cond = b.condition ? (JSON.parse(b.condition) as Condition) : null;
   let matched: Record<string, unknown> | undefined;
   let verdict = applied.trades
-    ? `sin condición; aplicada en ${applied.trades} operaciones: ${applied.wins} ganadas, ${applied.losses} perdidas (media ${applied.avgPnlPct} %)`
+    ? `sin condición; aplicada en ${applied.trades} operaciones: ${applied.wins} ganadas, ${applied.losses} perdidas${magnitude(applied)}`
     : "sin condición y todavía sin operaciones que la apliquen";
   if (cond) {
     const ps = closed.filter((p) => matches(cond, p));
@@ -147,7 +162,8 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
     const [inFavor, against] = b.expectation === "negative" ? [losses, wins] : [wins, losses];
     const decided = inFavor + against;
     const support = decided ? Math.round((inFavor / decided) * 100) : null;
-    matched = { ...summarizeTrades(ps), inFavor, against, supportPct: support };
+    const summary = summarizeTrades(ps);
+    matched = { ...summary, inFavor, against, supportPct: support };
     verdict =
       decided < 3
         ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)`
@@ -156,6 +172,7 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
           : support! <= 40
             ? `los datos la contradicen (${inFavor} a favor, ${against} en contra)`
             : `dudosa (${inFavor} a favor, ${against} en contra)`;
+    verdict += magnitude(summary);
   }
   return { verdict, appliedIn: applied, ...(matched ? { matchingTrades: matched } : {}) };
 }

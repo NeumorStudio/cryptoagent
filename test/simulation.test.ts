@@ -6,7 +6,7 @@ import { config } from "../src/config.js";
 import { db, now } from "../src/db.js";
 import { SOL_MINT, USDC_MINT } from "../src/market/jupiter.js";
 import { createMission } from "../src/sim/mission.js";
-import { checkOrders } from "../src/sim/orders.js";
+import { checkOrders, placeOrder } from "../src/sim/orders.js";
 import { binanceMarketOrder, getHoldings, liquidateAll, quoteSwap, swap, valuation } from "../src/sim/portfolio.js";
 import { cexTransfer, settleTransfers } from "../src/sim/transfers.js";
 import { listPositions } from "../src/sim/positions.js";
@@ -66,6 +66,24 @@ test("una orden condicional guardada con el formato anterior se ejecuta", async 
   assert.equal(p.status, "closed");
   assert.ok(p.pnlUsd! > 0);
   assert.match(p.exitReason, /orden condicional/);
+});
+
+test("orden por tiempo: se ejecuta a la hora indicada, pase lo que pase con el precio", async () => {
+  await swap({ missionId: m, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 5, slippageBps: 100, reasoning: "test" });
+  const o = await placeOrder({
+    missionId: m,
+    sessionId: null,
+    venue: "solana",
+    condition: "time",
+    inMinutes: 0.01,
+    action: { input: MEME, output: "USDC", amount: 0, sellAll: true, slippageBps: 500 },
+    reasoning: "si no ha saltado el TP, vendo",
+  });
+  assert.match(o.summary, /a las \d\d:\d\d:\d\d/);
+  await assert.rejects(placeOrder({ missionId: m, sessionId: null, venue: "solana", condition: "time", action: { input: MEME, output: "USDC", amount: 1, slippageBps: 100 }, reasoning: "x" }), /in_minutes/);
+  await new Promise((r) => setTimeout(r, 800));
+  assert.match((await checkOrders()).join("\n"), new RegExp(`Orden #${o.id} ejecutada por tiempo`));
+  assert.equal(bal(m, "solana", MEME), 0);
 });
 
 test("transferir SOL a Binance mueve su coste y se mide al venderlo allí", async () => {

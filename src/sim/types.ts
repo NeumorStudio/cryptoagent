@@ -46,6 +46,11 @@ export interface Features {
   mcapUsd?: number;
   priceChange5mPct?: number;
   priceChange1hPct?: number;
+  priceChange24hPct?: number;
+  /** Volumen de compras y de ventas en USD en los últimos 5 min, y su cociente (compras / ventas). */
+  buyVolume5mUsd?: number;
+  sellVolume5mUsd?: number;
+  buySellRatio5m?: number;
   holders?: number;
   topHoldersPct?: number;
   netBuyers5m?: number;

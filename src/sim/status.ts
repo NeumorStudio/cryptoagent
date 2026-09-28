@@ -52,7 +52,7 @@ export async function statusReport(missionId?: number): Promise<string> {
     }
     const orders = listOrders(m.id, "open");
     if (orders.length) {
-      lines.push(`Órdenes abiertas: ${orders.map((o: any) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "≥" : "≤"} ${o.trigger_price}`).join(" · ")}`);
+      lines.push(`Órdenes abiertas: ${orders.map((o: any) => (o.condition === "time" ? `#${o.id} a las ${hhmm(o.executes_at)}` : `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "≥" : "≤"} ${o.trigger_price}`)).join(" · ")}`);
     }
   }
 

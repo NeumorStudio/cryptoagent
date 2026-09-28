@@ -96,6 +96,8 @@ test("creencia con condición: el simulador la contrasta con todas las operacion
     { trades: 3, inFavor: 2, against: 1 },
   );
   assert.match(b.evidence.verdict, /se sostiene/);
+  // También cuánto se movieron: media, mejor y cuántas dieron +20 % o más.
+  assert.match(b.evidence.verdict, /mejor 30 %, 1 de 3 con \+20 % o más/);
 });
 
 test("creencia sin condición: cuenta el resultado de las operaciones que la aplicaron", () => {

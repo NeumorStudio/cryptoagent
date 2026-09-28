@@ -244,6 +244,7 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         mcapUsd: n(top?.marketCap ?? top?.fdv, 0),
         priceChange5mPct: n(top?.priceChange?.m5),
         priceChange1hPct: n(top?.priceChange?.h1),
+        priceChange24hPct: n(top?.priceChange?.h24),
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : undefined,

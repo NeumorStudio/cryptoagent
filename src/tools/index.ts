@@ -320,12 +320,15 @@ export const SIM_TOOLS = [
       "Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, " +
       "below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotización real de ese instante. " +
       "Funciona aunque no estés en sesión. El precio se comprueba aproximadamente cada minuto, así que un pico muy breve puede no dispararla. " +
-      "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento.",
+      "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. " +
+      "Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan " +
+      "(\"si a los 3 min no ha saltado la toma de beneficio, vendo\") aunque no estés pendiente. Cancela la que sobre cuando se ejecute la otra.",
     schema: z.object({
       chain: chainParam,
-      trigger_asset: z.string().describe(`Dirección del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES})`),
-      condition: z.enum(["above", "below"]),
-      trigger_price: z.number().positive().describe("Precio en USD"),
+      trigger_asset: z.string().optional().describe(`Dirección del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),
+      condition: z.enum(["above", "below", "time"]),
+      trigger_price: z.number().positive().optional().describe("Precio en USD. No en las de tiempo"),
+      in_minutes: z.number().positive().optional().describe("Solo con condition: time. Dentro de cuántos minutos se ejecuta"),
       input: z.string(),
       output: z.string(),
       amount: z.number().positive().optional().describe("Cantidad del token de entrada"),
@@ -344,6 +347,7 @@ export const SIM_TOOLS = [
           triggerAsset: i.trigger_asset,
           condition: i.condition,
           triggerPrice: i.trigger_price,
+          inMinutes: i.in_minutes,
           action: { input: i.input, output: i.output, amount: i.amount ?? 0, sellAll: i.sell_all || undefined, slippageBps: i.slippage_bps },
           expiresHours: i.expires_hours,
           reasoning: formatThesis(i.thesis),
@@ -358,11 +362,13 @@ export const SIM_TOOLS = [
     description:
       "Deja una orden condicional en Binance: cuando el último precio de trigger_symbol cruce trigger_price, se ejecuta la orden de mercado " +
       "indicada contra el order book real de ese instante. Funciona aunque no estés en sesión; se comprueba aproximadamente cada minuto. " +
-      "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla.",
+      "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con condition: time se ejecuta dentro de in_minutes, " +
+      "pase lo que pase con el precio (sin trigger_symbol ni trigger_price).",
     schema: z.object({
-      trigger_symbol: z.string().describe("Par de Binance cuyo precio se vigila, p. ej. SOLUSDC"),
-      condition: z.enum(["above", "below"]),
-      trigger_price: z.number().positive().describe("Precio en el activo quote del par"),
+      trigger_symbol: z.string().optional().describe("Par de Binance cuyo precio se vigila, p. ej. SOLUSDC. No en las de tiempo"),
+      condition: z.enum(["above", "below", "time"]),
+      trigger_price: z.number().positive().optional().describe("Precio en el activo quote del par. No en las de tiempo"),
+      in_minutes: z.number().positive().optional().describe("Solo con condition: time. Dentro de cuántos minutos se ejecuta"),
       symbol: z.string().describe("Par en el que se ejecuta la orden"),
       side: z.enum(["BUY", "SELL"]),
       amount: z.number().positive().describe("BUY: cantidad de quote a gastar. SELL: cantidad base a vender"),
@@ -378,6 +384,7 @@ export const SIM_TOOLS = [
           triggerAsset: i.trigger_symbol,
           condition: i.condition,
           triggerPrice: i.trigger_price,
+          inMinutes: i.in_minutes,
           action: { symbol: i.symbol, side: i.side, amount: i.amount },
           expiresHours: i.expires_hours,
           reasoning: formatThesis(i.thesis),

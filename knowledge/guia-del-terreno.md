@@ -14,7 +14,7 @@ Datos verificados el 27 de septiembre de 2026; las plataformas cambian, así que
 | Cualquier token de **Base** con ruta en KyberSwap (o ParaSwap) | Swap al precio de cotización del agregador en ese instante | `simulate_swap` (chain: base) |
 | Cualquier token de **BNB Chain** con ruta en KyberSwap (o ParaSwap) | Igual que en Base | `simulate_swap` (chain: bsc) |
 | Binance spot | Orden de mercado contra el order book real | `simulate_binance_market_order` |
-| Órdenes condicionales | Se disparan con el precio real, comprobado cada ~60 s | `place_*_trigger_order` |
+| Órdenes condicionales | Por precio (se disparan con el precio real, comprobado cada ~60 s) o por tiempo (se ejecutan a los minutos que indiques, pase lo que pase) | `place_*_trigger_order` |
 
 **No ejecutable** (solo se puede anotar con `record_hypothetical_action`): crear tokens, publicar en redes,
 otras blockchains (Ethereum, Arbitrum…), futuros, préstamos, staking, airdrops. Si necesitas algo que no

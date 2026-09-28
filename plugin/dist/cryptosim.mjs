@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.13.2";
+var CODE_VERSION = "0.14.0";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -38061,6 +38061,7 @@ function evmAdapter(cfg) {
         mcapUsd: n(top?.marketCap ?? top?.fdv, 0),
         priceChange5mPct: n(top?.priceChange?.m5),
         priceChange1hPct: n(top?.priceChange?.h1),
+        priceChange24hPct: n(top?.priceChange?.h24),
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : void 0,
@@ -38434,6 +38435,10 @@ async function entryFeatures(mint) {
     mcapUsd: round(t?.mcap, 0),
     priceChange5mPct: round(t?.stats5m?.priceChange),
     priceChange1hPct: round(t?.stats1h?.priceChange),
+    priceChange24hPct: round(t?.stats24h?.priceChange),
+    buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
+    sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
+    buySellRatio5m: t?.stats5m?.sellVolume > 0 ? round(t.stats5m.buyVolume / t.stats5m.sellVolume) : void 0,
     holders: t?.holderCount,
     topHoldersPct: round(t?.audit?.topHoldersPercentage, 1),
     netBuyers5m: t?.stats5m?.numNetBuyers,
@@ -39361,10 +39366,14 @@ function describeAction(venue, action) {
   const a = action;
   return `Binance ${a.side} ${a.symbol} amount=${a.amount}`;
 }
+var hms = (ms) => new Date(ms).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 async function placeOrder(args) {
+  const venue = getVenue(args.venue);
+  if (args.condition === "time") return placeTimeOrder({ ...args, venue });
+  if (!args.triggerAsset || !(args.triggerPrice > 0)) throw new Error("Una orden por precio necesita el activo que se vigila y el precio de disparo");
+  const triggerPrice = args.triggerPrice;
   let triggerAsset;
   let triggerLabel;
-  const venue = getVenue(args.venue);
   if (venue.kind === "chain") {
     const trigger = await venue.resolveToken(args.triggerAsset);
     triggerAsset = trigger.address;
@@ -39377,7 +39386,7 @@ async function placeOrder(args) {
     await getSymbolInfo(args.action.symbol);
   }
   const price = await currentPrice(args.venue, triggerAsset);
-  if (isTriggered(args.condition, price, args.triggerPrice)) {
+  if (isTriggered(args.condition, price, triggerPrice)) {
     throw new Error(
       `La condici\xF3n ya se cumple (precio actual de ${triggerLabel}: ${price}). Si quieres operar ahora, usa directamente la operaci\xF3n simulada.`
     );
@@ -39387,11 +39396,30 @@ async function placeOrder(args) {
     db.prepare(
       `INSERT INTO orders (created_at, mission_id, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(now(), args.missionId, args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, args.triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt).lastInsertRowid
+    ).run(now(), args.missionId, args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt).lastInsertRowid
   );
-  const summary = `Orden #${id}: si ${triggerLabel} ${args.condition === "above" ? "\u2265" : "\u2264"} ${args.triggerPrice} \u2192 ${describeAction(args.venue, args.action)}`;
+  const summary = `Orden #${id}: si ${triggerLabel} ${args.condition === "above" ? "\u2265" : "\u2264"} ${triggerPrice} \u2192 ${describeAction(args.venue, args.action)}`;
   logJournal({ missionId: args.missionId, sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, expiresAt } });
   return { id, summary, currentPrice: price, expiresAt };
+}
+async function placeTimeOrder(args) {
+  if (!(args.inMinutes > 0)) throw new Error("Una orden por tiempo necesita in_minutes: dentro de cu\xE1ntos minutos se ejecuta");
+  if (args.venue.kind === "chain") {
+    const a = args.action;
+    await Promise.all([args.venue.resolveToken(a.input), args.venue.resolveToken(a.output)]);
+  } else {
+    await getSymbolInfo(args.action.symbol);
+  }
+  const at = Date.now() + args.inMinutes * 6e4;
+  const id = Number(
+    db.prepare(
+      `INSERT INTO orders (created_at, mission_id, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
+         VALUES (?, ?, ?, ?, 'time', 'hora', 'time', ?, ?, ?, NULL)`
+    ).run(now(), args.missionId, args.sessionId, args.venue.id, at, JSON.stringify(args.action), args.reasoning).lastInsertRowid
+  );
+  const summary = `Orden #${id}: a las ${hms(at)} \u2192 ${describeAction(args.venue.id, args.action)}`;
+  logJournal({ missionId: args.missionId, sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, executesAt: new Date(at).toISOString() } });
+  return { id, summary, executesAt: new Date(at).toISOString() };
 }
 function cancelOrder(missionId, id, sessionId) {
   const changed = db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND mission_id = ? AND status = 'open'").run(now(), id, missionId).changes;
@@ -39404,7 +39432,12 @@ function listOrders(missionId, status, limit = 50) {
   return db.prepare(
     `SELECT id, created_at, venue, trigger_label, condition, trigger_price, action, expires_at, status, closed_at, result
        FROM orders WHERE mission_id = ? ${where} ORDER BY id DESC LIMIT ?`
-  ).all(missionId, limit).map((o) => ({ ...o, action: JSON.parse(o.action), result: o.result ? JSON.parse(o.result) : null }));
+  ).all(missionId, limit).map((o) => ({
+    ...o,
+    ...o.condition === "time" ? { trigger_label: void 0, trigger_price: void 0, executes_at: new Date(o.trigger_price).toISOString() } : {},
+    action: JSON.parse(o.action),
+    result: o.result ? JSON.parse(o.result) : null
+  }));
 }
 function close(id, status, result) {
   db.prepare("UPDATE orders SET status = ?, closed_at = ?, result = ? WHERE id = ?").run(status, now(), JSON.stringify(result), id);
@@ -39421,6 +39454,11 @@ async function checkOrders() {
   const open2 = db.prepare("SELECT o.* FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND m.status = 'active'").all();
   const prices = /* @__PURE__ */ new Map();
   for (const order of open2) {
+    if (order.condition === "time") {
+      if (Date.now() < order.trigger_price) continue;
+      await execute(order, `Orden por tiempo #${order.id} ejecutada (hora alcanzada: ${hms(order.trigger_price)}). Motivo original: ${order.reasoning ?? "-"}`, null, log);
+      continue;
+    }
     const key = `${order.venue}:${order.trigger_asset}`;
     try {
       if (!prices.has(key)) prices.set(key, await currentPrice(order.venue, order.trigger_asset));
@@ -39430,27 +39468,30 @@ async function checkOrders() {
     }
     const price = prices.get(key);
     if (!isTriggered(order.condition, price, order.trigger_price)) continue;
-    if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) continue;
-    const reasoning2 = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
-    try {
-      const action = JSON.parse(order.action);
-      const base2 = {
-        missionId: order.mission_id,
-        sessionId: order.session_id,
-        reasoning: reasoning2,
-        meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
-      };
-      const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action }) : await binanceMarketOrder({ ...base2, ...action });
-      close(order.id, "filled", { triggerPriceSeen: price, ...result });
-      log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
-    } catch (err) {
-      const message = err.message;
-      close(order.id, "failed", { triggerPriceSeen: price, error: message });
-      logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero fall\xF3: ${message}` });
-      log.push(`Orden #${order.id} fall\xF3: ${message}`);
-    }
+    await execute(order, `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`, price, log);
   }
   return log;
+}
+async function execute(order, reasoning2, price, log) {
+  if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) return;
+  const seen = price === null ? { executedAt: now() } : { triggerPriceSeen: price };
+  try {
+    const action = JSON.parse(order.action);
+    const base2 = {
+      missionId: order.mission_id,
+      sessionId: order.session_id,
+      reasoning: reasoning2,
+      meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
+    };
+    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action }) : await binanceMarketOrder({ ...base2, ...action });
+    close(order.id, "filled", { ...seen, ...result });
+    log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
+  } catch (err) {
+    const message = err.message;
+    close(order.id, "failed", { ...seen, error: message });
+    logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero fall\xF3: ${message}` });
+    log.push(`Orden #${order.id} fall\xF3: ${message}`);
+  }
 }
 
 // src/dashboard/server.ts
@@ -39655,6 +39696,10 @@ var CONDITION_FIELDS = [
   "mcapUsd",
   "priceChange5mPct",
   "priceChange1hPct",
+  "priceChange24hPct",
+  "buyVolume5mUsd",
+  "sellVolume5mUsd",
+  "buySellRatio5m",
   "holders",
   "topHoldersPct",
   "netBuyers5m",
@@ -39701,14 +39746,20 @@ function summarizeTrades(ps) {
     wins: ps.filter((p) => outcome(p) === "win").length,
     losses: ps.filter((p) => outcome(p) === "loss").length,
     avgPnlPct: Number(avg.toFixed(1)),
+    // Además de ganar o perder: cuánto. Una misión con objetivo alto necesita movimientos grandes.
+    bestPct: Number(Math.max(...ps.map((p) => p.pnlPct ?? 0)).toFixed(1)),
+    worstPct: Number(Math.min(...ps.map((p) => p.pnlPct ?? 0)).toFixed(1)),
+    bigWins: ps.filter((p) => (p.pnlPct ?? 0) >= BIG_WIN_PCT).length,
     positionIds: ps.map((p) => p.id)
   };
 }
+var BIG_WIN_PCT = 20;
+var magnitude = (t) => t.trades ? `; media ${t.avgPnlPct} %, mejor ${t.bestPct} %, ${t.bigWins} de ${t.trades} con +${BIG_WIN_PCT} % o m\xE1s` : "";
 function beliefEvidence(b, closed) {
   const applied = summarizeTrades(closed.filter((p) => p.beliefsApplied.includes(b.id)));
   const cond = b.condition ? JSON.parse(b.condition) : null;
   let matched;
-  let verdict = applied.trades ? `sin condici\xF3n; aplicada en ${applied.trades} operaciones: ${applied.wins} ganadas, ${applied.losses} perdidas (media ${applied.avgPnlPct} %)` : "sin condici\xF3n y todav\xEDa sin operaciones que la apliquen";
+  let verdict = applied.trades ? `sin condici\xF3n; aplicada en ${applied.trades} operaciones: ${applied.wins} ganadas, ${applied.losses} perdidas${magnitude(applied)}` : "sin condici\xF3n y todav\xEDa sin operaciones que la apliquen";
   if (cond) {
     const ps = closed.filter((p) => matches(cond, p));
     const wins = ps.filter((p) => outcome(p) === "win").length;
@@ -39716,8 +39767,10 @@ function beliefEvidence(b, closed) {
     const [inFavor, against] = b.expectation === "negative" ? [losses, wins] : [wins, losses];
     const decided = inFavor + against;
     const support = decided ? Math.round(inFavor / decided * 100) : null;
-    matched = { ...summarizeTrades(ps), inFavor, against, supportPct: support };
+    const summary = summarizeTrades(ps);
+    matched = { ...summary, inFavor, against, supportPct: support };
     verdict = decided < 3 ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)` : support >= 60 ? `se sostiene (${inFavor} a favor, ${against} en contra)` : support <= 40 ? `los datos la contradicen (${inFavor} a favor, ${against} en contra)` : `dudosa (${inFavor} a favor, ${against} en contra)`;
+    verdict += magnitude(summary);
   }
   return { verdict, appliedIn: applied, ...matched ? { matchingTrades: matched } : {} };
 }
@@ -39842,6 +39895,13 @@ function duplicateOf(table2, fp, exceptId) {
   const rows = db.prepare(`SELECT id, fingerprint FROM ${table2} WHERE status = 'active' AND id IS NOT ?`).all(exceptId ?? null);
   return rows.find((r) => similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD)?.id;
 }
+function logLearning(_sourceMission, title, body) {
+  const target = (getActiveMission() ?? getLastMission())?.id ?? null;
+  logActivity({ missionId: target, sessionId: null, kind: "lesson", title, body });
+}
+function recentLearning(limit = 5) {
+  return db.prepare("SELECT ts, title FROM activity WHERE kind = 'lesson' ORDER BY id DESC LIMIT ?").all(limit);
+}
 function writeHowto(a) {
   const fp = fingerprint(`${a.title} ${a.steps}`);
   const dup = duplicateOf("howtos", fp);
@@ -39852,6 +39912,7 @@ function writeHowto(a) {
     ).run(now(), now(), a.scope, a.topic, a.title, a.steps, a.missionId, fp).lastInsertRowid
   );
   if (a.fixesErrorIds?.length) linkErrors(id, a.fixesErrorIds);
+  logLearning(a.missionId, `Nuevo howto #${id}: ${a.title}`, a.steps);
   return id;
 }
 function linkErrors(howtoId, errorIds) {
@@ -39873,6 +39934,7 @@ function updateHowto(a) {
     a.id
   );
   if (a.fixesErrorIds?.length) linkErrors(a.id, a.fixesErrorIds);
+  logLearning(null, a.status === "obsolete" ? `Da por obsoleto el howto #${a.id}: ${title}` : `Ampl\xEDa el howto #${a.id}: ${title}`, a.steps);
 }
 function validateCondition(cond, expectation) {
   if (cond && !expectation) throw new Error("Una creencia con condici\xF3n necesita expectation: positive (tiende a ganar) o negative (tiende a perder)");
@@ -39889,7 +39951,9 @@ function writeBelief(a) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(now(), now(), a.missionId, a.statement, a.appliesTo, a.expectation ?? null, a.condition ? JSON.stringify(a.condition) : null, fp).lastInsertRowid
   );
-  return beliefView(getBelief(id), closedPositions());
+  const view = beliefView(getBelief(id), closedPositions());
+  logLearning(a.missionId, `Nueva creencia #${id}: ${a.statement}`, view.evidence.verdict);
+  return view;
 }
 function getBelief(id) {
   const b = db.prepare("SELECT * FROM beliefs WHERE id = ?").get(id);
@@ -39909,7 +39973,9 @@ function reviseBelief(a) {
   db.prepare(
     `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ? WHERE id = ?`
   ).run(statement, a.appliesTo ?? b.applies_to, expectation, condition, fingerprint(statement), a.retire ? "retired" : b.status, a.reason, now(), a.id);
-  return beliefView(getBelief(a.id), closedPositions());
+  const view = beliefView(getBelief(a.id), closedPositions());
+  logLearning(null, `${a.retire ? "Retira" : "Corrige"} la creencia #${a.id}: ${statement}`, `${a.reason} \xB7 ${view.evidence.verdict}`);
+  return view;
 }
 function convertBeliefToHowto(a) {
   const b = getBelief(a.id);
@@ -39984,6 +40050,38 @@ function reviewCheckpoint(missionId, summary) {
   db.prepare("INSERT INTO review_checkpoints (ts, mission_id, summary) VALUES (?, ?, ?)").run(now(), missionId, summary);
   logActivity({ missionId, sessionId: null, kind: "review", title: "El revisor repasa la misi\xF3n", body: summary });
 }
+function recentApproach(count = 8) {
+  const missions = db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND final_usd IS NOT NULL ORDER BY id DESC LIMIT ?").all(count);
+  if (!missions.length) return null;
+  const perMission = missions.reverse().map((m) => {
+    const ps = listPositions(m.id).filter((p) => p.status !== "moved");
+    const ages = ps.map((p) => p.entry.ageMinutes).filter((a) => typeof a === "number").sort((a, b) => a - b);
+    const orders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id).n;
+    return {
+      missionId: m.id,
+      resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
+      positions: ps.length,
+      venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
+      tokenAgeMinutes: ages.length ? ages[Math.floor(ages.length / 2)] : null,
+      closedByDeadline: ps.filter((p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")).length,
+      orders
+    };
+  });
+  const n3 = perMission.length;
+  const share = (f) => `${perMission.filter(f).length} de ${n3}`;
+  return {
+    summary: {
+      missions: n3,
+      avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n3).toFixed(1)),
+      bestPct: Math.max(...perMission.map((x) => x.resultPct)),
+      withOneEntry: share((x) => x.positions === 1),
+      endedByDeadline: share((x) => x.closedByDeadline > 0),
+      withYoungTokens: share((x) => x.tokenAgeMinutes !== null && x.tokenAgeMinutes < 60),
+      venuesUsed: [...new Set(perMission.map((x) => x.venues))].join(", ")
+    },
+    perMission
+  };
+}
 function reviewQueue() {
   const active2 = getActiveMission();
   let activeMission = null;
@@ -40005,6 +40103,7 @@ function reviewQueue() {
   return {
     pendingFinalReviews: pendingReviews(),
     activeMission,
+    recentApproach: recentApproach(),
     pendingObservations: db.prepare("SELECT id, ts, mission_id, kind, text FROM observations WHERE status = 'pending' ORDER BY id").all(),
     errorsWithoutHowto: recurringErrors().filter((e) => !e.howtoId),
     beliefsWithoutCondition
@@ -40475,12 +40574,13 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
-    description: "Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n. El precio se comprueba aproximadamente cada minuto, as\xED que un pico muy breve puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento.",
+    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n. El precio se comprueba aproximadamente cada minuto, as\xED que un pico muy breve puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cancela la que sobre cuando se ejecute la otra.',
     schema: external_exports.object({
       chain: chainParam,
-      trigger_asset: external_exports.string().describe(`Direcci\xF3n del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES})`),
-      condition: external_exports.enum(["above", "below"]),
-      trigger_price: external_exports.number().positive().describe("Precio en USD"),
+      trigger_asset: external_exports.string().optional().describe(`Direcci\xF3n del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),
+      condition: external_exports.enum(["above", "below", "time"]),
+      trigger_price: external_exports.number().positive().optional().describe("Precio en USD. No en las de tiempo"),
+      in_minutes: external_exports.number().positive().optional().describe("Solo con condition: time. Dentro de cu\xE1ntos minutos se ejecuta"),
       input: external_exports.string(),
       output: external_exports.string(),
       amount: external_exports.number().positive().optional().describe("Cantidad del token de entrada"),
@@ -40499,6 +40599,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
           triggerAsset: i.trigger_asset,
           condition: i.condition,
           triggerPrice: i.trigger_price,
+          inMinutes: i.in_minutes,
           action: { input: i.input, output: i.output, amount: i.amount ?? 0, sellAll: i.sell_all || void 0, slippageBps: i.slippage_bps },
           expiresHours: i.expires_hours,
           reasoning: formatThesis(i.thesis)
@@ -40510,11 +40611,12 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "place_binance_trigger_order",
     kind: "trade",
     journaled: true,
-    description: "Deja una orden condicional en Binance: cuando el \xFAltimo precio de trigger_symbol cruce trigger_price, se ejecuta la orden de mercado indicada contra el order book real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n; se comprueba aproximadamente cada minuto. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla.",
+    description: "Deja una orden condicional en Binance: cuando el \xFAltimo precio de trigger_symbol cruce trigger_price, se ejecuta la orden de mercado indicada contra el order book real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n; se comprueba aproximadamente cada minuto. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con condition: time se ejecuta dentro de in_minutes, pase lo que pase con el precio (sin trigger_symbol ni trigger_price).",
     schema: external_exports.object({
-      trigger_symbol: external_exports.string().describe("Par de Binance cuyo precio se vigila, p. ej. SOLUSDC"),
-      condition: external_exports.enum(["above", "below"]),
-      trigger_price: external_exports.number().positive().describe("Precio en el activo quote del par"),
+      trigger_symbol: external_exports.string().optional().describe("Par de Binance cuyo precio se vigila, p. ej. SOLUSDC. No en las de tiempo"),
+      condition: external_exports.enum(["above", "below", "time"]),
+      trigger_price: external_exports.number().positive().optional().describe("Precio en el activo quote del par. No en las de tiempo"),
+      in_minutes: external_exports.number().positive().optional().describe("Solo con condition: time. Dentro de cu\xE1ntos minutos se ejecuta"),
       symbol: external_exports.string().describe("Par en el que se ejecuta la orden"),
       side: external_exports.enum(["BUY", "SELL"]),
       amount: external_exports.number().positive().describe("BUY: cantidad de quote a gastar. SELL: cantidad base a vender"),
@@ -40529,6 +40631,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         triggerAsset: i.trigger_symbol,
         condition: i.condition,
         triggerPrice: i.trigger_price,
+        inMinutes: i.in_minutes,
         action: { symbol: i.symbol, side: i.side, amount: i.amount },
         expiresHours: i.expires_hours,
         reasoning: formatThesis(i.thesis)
@@ -41124,12 +41227,6 @@ function dbEvents(missionId) {
       body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : void 0
     });
   }
-  for (const b of db.prepare("SELECT id, created_at, statement FROM beliefs WHERE source_mission_id = ? AND origin = 'reviewer'").all(missionId)) {
-    events.push({ id: `b${b.id}`, ts: b.created_at, kind: "lesson", title: b.statement, body: `Creencia #${b.id} (la escribe el revisor)` });
-  }
-  for (const h of db.prepare("SELECT id, created_at, title, steps FROM howtos WHERE source_mission_id = ?").all(missionId)) {
-    events.push({ id: `h${h.id}`, ts: h.created_at, kind: "lesson", title: h.title, body: `Howto #${h.id}: ${h.steps}` });
-  }
   for (const n3 of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId)) {
     events.push({ id: `n${n3.id}`, ts: n3.ts, kind: "note", title: n3.text });
   }
@@ -41164,6 +41261,7 @@ function buildMemory(missionId) {
   return {
     howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
     beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: b.statement, verdict: b.evidence.verdict })),
+    latest: recentLearning(5),
     requests: listCapabilityRequests("open").map((r) => ({ id: r.id, capability: r.capability, why: r.why, times_requested: r.times_requested }))
   };
 }
@@ -41351,7 +41449,7 @@ async function statusReport(missionId) {
     }
     const orders = listOrders(m.id, "open");
     if (orders.length) {
-      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
+      lines.push(`\xD3rdenes abiertas: ${orders.map((o) => o.condition === "time" ? `#${o.id} a las ${hhmm2(o.executes_at)}` : `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "\u2265" : "\u2264"} ${o.trigger_price}`).join(" \xB7 ")}`);
     }
   }
   const closed = listPositions(m.id).filter((p) => p.status === "closed");

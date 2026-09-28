@@ -682,7 +682,7 @@ function renderLearn() {
   latest.replaceChildren();
   if (!state.memory.latest.length) latest.append(el("li", { class: "quiet" }, "Todavía no ha cambiado nada en su memoria."));
   for (const l of state.memory.latest) {
-    const text = l.title.length > 170 ? l.title.slice(0, 170).replace(/sS*$/, "") + "…" : l.title;
+    const text = l.title.length > 170 ? l.title.slice(0, 170).replace(/\s\S*$/, "") + "…" : l.title;
     latest.append(el("li", {}, text, el("span", { class: "verdict" }, ago(l.ts))));
   }
 

@@ -32,7 +32,7 @@ interface OrderRow {
   venue: VenueId;
   trigger_asset: string;
   trigger_label: string;
-  condition: "above" | "below";
+  condition: "above" | "below" | "time";
   trigger_price: number;
   action: string;
   reasoning: string | null;
@@ -55,35 +55,46 @@ function describeAction(venue: VenueId, action: SwapAction | BinanceAction): str
   return `Binance ${a.side} ${a.symbol} amount=${a.amount}`;
 }
 
+const hms = (ms: number) => new Date(ms).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+/**
+ * Deja una orden condicional. Por precio (above/below: cuando el precio cruza trigger_price) o por tiempo
+ * (time: dentro de inMinutes, pase lo que pase con el precio; p. ej. "si no ha saltado la toma de
+ * beneficio, vende todo a los 3 minutos"). En las de tiempo, trigger_price guarda la hora en milisegundos.
+ */
 export async function placeOrder(args: {
   missionId: number;
   sessionId: number | null;
   venue: VenueId;
-  triggerAsset: string;
-  condition: "above" | "below";
-  triggerPrice: number;
+  triggerAsset?: string;
+  condition: "above" | "below" | "time";
+  triggerPrice?: number;
+  inMinutes?: number;
   action: SwapAction | BinanceAction;
   expiresHours?: number;
   reasoning: string;
 }) {
+  const venue = getVenue(args.venue);
+  if (args.condition === "time") return placeTimeOrder({ ...args, venue });
+  if (!args.triggerAsset || !(args.triggerPrice! > 0)) throw new Error("Una orden por precio necesita el activo que se vigila y el precio de disparo");
+  const triggerPrice = args.triggerPrice!;
   let triggerAsset: string;
   let triggerLabel: string;
-  const venue = getVenue(args.venue);
   if (venue.kind === "chain") {
-    const trigger = await venue.resolveToken(args.triggerAsset);
+    const trigger = await venue.resolveToken(args.triggerAsset!);
     triggerAsset = trigger.address;
     triggerLabel = `${trigger.symbol}/USD`;
     const a = args.action as SwapAction;
     // Valida que los tokens de la operación existen antes de aceptar la orden.
     await Promise.all([venue.resolveToken(a.input), venue.resolveToken(a.output)]);
   } else {
-    triggerAsset = (await binance.getSymbolInfo(args.triggerAsset)).symbol;
+    triggerAsset = (await binance.getSymbolInfo(args.triggerAsset!)).symbol;
     triggerLabel = triggerAsset;
     await binance.getSymbolInfo((args.action as BinanceAction).symbol);
   }
 
   const price = await currentPrice(args.venue, triggerAsset);
-  if (isTriggered(args.condition, price, args.triggerPrice)) {
+  if (isTriggered(args.condition, price, triggerPrice)) {
     throw new Error(
       `La condición ya se cumple (precio actual de ${triggerLabel}: ${price}). Si quieres operar ahora, usa directamente la operación simulada.`,
     );
@@ -96,12 +107,42 @@ export async function placeOrder(args: {
         `INSERT INTO orders (created_at, mission_id, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(now(), args.missionId, args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, args.triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt)
+      .run(now(), args.missionId, args.sessionId, args.venue, triggerAsset, triggerLabel, args.condition, triggerPrice, JSON.stringify(args.action), args.reasoning, expiresAt)
       .lastInsertRowid,
   );
-  const summary = `Orden #${id}: si ${triggerLabel} ${args.condition === "above" ? "≥" : "≤"} ${args.triggerPrice} → ${describeAction(args.venue, args.action)}`;
+  const summary = `Orden #${id}: si ${triggerLabel} ${args.condition === "above" ? "≥" : "≤"} ${triggerPrice} → ${describeAction(args.venue, args.action)}`;
   logJournal({ missionId: args.missionId, sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, expiresAt } });
   return { id, summary, currentPrice: price, expiresAt };
+}
+
+async function placeTimeOrder(args: {
+  missionId: number;
+  sessionId: number | null;
+  venue: ReturnType<typeof getVenue>;
+  inMinutes?: number;
+  action: SwapAction | BinanceAction;
+  reasoning: string;
+}) {
+  if (!(args.inMinutes! > 0)) throw new Error("Una orden por tiempo necesita in_minutes: dentro de cuántos minutos se ejecuta");
+  // Valida la operación antes de aceptar la orden.
+  if (args.venue.kind === "chain") {
+    const a = args.action as SwapAction;
+    await Promise.all([args.venue.resolveToken(a.input), args.venue.resolveToken(a.output)]);
+  } else {
+    await binance.getSymbolInfo((args.action as BinanceAction).symbol);
+  }
+  const at = Date.now() + args.inMinutes! * 60_000;
+  const id = Number(
+    db
+      .prepare(
+        `INSERT INTO orders (created_at, mission_id, session_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, expires_at)
+         VALUES (?, ?, ?, ?, 'time', 'hora', 'time', ?, ?, ?, NULL)`,
+      )
+      .run(now(), args.missionId, args.sessionId, args.venue.id, at, JSON.stringify(args.action), args.reasoning).lastInsertRowid,
+  );
+  const summary = `Orden #${id}: a las ${hms(at)} → ${describeAction(args.venue.id, args.action)}`;
+  logJournal({ missionId: args.missionId, sessionId: args.sessionId, kind: "order_placed", summary, reasoning: args.reasoning, details: { id, executesAt: new Date(at).toISOString() } });
+  return { id, summary, executesAt: new Date(at).toISOString() };
 }
 
 export function cancelOrder(missionId: number, id: number, sessionId: number | null) {
@@ -121,7 +162,12 @@ export function listOrders(missionId: number, status: "open" | "closed" | "all",
        FROM orders WHERE mission_id = ? ${where} ORDER BY id DESC LIMIT ?`,
     )
     .all(missionId, limit)
-    .map((o: any) => ({ ...o, action: JSON.parse(o.action), result: o.result ? JSON.parse(o.result) : null }));
+    .map((o: any) => ({
+      ...o,
+      ...(o.condition === "time" ? { trigger_label: undefined, trigger_price: undefined, executes_at: new Date(o.trigger_price).toISOString() } : {}),
+      action: JSON.parse(o.action),
+      result: o.result ? JSON.parse(o.result) : null,
+    }));
 }
 
 function close(id: number, status: string, result: unknown) {
@@ -148,6 +194,11 @@ export async function checkOrders(): Promise<string[]> {
     .all() as unknown as OrderRow[];
   const prices = new Map<string, number>();
   for (const order of open) {
+    if (order.condition === "time") {
+      if (Date.now() < order.trigger_price) continue;
+      await execute(order, `Orden por tiempo #${order.id} ejecutada (hora alcanzada: ${hms(order.trigger_price)}). Motivo original: ${order.reasoning ?? "-"}`, null, log);
+      continue;
+    }
     const key = `${order.venue}:${order.trigger_asset}`;
     try {
       if (!prices.has(key)) prices.set(key, await currentPrice(order.venue, order.trigger_asset));
@@ -158,30 +209,33 @@ export async function checkOrders(): Promise<string[]> {
     const price = prices.get(key)!;
     if (!isTriggered(order.condition, price, order.trigger_price)) continue;
 
-    // Reclamo atómico: si otro proceso ya la está ejecutando, se salta.
-    if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) continue;
-
-    const reasoning = `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condición ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`;
-    try {
-      const action = JSON.parse(order.action);
-      const base = {
-        missionId: order.mission_id,
-        sessionId: order.session_id,
-        reasoning,
-        meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined },
-      };
-      const result =
-        getVenue(order.venue).kind === "chain"
-          ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction) })
-          : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
-      close(order.id, "filled", { triggerPriceSeen: price, ...result });
-      log.push(`Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
-    } catch (err) {
-      const message = (err as Error).message;
-      close(order.id, "failed", { triggerPriceSeen: price, error: message });
-      logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero falló: ${message}` });
-      log.push(`Orden #${order.id} falló: ${message}`);
-    }
+    await execute(order, `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condición ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`, price, log);
   }
   return log;
+}
+
+/** Ejecuta una orden disparada (por precio o por tiempo). El reclamo atómico evita ejecutarla dos veces. */
+async function execute(order: OrderRow, reasoning: string, price: number | null, log: string[]) {
+  if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) return;
+  const seen = price === null ? { executedAt: now() } : { triggerPriceSeen: price };
+  try {
+    const action = JSON.parse(order.action);
+    const base = {
+      missionId: order.mission_id,
+      sessionId: order.session_id,
+      reasoning,
+      meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? undefined },
+    };
+    const result =
+      getVenue(order.venue).kind === "chain"
+        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction) })
+        : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
+    close(order.id, "filled", { ...seen, ...result });
+    log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
+  } catch (err) {
+    const message = (err as Error).message;
+    close(order.id, "failed", { ...seen, error: message });
+    logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero falló: ${message}` });
+    log.push(`Orden #${order.id} falló: ${message}`);
+  }
 }

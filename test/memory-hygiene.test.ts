@@ -85,6 +85,17 @@ test("parado en efectivo, lejos del objetivo y con tiempo por delante: mission_s
   assert.match(await status(), /Llevas 15 min sin operar.*efectivo/);
 });
 
+test("sin fondos: por debajo del 5 % del capital (o de 2 $) la misión termina sola como bancarrota", async () => {
+  const { checkMission, getMission, missionHistory } = await import("../src/sim/mission.js");
+  const m = await createMission(50, 100, 60, undefined, { solana: 100 });
+  // Se queda con 1,6 $ (menos del 5 % de 50 = 2,5 $): no es cero, pero ya no da para operar.
+  db.prepare("UPDATE holdings SET amount = CASE WHEN symbol = 'USDC' THEN 1.6 ELSE 0 END WHERE mission_id = ?").run(m.id);
+  const log = await checkMission(m.id);
+  assert.match(log.join("\n"), /SIN FONDOS/);
+  assert.equal(getMission(m.id)!.status, "bust");
+  assert.equal(missionHistory().find((h) => h.missionId === m.id)!.outcome, "sin fondos (bancarrota)");
+});
+
 test("el resumen de memoria es ligero: howtos por título y su texto bajo demanda", async () => {
   const summary = memory.recallSummary(mission.id);
   assert.ok(summary.howtos.every((h) => typeof h === "string"));

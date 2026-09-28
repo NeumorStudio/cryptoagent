@@ -8074,7 +8074,7 @@ var init_db = __esm({
     closed_at TEXT,
     result TEXT
   );
-  -- status: 'active' | 'succeeded' (objetivo alcanzado) | 'expired' (se acab\xF3 el tiempo) | 'cancelled'
+  -- status: 'active' | 'succeeded' (objetivo alcanzado) | 'expired' (se acab\xF3 el tiempo) | 'bust' (sin fondos para operar) | 'cancelled'
   CREATE TABLE IF NOT EXISTS missions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.20.0";
+    CODE_VERSION = "0.21.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -10443,7 +10443,7 @@ function missionHistory() {
       userInstructions: m.instructions ?? "ninguna (modo libre)",
       finalUsd: m.final_usd === null ? null : Number(m.final_usd.toFixed(2)),
       resultPct: m.final_usd === null ? null : Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(2)),
-      outcome: m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no lleg\xF3 al objetivo" : "cancelada",
+      outcome: m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no lleg\xF3 al objetivo" : m.status === "bust" ? "sin fondos (bancarrota)" : "cancelada",
       reviewed: m.review_origin !== null || m.reviewed_at !== null
     };
   });
@@ -10610,6 +10610,9 @@ function idleCheck(mission, v, secondsLeft) {
   const needPct = (mission.target_usd - v.totalUsd) / v.totalUsd * 100;
   return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo, y te falta un +${needPct.toFixed(0)} % con ${Math.round(secondsLeft / 60)} min por delante. Quedarte quieto garantiza no llegar: es el peor resultado. Tus creencias sirven para elegir entre candidatos, no para no operar: si ninguno es perfecto, entra en el mejor que haya con una tesis clara (y, si lleva una creencia negativa fuerte, el simulador te lo dir\xE1).`;
 }
+function bustFloor(mission) {
+  return Math.max(2, mission.initial_usd * 0.05);
+}
 function lossFloor(mission) {
   if (!isLive(mission) || !mission.limits) return null;
   const { maxLossPct } = JSON.parse(mission.limits);
@@ -10627,10 +10630,11 @@ async function checkOne(mission) {
   const reached = value >= mission.target_usd && v.reliable;
   const floor = lossFloor(mission);
   const lossHit = !reached && floor !== null && v.reliable && value < floor;
-  if (!expired && !reached && !lossHit) return [];
-  const status = reached ? "succeeded" : "expired";
+  const bust = !reached && v.reliable && value < bustFloor(mission);
+  if (!expired && !reached && !lossHit && !bust) return [];
+  const status = reached ? "succeeded" : bust ? "bust" : "expired";
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
-  const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : lossHit ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} ha llegado a la p\xE9rdida m\xE1xima (${value.toFixed(2)} < ${floor.toFixed(2)} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
+  const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : bust ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} se ha quedado sin fondos para operar (${value.toFixed(2)} USD)` : lossHit ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} ha llegado a la p\xE9rdida m\xE1xima (${value.toFixed(2)} < ${floor.toFixed(2)} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
@@ -10644,7 +10648,7 @@ async function checkOne(mission) {
     return [summary2];
   }
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
-  const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
+  const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }
@@ -40963,7 +40967,7 @@ function beliefView(b, closed) {
   };
 }
 function finishedMissions() {
-  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all();
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'bust', 'cancelled') ORDER BY id").all();
 }
 function tradeStats(ps) {
   const groups = [
@@ -41265,7 +41269,7 @@ function missionStats(missionId) {
 function pendingReviews() {
   return db.prepare(
     `SELECT m.id FROM missions m
-         WHERE (m.status IN ('succeeded', 'expired') OR (m.status = 'cancelled' AND EXISTS (SELECT 1 FROM positions p WHERE p.mission_id = m.id)))
+         WHERE (m.status IN ('succeeded', 'expired', 'bust') OR (m.status = 'cancelled' AND EXISTS (SELECT 1 FROM positions p WHERE p.mission_id = m.id)))
            AND m.reviewed_at IS NULL AND NOT EXISTS (SELECT 1 FROM mission_reviews r WHERE r.mission_id = m.id)
          ORDER BY m.id`
   ).all().map((r) => r.id);
@@ -41311,7 +41315,7 @@ function reviewCheckpoint(missionId, summary) {
   logActivity({ missionId, sessionId: null, kind: "review", title: "El revisor repasa la misi\xF3n", body: summary });
 }
 function recentApproach(count = 8) {
-  const missions = db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND final_usd IS NOT NULL ORDER BY id DESC LIMIT ?").all(count);
+  const missions = db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'bust', 'cancelled') AND final_usd IS NOT NULL ORDER BY id DESC LIMIT ?").all(count);
   if (!missions.length) return null;
   const perMission = missions.reverse().map((m) => {
     const ps = listPositions(m.id).filter((p) => p.status !== "moved");
@@ -42886,7 +42890,7 @@ async function statusReport(missionId) {
   const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
   const change = (current - m.initial_usd) / m.initial_usd * 100;
   const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
-  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : "detenida por el usuario";
+  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : m.status === "bust" ? "SIN FONDOS: se qued\xF3 sin dinero para operar" : "detenida por el usuario";
   const lines = [];
   lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
   lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);

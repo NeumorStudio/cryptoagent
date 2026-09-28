@@ -7666,7 +7666,7 @@ var init_db = __esm({
     closed_at TEXT,
     result TEXT
   );
-  -- status: 'active' | 'succeeded' (objetivo alcanzado) | 'expired' (se acab\xF3 el tiempo) | 'cancelled'
+  -- status: 'active' | 'succeeded' (objetivo alcanzado) | 'expired' (se acab\xF3 el tiempo) | 'bust' (sin fondos para operar) | 'cancelled'
   CREATE TABLE IF NOT EXISTS missions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -7772,7 +7772,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.20.0";
+    CODE_VERSION = "0.21.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

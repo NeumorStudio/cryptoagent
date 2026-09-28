@@ -30,7 +30,9 @@ export async function statusReport(missionId?: number): Promise<string> {
         ? "CONSEGUIDA"
         : m.status === "expired"
           ? "terminada sin llegar al objetivo"
-          : "detenida por el usuario";
+          : m.status === "bust"
+            ? "SIN FONDOS: se quedó sin dinero para operar"
+            : "detenida por el usuario";
 
   const lines: string[] = [];
   lines.push(`Misión #${m.id}: ${statusText}`);

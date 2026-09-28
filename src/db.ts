@@ -68,7 +68,7 @@ db.exec(`
     closed_at TEXT,
     result TEXT
   );
-  -- status: 'active' | 'succeeded' (objetivo alcanzado) | 'expired' (se acabó el tiempo) | 'cancelled'
+  -- status: 'active' | 'succeeded' (objetivo alcanzado) | 'expired' (se acabó el tiempo) | 'bust' (sin fondos para operar) | 'cancelled'
   CREATE TABLE IF NOT EXISTS missions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,

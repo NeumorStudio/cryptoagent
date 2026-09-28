@@ -112,6 +112,11 @@
   .chart .future { fill: var(--surface); }
   .chart .area { fill: var(--accent); opacity: .1; }
   .chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  /* Misión sin fondos: todo en negro de "muerte total". */
+  .is-bust .fill.behind { background: #000; box-shadow: inset 0 0 0 1px var(--down); }
+  .is-bust .delta.down { color: var(--ink); background: #000; padding: 0 10px; border-radius: 4px; }
+  .is-bust .chart .area { fill: #000; opacity: .85; }
+  .is-bust .chart .line { stroke: var(--muted); }
   .chart .now-line { stroke: var(--muted); stroke-width: 1; }
   .chart .axis { fill: var(--muted); font-size: 12px; }
   .chart .end-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
@@ -179,6 +184,9 @@
   .run.up i { bottom: 50%; background: var(--up); border-radius: 4px 4px 0 0; }
   .run.down i { top: 50%; background: var(--down); border-radius: 0 0 4px 4px; }
   .run.win i { background: var(--accent); }
+  /* Sin fondos: la barra en negro (sobre el fondo oscuro, con un filo rojo para que se vea). */
+  .run.bust i { background: #000; box-shadow: inset 0 0 0 1px var(--down); }
+  .pill.bust { background: #000; color: var(--ink); box-shadow: inset 0 0 0 1px var(--down); }
   .runs-legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .beliefs { display: grid; gap: 10px; }
   .beliefs li { font-size: 14px; line-height: 1.45; }
@@ -420,8 +428,8 @@ function render() {
   $("missionName").textContent = `Misión #${m.id}`;
   const pill = $("pill");
   pill.hidden = false;
-  pill.textContent = { active: "en carrera", succeeded: "meta alcanzada", expired: "no llegó", cancelled: "detenida", closing: "cerrando" }[m.status] ?? m.status;
-  pill.className = "pill" + (m.status === "succeeded" ? " win" : "");
+  pill.textContent = { active: "en carrera", succeeded: "meta alcanzada", expired: "no llegó", bust: "☠ sin fondos", cancelled: "detenida", closing: "cerrando" }[m.status] ?? m.status;
+  pill.className = "pill" + (m.status === "succeeded" ? " win" : m.status === "bust" ? " bust" : "");
   $("missionSub").textContent = `De ${usd(m.initial_usd)} a ${usd(m.target_usd)} en ${span} · ${m.instructions ? `instrucciones: ${m.instructions}` : "modo libre"}`;
   renderClock();
 
@@ -432,8 +440,10 @@ function render() {
     $("delta").textContent = `${signed((diff / m.initial_usd) * 100, " %")}`;
     $("delta").className = "delta " + (diff >= 0 ? "up" : "down");
     const toGo = m.target_usd - current;
+    document.body.classList.toggle("is-bust", m.status === "bust");
     $("gap").textContent =
       m.status === "succeeded" ? `Meta alcanzada: terminó con ${usd(m.final_usd ?? current)}.`
+      : m.status === "bust" ? `☠ Sin fondos: se quedó con ${usd(current)} y ya no podía operar. Misión muerta.`
       : m.status !== "active" ? `Terminó con ${usd(current)}, a ${usd(Math.max(0, toGo))} de la meta.`
       : toGo <= 0 ? "En la meta: cerrando posiciones."
       : `Le faltan ${usd(toGo)} para la meta.`;
@@ -728,14 +738,17 @@ function renderLearn() {
   for (const h of past) {
     const up = h.resultPct >= 0;
     const bar = el("i", { style: `height:${Math.max(4, (Math.abs(h.resultPct) / maxAbs) * 50)}%` });
-    runs.append(el("div", { class: `run ${up ? "up" : "down"}${h.outcome === "objetivo conseguido" ? " win" : ""}`, title: `Misión #${h.missionId}: ${signed(h.resultPct, " %")} · ${h.outcome}` }, bar));
+    const kind = h.outcome === "objetivo conseguido" ? " win" : h.outcome.startsWith("sin fondos") ? " bust" : "";
+    runs.append(el("div", { class: `run ${up ? "up" : "down"}${kind}`, title: `Misión #${h.missionId}: ${signed(h.resultPct, " %")} · ${h.outcome}` }, bar));
   }
   const wins = (list) => list.filter((h) => h.outcome === "objetivo conseguido").length;
+  const busts = past.filter((h) => h.outcome.startsWith("sin fondos")).length;
+  const bustNote = busts ? ` ${busts} sin fondos (en negro).` : "";
   $("runsLegend").textContent = !past.length
     ? "Es su primera misión."
     : past.length === finished.length
-      ? `${past.length} misiones, ${wins(past)} con la meta alcanzada (en amarillo).`
-      : `Las últimas ${past.length} de ${finished.length} misiones: ${wins(past)} con la meta alcanzada (en amarillo); ${wins(finished)} en total.`;
+      ? `${past.length} misiones, ${wins(past)} con la meta alcanzada (en amarillo).${bustNote}`
+      : `Las últimas ${past.length} de ${finished.length} misiones: ${wins(past)} con la meta alcanzada (en amarillo); ${wins(finished)} en total.${bustNote}`;
 
   const latest = $("latest");
   latest.replaceChildren();

@@ -13,7 +13,7 @@ export interface Mission {
   initial_usd: number;
   target_usd: number;
   deadline: string;
-  status: "active" | "closing" | "succeeded" | "expired" | "cancelled";
+  status: "active" | "closing" | "succeeded" | "expired" | "bust" | "cancelled";
   ended_at: string | null;
   final_usd: number | null;
   instructions: string | null;
@@ -82,7 +82,8 @@ export function missionHistory() {
       userInstructions: m.instructions ?? "ninguna (modo libre)",
       finalUsd: m.final_usd === null ? null : Number(m.final_usd.toFixed(2)),
       resultPct: m.final_usd === null ? null : Number((((m.final_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(2)),
-      outcome: m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no llegó al objetivo" : "cancelada",
+      outcome:
+        m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no llegó al objetivo" : m.status === "bust" ? "sin fondos (bancarrota)" : "cancelada",
       reviewed: m.review_origin !== null || m.reviewed_at !== null,
     };
   });
@@ -326,6 +327,14 @@ export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuati
   );
 }
 
+/**
+ * Por debajo de este valor la cartera ya no puede operar de forma útil (comisiones, renta de cuentas,
+ * mínimos): el 5 % del capital inicial, y nunca menos de 2 $. La misión termina "sin fondos".
+ */
+export function bustFloor(mission: Pick<Mission, "initial_usd">): number {
+  return Math.max(2, mission.initial_usd * 0.05);
+}
+
 /** Valor por debajo del cual una misión real se para (pérdida máxima); null en simulación. */
 export function lossFloor(mission: Mission): number | null {
   if (!isLive(mission) || !mission.limits) return null;
@@ -351,17 +360,21 @@ async function checkOne(mission: Mission): Promise<string[]> {
   // Misión real: al llegar a la pérdida máxima se para sola (se vende a estables y se cierra).
   const floor = lossFloor(mission);
   const lossHit = !reached && floor !== null && v.reliable && value < floor;
-  if (!expired && !reached && !lossHit) return [];
+  // Sin fondos: lo que queda no da para operar (comisiones, renta de cuentas). La misión ha muerto.
+  const bust = !reached && v.reliable && value < bustFloor(mission);
+  if (!expired && !reached && !lossHit && !bust) return [];
 
   // Reclamo atómico: solo un proceso cierra la misión.
-  const status = reached ? "succeeded" : "expired";
+  const status = reached ? "succeeded" : bust ? "bust" : "expired";
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
 
   const reason = reached
     ? `Cierre automático: objetivo de la misión #${mission.id} alcanzado (${value.toFixed(2)} ≥ ${mission.target_usd} USD)`
-    : lossHit
-      ? `Parada automática: la misión #${mission.id} ha llegado a la pérdida máxima (${value.toFixed(2)} < ${floor!.toFixed(2)} USD)`
-      : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
+    : bust
+      ? `Parada automática: la misión #${mission.id} se ha quedado sin fondos para operar (${value.toFixed(2)} USD)`
+      : lossHit
+        ? `Parada automática: la misión #${mission.id} ha llegado a la pérdida máxima (${value.toFixed(2)} < ${floor!.toFixed(2)} USD)`
+        : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
@@ -388,7 +401,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
 
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
   const summary =
-    `Misión #${mission.id} ${reached ? "CONSEGUIDA" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +
+    `Misión #${mission.id} ${reached ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +
     `(objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];

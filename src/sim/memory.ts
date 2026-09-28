@@ -195,7 +195,7 @@ function beliefView(b: BeliefRow, closed: Pos[]) {
 // ─── Lectura: lo que recuerda el agente ─────────────────────────────────────
 
 function finishedMissions() {
-  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') ORDER BY id").all() as unknown as Mission[];
+  return db.prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'bust', 'cancelled') ORDER BY id").all() as unknown as Mission[];
 }
 
 /** Resultados de las operaciones cerradas, agrupados por características medidas al entrar. */
@@ -643,7 +643,7 @@ export function pendingReviews() {
     db
       .prepare(
         `SELECT m.id FROM missions m
-         WHERE (m.status IN ('succeeded', 'expired') OR (m.status = 'cancelled' AND EXISTS (SELECT 1 FROM positions p WHERE p.mission_id = m.id)))
+         WHERE (m.status IN ('succeeded', 'expired', 'bust') OR (m.status = 'cancelled' AND EXISTS (SELECT 1 FROM positions p WHERE p.mission_id = m.id)))
            AND m.reviewed_at IS NULL AND NOT EXISTS (SELECT 1 FROM mission_reviews r WHERE r.mission_id = m.id)
          ORDER BY m.id`,
       )
@@ -707,7 +707,7 @@ export function reviewCheckpoint(missionId: number, summary: string) {
  */
 export function recentApproach(count = 8) {
   const missions = db
-    .prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND final_usd IS NOT NULL ORDER BY id DESC LIMIT ?")
+    .prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'bust', 'cancelled') AND final_usd IS NOT NULL ORDER BY id DESC LIMIT ?")
     .all(count) as unknown as Mission[];
   if (!missions.length) return null;
   const perMission = missions.reverse().map((m) => {

@@ -7695,6 +7695,47 @@ var init_text = __esm({
 // src/migrations.ts
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import path3 from "node:path";
+function decisionBackfill(db2) {
+  const positions = db2.prepare("SELECT id, mission_id, venue, asset, opened_at, closed_at, status, cost_open_usd, realized_cost_usd, realized_proceeds_usd, research FROM positions ORDER BY opened_at, id").all();
+  const missions = new Map(db2.prepare("SELECT id, initial_usd, deadline FROM missions").all().map((m) => [m.id, m]));
+  const buys = db2.prepare("SELECT ts, details FROM journal WHERE mission_id = ? AND kind = 'swap' AND ts >= ? AND ts <= ? ORDER BY id");
+  const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+  const num3 = (x) => Number(String(x ?? "").split(" ")[0]);
+  const STABLE = /^(USDC|USDT|USDbC|FDUSD)$/;
+  for (const p of positions) {
+    const research = JSON.parse(p.research ?? "{}");
+    if (research.portfolioPct !== void 0) continue;
+    const m = missions.get(p.mission_id);
+    if (!m) continue;
+    const before = positions.filter((q) => q.mission_id === p.mission_id && q.status === "closed" && q.closed_at !== null && q.closed_at <= p.opened_at);
+    const capital = m.initial_usd + before.reduce((sum, q) => sum + q.realized_proceeds_usd - q.realized_cost_usd, 0);
+    const invested = p.realized_cost_usd + p.cost_open_usd;
+    const previous = positions.filter((q) => q.venue === p.venue && q.asset === p.asset && q.status === "closed" && q.closed_at !== null && q.closed_at <= p.opened_at);
+    const last = previous.at(-1);
+    const prices = [];
+    for (const j of buys.all(p.mission_id, p.opened_at.slice(0, 19), p.closed_at ?? "9999")) {
+      const d = JSON.parse(j.details ?? "{}");
+      if (d.outputMint !== p.asset || !STABLE.test(String(d.sold ?? "").split(" ")[1] ?? "")) continue;
+      const usd2 = num3(d.sold), qty = num3(d.received);
+      if (usd2 > 0 && qty > 0) prices.push(usd2 / qty);
+    }
+    let addedWhileDown = false;
+    for (let i = 1; i < prices.length; i++) {
+      const avg = prices.slice(0, i).reduce((a, b) => a + b, 0) / i;
+      if (prices[i] < avg * 0.97) addedWhileDown = true;
+    }
+    Object.assign(research, {
+      ...capital > 0 && invested > 0 ? { portfolioPct: Math.round(invested / capital * 100) } : {},
+      previousTradesInToken: previous.length,
+      ...last && last.realized_cost_usd > 0 ? { lastPnlInTokenPct: Math.round((last.realized_proceeds_usd / last.realized_cost_usd - 1) * 100) } : {},
+      minutesLeft: Math.max(0, Math.round((new Date(m.deadline).getTime() - new Date(p.opened_at).getTime()) / 6e4)),
+      adds: Math.max(0, prices.length - 1),
+      addedWhileDown,
+      backfilled: true
+    });
+    update.run(JSON.stringify(research), p.id);
+  }
+}
 function memoryV2(db2) {
   db2.exec(`
     CREATE TABLE howtos (
@@ -7987,6 +8028,11 @@ var init_migrations = __esm({
         );
         CREATE INDEX perp_open ON perp_positions (status, mission_id);
       `)
+      },
+      {
+        version: 8,
+        description: "Datos de decisi\xF3n en las posiciones antiguas (tama\xF1o, reentrada, promediar, tiempo que quedaba), sacados del diario",
+        up: decisionBackfill
       }
     ];
     MAX_BACKUPS = 10;
@@ -8211,7 +8257,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.29.0";
+    CODE_VERSION = "0.30.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9516,19 +9562,48 @@ function researchSnapshot(missionId, mint) {
     minutesIntoMission: Math.round((Date.now() - new Date(mission.created_at).getTime()) / 6e4)
   };
 }
+function decisionContext(missionId, venue, asset2, addUsd, cashSpent) {
+  const cash = db.prepare("SELECT venue, asset, amount FROM holdings WHERE mission_id = ?").all(missionId).filter((h) => {
+    try {
+      return getVenue(h.venue).isCash(h.asset);
+    } catch {
+      return false;
+    }
+  }).reduce((s, h) => s + h.amount, 0);
+  const openCost = db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND status = 'open'").get(missionId).c;
+  const existing = db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, venue, asset2).c;
+  const capital = cash + openCost + (cashSpent ? addUsd : 0);
+  const previous = db.prepare("SELECT realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC").all(venue, asset2);
+  const deadline = db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId)?.deadline;
+  return {
+    ...capital > 0 && addUsd > 0 ? { portfolioPct: Math.round((existing + addUsd) / capital * 100) } : {},
+    previousTradesInToken: previous.length,
+    ...previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {},
+    ...deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)) } : {}
+  };
+}
 async function openOrAdd(args) {
   const missionId = args.missionId;
   const existing = db.prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, args.venue, args.asset);
   if (existing) {
-    db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ? WHERE id = ?").run(
+    const research2 = JSON.parse(existing.research ?? "{}");
+    if (!args.inherit && args.qty > 0 && existing.qty_open > 0) {
+      const ctx = decisionContext(missionId, args.venue, args.asset, args.costUsd, true);
+      const avgCost = existing.cost_open_usd / existing.qty_open;
+      research2.portfolioPct = Math.max(Number(research2.portfolioPct ?? 0), ctx.portfolioPct ?? 0);
+      research2.adds = Number(research2.adds ?? 0) + 1;
+      research2.addedWhileDown = Boolean(research2.addedWhileDown) || args.costUsd / args.qty < avgCost * 0.97;
+    }
+    db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ?, research = ? WHERE id = ?").run(
       args.qty,
       args.costUsd,
+      JSON.stringify(research2),
       existing.id
     );
     return;
   }
   const features = args.inherit ? args.inherit.entry_features : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
-  const research = args.inherit ? args.inherit.research : JSON.stringify(researchSnapshot(missionId, args.asset));
+  const research = args.inherit ? args.inherit.research : JSON.stringify({ ...researchSnapshot(missionId, args.asset), ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true), adds: 0, addedWhileDown: false });
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -41495,10 +41570,25 @@ var CONDITION_FIELDS = [
   "lpLockedPct",
   "tokenReportBeforeBuying",
   "researchCallsSinceLastTrade",
-  "minutesIntoMission"
+  "minutesIntoMission",
+  // Cómo decide el agente (no cómo es el token): tamaño, reentrada, promediar y tiempo que queda.
+  "portfolioPct",
+  "previousTradesInToken",
+  "lastPnlInTokenPct",
+  "addedWhileDown",
+  "minutesLeft"
 ];
 var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
-var RESEARCH_FIELDS = /* @__PURE__ */ new Set(["tokenReportBeforeBuying", "researchCallsSinceLastTrade", "minutesIntoMission"]);
+var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
+  "tokenReportBeforeBuying",
+  "researchCallsSinceLastTrade",
+  "minutesIntoMission",
+  "portfolioPct",
+  "previousTradesInToken",
+  "lastPnlInTokenPct",
+  "addedWhileDown",
+  "minutesLeft"
+]);
 function fieldValue(p, f) {
   if (f === "venue") return p.entry.venue ?? p.venue;
   if (f === "launchpad") return launchpadOf(String(p.entry.venue ?? p.venue), String(p.asset ?? ""), p.entry.launchpad);
@@ -41622,17 +41712,17 @@ function creatorRugs(creator) {
          AND (realized_proceeds_usd - realized_cost_usd) / realized_cost_usd <= -0.8`
   ).all(creator).map((r) => ({ symbol: r.symbol, missionId: r.mission_id, pnlPct: Math.round(r.pnl) }));
 }
-function blockingBeliefs(venue, entry, asset2 = "") {
+function blockingBeliefs(venue, entry, asset2 = "", decision = {}) {
   const closed = closedPositions();
-  const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: {} };
+  const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
   return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => {
     const t = ev.matchingTrades;
     return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
   }).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
 }
-function beliefsFor(venue, entry, asset2 = "") {
-  const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: {} };
-  const block = new Set(blockingBeliefs(venue, entry, asset2).map((b) => b.id));
+function beliefsFor(venue, entry, asset2 = "", decision = {}) {
+  const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
+  const block = new Set(blockingBeliefs(venue, entry, asset2, decision).map((b) => b.id));
   const rows = db.prepare("SELECT id, expectation, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all().filter(
     (b) => matches(JSON.parse(b.condition), pos)
   );
@@ -42080,7 +42170,7 @@ function checkpointData(missionId) {
   const touched = /* @__PURE__ */ new Set();
   for (const p of data.positions.filter((x) => x.openedAt > since)) {
     for (const id of p.beliefsApplied ?? []) touched.add(id);
-    const f = beliefsFor(p.venue, p.entry ?? {}, p.asset);
+    const f = beliefsFor(p.venue, p.entry ?? {}, p.asset, p.research ?? {});
     for (const id of [...f.block, ...f.caution, ...f.favor]) touched.add(id);
   }
   const mem = recall(missionId);
@@ -42297,6 +42387,7 @@ async function estimateTokenLaunch(a) {
 
 // src/sim/guard.ts
 init_venues();
+init_positions();
 var CREATOR_BLACKLIST_ID = 0;
 async function checkBuyAgainstMemory(a) {
   const chain = getChain(a.chain);
@@ -42320,7 +42411,13 @@ async function checkBuyAgainstMemory(a) {
       `- Lista negra: su creador (${features.creator}) ya lanz\xF3 ${rugs.map((r) => `${r.symbol} (${r.pnlPct} %${r.missionId ? `, misi\xF3n ${r.missionId}` : ""})`).join(", ")}. [id ${CREATOR_BLACKLIST_ID}]`
     );
   }
-  const blocking = blockingBeliefs(chain.id, features, out.address);
+  let amountUsd = 0;
+  if (a.input && a.amount) {
+    const input2 = await chain.resolveToken(a.input).catch(() => null);
+    if (input2 && chain.isCash(input2.address)) amountUsd = a.amount;
+  }
+  const decision = a.missionId !== void 0 ? decisionContext(a.missionId, chain.id, out.address, amountUsd, false) : {};
+  const blocking = blockingBeliefs(chain.id, features, out.address, decision);
   for (const b of blocking.filter((x) => !overridden.has(x.id))) reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`);
   if (reasons.length) {
     const ids = [...rugs.length && !overridden.has(CREATOR_BLACKLIST_ID) ? [CREATOR_BLACKLIST_ID] : [], ...blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id)];
@@ -42518,8 +42615,9 @@ async function mapLimit(items, limit, fn) {
   );
   return out;
 }
-function memoryCell(chain, f, address) {
-  const m = beliefsFor(chain, f, address);
+function memoryCell(chain, f, address, missionId = null) {
+  const decision = missionId !== null ? decisionContext(missionId, chain, address, 0, false) : {};
+  const m = beliefsFor(chain, f, address, decision);
   const rugs = creatorRugs(f.creator).length ? ["frena: creador en lista negra"] : [];
   return [
     ...rugs,
@@ -42528,7 +42626,7 @@ function memoryCell(chain, f, address) {
     ...m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []
   ].join(" \xB7 ");
 }
-async function screenCandidates(chain, candidates, n3) {
+async function screenCandidates(chain, candidates, n3, missionId = null) {
   const c = getChain(chain);
   const checked = await mapLimit(candidates.slice(0, n3), 3, async (cand) => {
     const address = String(cand.mint ?? cand.token ?? "");
@@ -42537,11 +42635,11 @@ async function screenCandidates(chain, candidates, n3) {
     const rc = riskCheck(chain, address, f);
     const flags = rc.flags.filter((x) => !x.startsWith("ninguna se\xF1al"));
     const { warning: _w, ...rest } = cand;
-    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address) };
+    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId) };
   });
   return [...checked, ...candidates.slice(n3)];
 }
-async function briefReports(chain, tokens) {
+async function briefReports(chain, tokens, missionId = null) {
   const c = getChain(chain);
   const rows = await mapLimit([...new Set(tokens.map((t) => t.trim()))], 3, async (token2) => {
     const t = await c.resolveToken(token2).catch(() => null);
@@ -42565,7 +42663,7 @@ async function briefReports(chain, tokens) {
       taxes: f.buyTaxPct !== void 0 || f.sellTaxPct !== void 0 ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : void 0,
       launchpad: f.launchpad,
       alarms: flags.length ? flags.join("; ") : "ninguna",
-      memory: memoryCell(chain, f, t.address),
+      memory: memoryCell(chain, f, t.address, missionId),
       sinceLastRead: typeof since === "string" ? "primera lectura" : [
         `hace ${since.minutesAgo} min`,
         since.liquidityChangePct !== void 0 ? `liq ${since.liquidityChangePct > 0 ? "+" : ""}${since.liquidityChangePct} %` : "",
@@ -42623,9 +42721,9 @@ var SIM_TOOLS = [
       limit: external_exports.number().int().min(5).max(60).default(15),
       check_top: external_exports.number().int().min(0).max(8).default(5).describe("A los N primeros les pasa ya el chequeo de riesgo (alarmas de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no")
     }),
-    run: async ({ chain, limit, check_top }) => {
+    run: async ({ chain, limit, check_top }, ctx) => {
       const scan = compactScan(await getChain(chain).research.scan(limit));
-      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top);
+      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top, ctx.missionId);
       return toText(scan);
     }
   }),
@@ -42639,8 +42737,8 @@ var SIM_TOOLS = [
       token: external_exports.string().optional().describe("Direcci\xF3n del token (en Solana, su mint): ficha completa"),
       tokens: external_exports.array(external_exports.string()).min(1).max(5).optional().describe("Varias direcciones: ficha breve de cada una")
     }),
-    run: async ({ chain, token: token2, tokens }) => {
-      if (tokens?.length) return briefReports(chain, tokens);
+    run: async ({ chain, token: token2, tokens }, ctx) => {
+      if (tokens?.length) return briefReports(chain, tokens, ctx.missionId);
       if (!token2) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
@@ -42788,7 +42886,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json2(
         await swap({
           missionId: mid(ctx),
@@ -42821,7 +42919,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (!isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json2(
         await swap({
           missionId: mid(ctx),
@@ -43001,7 +43099,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === void 0) throw new Error("Indica amount o sell_all");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json2(
         await placeOrder({
           missionId: mid(ctx),

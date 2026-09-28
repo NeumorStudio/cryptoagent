@@ -205,8 +205,10 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
 }
 
 /** Lo que dice la memoria de un token, en una celda: "frena #10 · avisa #23 · apoya #16". */
-function memoryCell(chain: ChainId, f: Features, address: string): string {
-  const m = memory.beliefsFor(chain, f as unknown as Record<string, unknown>, address);
+function memoryCell(chain: ChainId, f: Features, address: string, missionId: number | null = null): string {
+  // Con la misión, también cuentan las creencias sobre cómo decide: si ya operó este token y cuánto queda.
+  const decision = missionId !== null ? positions.decisionContext(missionId, chain, address, 0, false) : {};
+  const m = memory.beliefsFor(chain, f as unknown as Record<string, unknown>, address, decision);
   const rugs = memory.creatorRugs(f.creator).length ? ["frena: creador en lista negra"] : [];
   return [
     ...rugs,
@@ -221,7 +223,7 @@ function memoryCell(chain: ChainId, f: Features, address: string): string {
  * riesgo y qué dice la memoria. Ahorra una ronda de token_report por candidato solo para descartarlo.
  * Cuenta como primera lectura: el siguiente token_report de ese token trae sinceLastRead.
  */
-export async function screenCandidates(chain: ChainId, candidates: Array<Record<string, unknown>>, n: number): Promise<Array<Record<string, unknown>>> {
+export async function screenCandidates(chain: ChainId, candidates: Array<Record<string, unknown>>, n: number, missionId: number | null = null): Promise<Array<Record<string, unknown>>> {
   const c = getChain(chain);
   const checked = await mapLimit(candidates.slice(0, n), 3, async (cand) => {
     const address = String(cand.mint ?? cand.token ?? "");
@@ -231,13 +233,13 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
     const flags = rc.flags.filter((x) => !x.startsWith("ninguna señal"));
     // El aviso del escaneo (creador en serie, Flap.sh) ya sale entre las alarmas.
     const { warning: _w, ...rest } = cand;
-    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address) };
+    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId) };
   });
   return [...checked, ...candidates.slice(n)];
 }
 
 /** Fichas breves de varios tokens en una tabla, con los mismos datos en todas las cadenas (los de entrada). */
-export async function briefReports(chain: ChainId, tokens: string[]): Promise<string> {
+export async function briefReports(chain: ChainId, tokens: string[], missionId: number | null = null): Promise<string> {
   const c = getChain(chain);
   const rows = await mapLimit([...new Set(tokens.map((t) => t.trim()))], 3, async (token) => {
     const t = await c.resolveToken(token).catch(() => null);
@@ -261,7 +263,7 @@ export async function briefReports(chain: ChainId, tokens: string[]): Promise<st
       taxes: f.buyTaxPct !== undefined || f.sellTaxPct !== undefined ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : undefined,
       launchpad: f.launchpad,
       alarms: flags.length ? flags.join("; ") : "ninguna",
-      memory: memoryCell(chain, f, t.address),
+      memory: memoryCell(chain, f, t.address, missionId),
       sinceLastRead:
         typeof since === "string"
           ? "primera lectura"
@@ -339,9 +341,9 @@ export const SIM_TOOLS = [
         .default(5)
         .describe("A los N primeros les pasa ya el chequeo de riesgo (alarmas de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no"),
     }),
-    run: async ({ chain, limit, check_top }) => {
+    run: async ({ chain, limit, check_top }, ctx) => {
       const scan = compactScan(await getChain(chain).research.scan(limit)) as { candidates?: Array<Record<string, unknown>> };
-      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top);
+      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top, ctx.missionId);
       return toText(scan);
     },
   }),
@@ -364,8 +366,8 @@ export const SIM_TOOLS = [
       token: z.string().optional().describe("Dirección del token (en Solana, su mint): ficha completa"),
       tokens: z.array(z.string()).min(1).max(5).optional().describe("Varias direcciones: ficha breve de cada una"),
     }),
-    run: async ({ chain, token, tokens }) => {
-      if (tokens?.length) return briefReports(chain, tokens);
+    run: async ({ chain, token, tokens }, ctx) => {
+      if (tokens?.length) return briefReports(chain, tokens, ctx.missionId);
       if (!token) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
@@ -537,7 +539,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json(
         await sim.swap({
           missionId: mid(ctx),
@@ -575,7 +577,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json(
         await sim.swap({
           missionId: mid(ctx),
@@ -788,7 +790,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === undefined) throw new Error("Indica amount o sell_all");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json(
         await orders.placeOrder({
           missionId: mid(ctx),

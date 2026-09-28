@@ -136,7 +136,63 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX perp_open ON perp_positions (status, mission_id);
       `),
   },
+  {
+    version: 8,
+    description: "Datos de decisión en las posiciones antiguas (tamaño, reentrada, promediar, tiempo que quedaba), sacados del diario",
+    up: decisionBackfill,
+  },
 ];
+
+/**
+ * Las posiciones guardan desde v0.30 cómo decidió el agente (qué parte del capital puso, si volvía a un token
+ * ya operado, si promedió en pérdidas y cuánto quedaba). Para las anteriores se reconstruye: capital = inicial
+ * de la misión + lo ganado o perdido en las posiciones ya cerradas; tamaño = todo lo invertido en la posición
+ * (con lo añadido); las compras más baratas que la media, del diario. Así la evidencia no empieza de cero.
+ */
+function decisionBackfill(db: DatabaseSync) {
+  const positions = db
+    .prepare("SELECT id, mission_id, venue, asset, opened_at, closed_at, status, cost_open_usd, realized_cost_usd, realized_proceeds_usd, research FROM positions ORDER BY opened_at, id")
+    .all() as Array<{ id: number; mission_id: number; venue: string; asset: string; opened_at: string; closed_at: string | null; status: string; cost_open_usd: number; realized_cost_usd: number; realized_proceeds_usd: number; research: string | null }>;
+  const missions = new Map((db.prepare("SELECT id, initial_usd, deadline FROM missions").all() as Array<{ id: number; initial_usd: number; deadline: string }>).map((m) => [m.id, m]));
+  const buys = db.prepare("SELECT ts, details FROM journal WHERE mission_id = ? AND kind = 'swap' AND ts >= ? AND ts <= ? ORDER BY id");
+  const update = db.prepare("UPDATE positions SET research = ? WHERE id = ?");
+  const num = (x: unknown) => Number(String(x ?? "").split(" ")[0]);
+  const STABLE = /^(USDC|USDT|USDbC|FDUSD)$/;
+  for (const p of positions) {
+    const research = JSON.parse(p.research ?? "{}") as Record<string, unknown>;
+    if (research.portfolioPct !== undefined) continue;
+    const m = missions.get(p.mission_id);
+    if (!m) continue;
+    const before = positions.filter((q) => q.mission_id === p.mission_id && q.status === "closed" && q.closed_at !== null && q.closed_at <= p.opened_at);
+    const capital = m.initial_usd + before.reduce((sum, q) => sum + q.realized_proceeds_usd - q.realized_cost_usd, 0);
+    const invested = p.realized_cost_usd + p.cost_open_usd;
+    const previous = positions.filter((q) => q.venue === p.venue && q.asset === p.asset && q.status === "closed" && q.closed_at !== null && q.closed_at <= p.opened_at);
+    const last = previous.at(-1);
+    // Compras de este token mientras la posición estaba abierta, pagadas con un estable (precio en USD).
+    const prices: number[] = [];
+    for (const j of buys.all(p.mission_id, p.opened_at.slice(0, 19), p.closed_at ?? "9999") as Array<{ details: string | null }>) {
+      const d = JSON.parse(j.details ?? "{}") as { outputMint?: string; sold?: string; received?: string };
+      if (d.outputMint !== p.asset || !STABLE.test(String(d.sold ?? "").split(" ")[1] ?? "")) continue;
+      const usd = num(d.sold), qty = num(d.received);
+      if (usd > 0 && qty > 0) prices.push(usd / qty);
+    }
+    let addedWhileDown = false;
+    for (let i = 1; i < prices.length; i++) {
+      const avg = prices.slice(0, i).reduce((a, b) => a + b, 0) / i;
+      if (prices[i]! < avg * 0.97) addedWhileDown = true;
+    }
+    Object.assign(research, {
+      ...(capital > 0 && invested > 0 ? { portfolioPct: Math.round((invested / capital) * 100) } : {}),
+      previousTradesInToken: previous.length,
+      ...(last && last.realized_cost_usd > 0 ? { lastPnlInTokenPct: Math.round((last.realized_proceeds_usd / last.realized_cost_usd - 1) * 100) } : {}),
+      minutesLeft: Math.max(0, Math.round((new Date(m.deadline).getTime() - new Date(p.opened_at).getTime()) / 60_000)),
+      adds: Math.max(0, prices.length - 1),
+      addedWhileDown,
+      backfilled: true,
+    });
+    update.run(JSON.stringify(research), p.id);
+  }
+}
 
 /**
  * Memoria de tres tipos. La escribe el agente revisor, no el que opera:

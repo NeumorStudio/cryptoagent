@@ -74,6 +74,12 @@ export const CONDITION_FIELDS = [
   "tokenReportBeforeBuying",
   "researchCallsSinceLastTrade",
   "minutesIntoMission",
+  // Cómo decide el agente (no cómo es el token): tamaño, reentrada, promediar y tiempo que queda.
+  "portfolioPct",
+  "previousTradesInToken",
+  "lastPnlInTokenPct",
+  "addedWhileDown",
+  "minutesLeft",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -86,7 +92,16 @@ export interface Condition {
   all: Clause[];
 }
 
-const RESEARCH_FIELDS = new Set(["tokenReportBeforeBuying", "researchCallsSinceLastTrade", "minutesIntoMission"]);
+const RESEARCH_FIELDS = new Set([
+  "tokenReportBeforeBuying",
+  "researchCallsSinceLastTrade",
+  "minutesIntoMission",
+  "portfolioPct",
+  "previousTradesInToken",
+  "lastPnlInTokenPct",
+  "addedWhileDown",
+  "minutesLeft",
+]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {
   if (f === "venue") return p.entry.venue ?? p.venue;
@@ -293,9 +308,9 @@ export function creatorRugs(creator: string | undefined): Array<{ symbol: string
 }
 
 /** Creencias negativas fuertes que cumple una compra con estos datos de entrada. */
-export function blockingBeliefs(venue: string, entry: Record<string, unknown>, asset = ""): BlockingBelief[] {
+export function blockingBeliefs(venue: string, entry: Record<string, unknown>, asset = "", decision: Record<string, unknown> = {}): BlockingBelief[] {
   const closed = closedPositions();
-  const pos = { venue, asset, entry: { ...entry, venue }, research: {} } as unknown as Pos;
+  const pos = { venue, asset, entry: { ...entry, venue }, research: decision } as unknown as Pos;
   return (db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all() as unknown as BeliefRow[])
     .filter((b) => matches(JSON.parse(b.condition!) as Condition, pos))
     .map((b) => ({ b, ev: beliefEvidence(b, closed) }))
@@ -316,9 +331,9 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
  * (block), otras negativas cuya condición cumple (caution) y positivas que cumple (favor). Solo ids: el
  * texto lo tiene el agente en su resumen de memoria.
  */
-export function beliefsFor(venue: string, entry: Record<string, unknown>, asset = "") {
-  const pos = { venue, asset, entry: { ...entry, venue }, research: {} } as unknown as Pos;
-  const block = new Set(blockingBeliefs(venue, entry, asset).map((b) => b.id));
+export function beliefsFor(venue: string, entry: Record<string, unknown>, asset = "", decision: Record<string, unknown> = {}) {
+  const pos = { venue, asset, entry: { ...entry, venue }, research: decision } as unknown as Pos;
+  const block = new Set(blockingBeliefs(venue, entry, asset, decision).map((b) => b.id));
   const rows = (db.prepare("SELECT id, expectation, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all() as unknown as BeliefRow[]).filter((b) =>
     matches(JSON.parse(b.condition!) as Condition, pos),
   );
@@ -943,7 +958,7 @@ export function checkpointData(missionId: number) {
   const touched = new Set<number>();
   for (const p of data.positions.filter((x) => x.openedAt > since)) {
     for (const id of p.beliefsApplied ?? []) touched.add(id);
-    const f = beliefsFor(p.venue, (p.entry ?? {}) as Record<string, unknown>, p.asset);
+    const f = beliefsFor(p.venue, (p.entry ?? {}) as Record<string, unknown>, p.asset, (p.research ?? {}) as Record<string, unknown>);
     for (const id of [...f.block, ...f.caution, ...f.favor]) touched.add(id);
   }
   const mem = recall(missionId);

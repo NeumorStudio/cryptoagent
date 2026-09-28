@@ -39,6 +39,39 @@ function researchSnapshot(missionId: number, mint: string) {
   };
 }
 
+/**
+ * Cómo decide el agente, no cómo es el token: qué parte de su capital pone en esta posición, si vuelve a un
+ * token que ya operó (y cómo le fue) y cuánto queda de misión. Con estos datos en las condiciones de las
+ * creencias, el revisor puede aprender reglas de tamaño y de reentrada con evidencia medida, igual que con
+ * los datos del token; nadie se las impone.
+ * Capital = efectivo (estables de todas las cadenas) + coste de las posiciones abiertas. `cashSpent`: si el
+ * efectivo de esta compra ya ha salido de la cartera (al registrarla) o todavía no (al decidirla).
+ */
+export function decisionContext(missionId: number, venue: string, asset: string, addUsd: number, cashSpent: boolean) {
+  const cash = (db.prepare("SELECT venue, asset, amount FROM holdings WHERE mission_id = ?").all(missionId) as Array<{ venue: VenueId; asset: string; amount: number }>)
+    .filter((h) => {
+      try {
+        return getVenue(h.venue).isCash(h.asset);
+      } catch {
+        return false;
+      }
+    })
+    .reduce((s, h) => s + h.amount, 0);
+  const openCost = (db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND status = 'open'").get(missionId) as { c: number }).c;
+  const existing = (db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, venue, asset) as { c: number }).c;
+  const capital = cash + openCost + (cashSpent ? addUsd : 0);
+  const previous = db
+    .prepare("SELECT realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC")
+    .all(venue, asset) as Array<{ c: number; p: number }>;
+  const deadline = (db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId) as { deadline: string } | undefined)?.deadline;
+  return {
+    ...(capital > 0 && addUsd > 0 ? { portfolioPct: Math.round(((existing + addUsd) / capital) * 100) } : {}),
+    previousTradesInToken: previous.length,
+    ...(previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {}),
+    ...(deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)) } : {}),
+  };
+}
+
 async function openOrAdd(args: {
   missionId: number;
   venue: string;
@@ -57,9 +90,20 @@ async function openOrAdd(args: {
     .prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'")
     .get(missionId, args.venue, args.asset) as PositionRow | undefined;
   if (existing) {
-    db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ? WHERE id = ?").run(
+    // Ampliar una posición: se anota la mayor parte del capital que llegó a tener y si se compró más con ella en
+    // pérdidas (promediar a la baja), que es una decisión distinta de la entrada.
+    const research = JSON.parse(existing.research ?? "{}") as Record<string, unknown>;
+    if (!args.inherit && args.qty > 0 && existing.qty_open > 0) {
+      const ctx = decisionContext(missionId, args.venue, args.asset, args.costUsd, true);
+      const avgCost = existing.cost_open_usd / existing.qty_open;
+      research.portfolioPct = Math.max(Number(research.portfolioPct ?? 0), ctx.portfolioPct ?? 0);
+      research.adds = Number(research.adds ?? 0) + 1;
+      research.addedWhileDown = Boolean(research.addedWhileDown) || args.costUsd / args.qty < avgCost * 0.97;
+    }
+    db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ?, research = ? WHERE id = ?").run(
       args.qty,
       args.costUsd,
+      JSON.stringify(research),
       existing.id,
     );
     return;
@@ -67,7 +111,9 @@ async function openOrAdd(args: {
   const features = args.inherit
     ? args.inherit.entry_features
     : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
-  const research = args.inherit ? args.inherit.research : JSON.stringify(researchSnapshot(missionId, args.asset));
+  const research = args.inherit
+    ? args.inherit.research
+    : JSON.stringify({ ...researchSnapshot(missionId, args.asset), ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true), adds: 0, addedWhileDown: false });
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

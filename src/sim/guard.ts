@@ -6,6 +6,7 @@
 import type { ChainId } from "./types.js";
 import { getChain } from "./venues/index.js";
 import { blockingBeliefs, creatorRugs } from "./memory.js";
+import { decisionContext } from "./positions.js";
 
 export interface BeliefOverride {
   id: number;
@@ -16,7 +17,16 @@ export interface BeliefOverride {
 export const CREATOR_BLACKLIST_ID = 0;
 
 /** Comprueba una compra (lo que se recibe no es efectivo ni el nativo). Lanza un error si hay que frenarla. */
-export async function checkBuyAgainstMemory(a: { chain: ChainId; output: string; overrides?: BeliefOverride[]; risksChecked?: string }): Promise<BeliefOverride[]> {
+export async function checkBuyAgainstMemory(a: {
+  chain: ChainId;
+  output: string;
+  overrides?: BeliefOverride[];
+  risksChecked?: string;
+  /** Para las creencias sobre cómo decide (tamaño, reentrada, tiempo): la misión y lo que se paga. */
+  missionId?: number;
+  input?: string;
+  amount?: number;
+}): Promise<BeliefOverride[]> {
   const chain = getChain(a.chain);
   const out = await chain.resolveToken(a.output);
   if (chain.isCash(out.address) || out.address === chain.native.address) return [];
@@ -40,7 +50,14 @@ export async function checkBuyAgainstMemory(a: { chain: ChainId; output: string;
       `- Lista negra: su creador (${features.creator}) ya lanzó ${rugs.map((r) => `${r.symbol} (${r.pnlPct} %${r.missionId ? `, misión ${r.missionId}` : ""})`).join(", ")}. [id ${CREATOR_BLACKLIST_ID}]`,
     );
   }
-  const blocking = blockingBeliefs(chain.id, features as unknown as Record<string, unknown>, out.address);
+  // Lo que se paga en USD, si se paga con un estable (lo normal al comprar un memecoin).
+  let amountUsd = 0;
+  if (a.input && a.amount) {
+    const input = await chain.resolveToken(a.input).catch(() => null);
+    if (input && chain.isCash(input.address)) amountUsd = a.amount;
+  }
+  const decision = a.missionId !== undefined ? decisionContext(a.missionId, chain.id, out.address, amountUsd, false) : {};
+  const blocking = blockingBeliefs(chain.id, features as unknown as Record<string, unknown>, out.address, decision);
   for (const b of blocking.filter((x) => !overridden.has(x.id))) reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`);
   if (reasons.length) {
     const ids = [...(rugs.length && !overridden.has(CREATOR_BLACKLIST_ID) ? [CREATOR_BLACKLIST_ID] : []), ...blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id)];

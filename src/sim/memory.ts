@@ -714,8 +714,21 @@ export function recentApproach(count = 8) {
     const ps = listPositions(m.id).filter((p) => p.status !== "moved");
     const ages = ps.map((p) => p.entry.ageMinutes).filter((a): a is number => typeof a === "number").sort((a, b) => a - b);
     const orders = (db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id) as { n: number }).n;
+    // Minutos parado al final: desde la última operación hasta que acabó (sin haber llegado al objetivo).
+    const lastTrade = (db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(m.id) as { ts: string | null }).ts;
+    const end = new Date(m.ended_at ?? m.deadline).getTime();
+    const durationMin = (new Date(m.deadline).getTime() - new Date(m.started_at ?? m.created_at).getTime()) / 60_000;
+    const idleAtEndMinutes = m.status === "succeeded" || !lastTrade ? 0 : Math.max(0, Math.round((end - new Date(lastTrade).getTime()) / 60_000));
+    // Esperar con una posición abierta no es rendirse; esperar en efectivo, sí.
+    const holding =
+      !!lastTrade &&
+      !!db
+        .prepare("SELECT 1 FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at <= ? AND (closed_at IS NULL OR closed_at > ?) LIMIT 1")
+        .get(m.id, lastTrade, lastTrade);
     return {
       missionId: m.id,
+      idleAtEndMinutes,
+      parkedAtEnd: !holding && idleAtEndMinutes >= Math.max(3, durationMin * 0.25),
       succeeded: m.status === "succeeded",
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
       positions: ps.length,
@@ -738,6 +751,8 @@ export function recentApproach(count = 8) {
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n).toFixed(1)),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
       withOneEntry: share((x) => x.positions === 1),
+      /** Misiones que acabaron paradas (sin operar el último cuarto del plazo) sin llegar: se rindió. */
+      parkedAtEnd: share((x) => x.parkedAtEnd),
       endedByDeadline: share((x) => x.closedByDeadline > 0),
       withYoungTokens: share((x) => x.tokenAgeMinutes !== null && x.tokenAgeMinutes < 60),
       venuesUsed: [...new Set(perMission.map((x) => x.venues))].join(", "),

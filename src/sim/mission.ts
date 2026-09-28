@@ -241,7 +241,9 @@ export async function missionStatus(missionId?: number) {
   }
   const v = await valuation(mission.id);
   const left = remaining(mission.deadline);
+  const idle = idleCheck(mission, v, left.seconds);
   return {
+    ...(idle ? { warning: idle } : {}),
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
@@ -293,6 +295,35 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
     details: { problems },
   });
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
+}
+
+/** Minutos desde la última operación (o desde que empezó la misión). */
+export function minutesSinceLastTrade(mission: Mission): number {
+  const last = (
+    db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(mission.id) as { ts: string | null }
+  ).ts;
+  return (Date.now() - new Date(last ?? mission.started_at ?? mission.created_at).getTime()) / 60_000;
+}
+
+/**
+ * Aviso de "parado": lejos del objetivo, con casi todo en efectivo (estables o el nativo) y sin operar
+ * desde hace un rato, quedan minutos útiles. Quedarse quieto garantiza no llegar; el agente lo racionaliza
+ * a menudo tras perder ("si nada cumple la creencia, me quedo en BNB"), así que el simulador se lo dice.
+ */
+export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuation>>, secondsLeft: number): string | null {
+  if (mission.status !== "active" || v.totalUsd >= mission.target_usd || secondsLeft < 90 || v.totalUsd <= 0) return null;
+  const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
+  const cash = v.holdings.filter((h) => h.valuedBy === "stable" || natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
+  const cashPct = (cash / v.totalUsd) * 100;
+  const durationMin = (new Date(mission.deadline).getTime() - new Date(mission.started_at ?? mission.created_at).getTime()) / 60_000;
+  const idleMin = minutesSinceLastTrade(mission);
+  if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
+  const needPct = ((mission.target_usd - v.totalUsd) / v.totalUsd) * 100;
+  return (
+    `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo, y te falta un +${needPct.toFixed(0)} % con ${Math.round(secondsLeft / 60)} min por delante. ` +
+    "Quedarte quieto garantiza no llegar: es el peor resultado. Tus creencias sirven para elegir entre candidatos, no para no operar: " +
+    "si ninguno es perfecto, entra en el mejor que haya con una tesis clara (y, si lleva una creencia negativa fuerte, el simulador te lo dirá)."
+  );
 }
 
 /** Valor por debajo del cual una misión real se para (pérdida máxima); null en simulación. */

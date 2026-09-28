@@ -151,6 +151,10 @@ export const SIM_TOOLS = [
     schema: z.object({ minutes: z.number().min(1).max(MAX_WAIT_MINUTES) }),
     run: async ({ minutes }, ctx) => {
       const m = mid(ctx);
+      // Parado en efectivo y lejos del objetivo: no se deja pasar más de un minuto seguido.
+      const before = await mission.missionStatus(m);
+      const idle = "warning" in before && before.warning;
+      if (idle) minutes = Math.min(minutes, 1);
       const until = Date.now() + minutes * 60_000;
       while (Date.now() < until) {
         await new Promise((r) => setTimeout(r, Math.min(20_000, until - Date.now())));
@@ -160,7 +164,7 @@ export const SIM_TOOLS = [
           return `La misión ha terminado mientras esperabas. Hora: ${now()}\n${json(await mission.missionStatus(m))}`;
         }
       }
-      return `Han pasado ${minutes} minutos. Hora actual: ${now()}\n${json(await mission.missionStatus(m))}`;
+      return `${idle ? "Espera acortada a 1 minuto: estás parado en efectivo y lejos del objetivo.\n" : ""}Han pasado ${minutes} minutos. Hora actual: ${now()}\n${json(await mission.missionStatus(m))}`;
     },
   }),
   tool({

@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.19.0";
+    CODE_VERSION = "0.20.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -10550,7 +10550,9 @@ async function missionStatus(missionId) {
   }
   const v = await valuation(mission.id);
   const left = remaining(mission.deadline);
+  const idle = idleCheck(mission, v, left.seconds);
   return {
+    ...idle ? { warning: idle } : {},
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
@@ -10592,6 +10594,21 @@ async function stopMission(closePositions, missionId) {
     details: { problems }
   });
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
+}
+function minutesSinceLastTrade(mission) {
+  const last = db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(mission.id).ts;
+  return (Date.now() - new Date(last ?? mission.started_at ?? mission.created_at).getTime()) / 6e4;
+}
+function idleCheck(mission, v, secondsLeft) {
+  if (mission.status !== "active" || v.totalUsd >= mission.target_usd || secondsLeft < 90 || v.totalUsd <= 0) return null;
+  const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
+  const cash = v.holdings.filter((h) => h.valuedBy === "stable" || natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
+  const cashPct = cash / v.totalUsd * 100;
+  const durationMin = (new Date(mission.deadline).getTime() - new Date(mission.started_at ?? mission.created_at).getTime()) / 6e4;
+  const idleMin = minutesSinceLastTrade(mission);
+  if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
+  const needPct = (mission.target_usd - v.totalUsd) / v.totalUsd * 100;
+  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo, y te falta un +${needPct.toFixed(0)} % con ${Math.round(secondsLeft / 60)} min por delante. Quedarte quieto garantiza no llegar: es el peor resultado. Tus creencias sirven para elegir entre candidatos, no para no operar: si ninguno es perfecto, entra en el mejor que haya con una tesis clara (y, si lleva una creencia negativa fuerte, el simulador te lo dir\xE1).`;
 }
 function lossFloor(mission) {
   if (!isLive(mission) || !mission.limits) return null;
@@ -41300,8 +41317,15 @@ function recentApproach(count = 8) {
     const ps = listPositions(m.id).filter((p) => p.status !== "moved");
     const ages = ps.map((p) => p.entry.ageMinutes).filter((a) => typeof a === "number").sort((a, b) => a - b);
     const orders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id).n;
+    const lastTrade = db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(m.id).ts;
+    const end = new Date(m.ended_at ?? m.deadline).getTime();
+    const durationMin = (new Date(m.deadline).getTime() - new Date(m.started_at ?? m.created_at).getTime()) / 6e4;
+    const idleAtEndMinutes = m.status === "succeeded" || !lastTrade ? 0 : Math.max(0, Math.round((end - new Date(lastTrade).getTime()) / 6e4));
+    const holding = !!lastTrade && !!db.prepare("SELECT 1 FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at <= ? AND (closed_at IS NULL OR closed_at > ?) LIMIT 1").get(m.id, lastTrade, lastTrade);
     return {
       missionId: m.id,
+      idleAtEndMinutes,
+      parkedAtEnd: !holding && idleAtEndMinutes >= Math.max(3, durationMin * 0.25),
       succeeded: m.status === "succeeded",
       resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
       positions: ps.length,
@@ -41323,6 +41347,8 @@ function recentApproach(count = 8) {
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n3).toFixed(1)),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
       withOneEntry: share((x) => x.positions === 1),
+      /** Misiones que acabaron paradas (sin operar el último cuarto del plazo) sin llegar: se rindió. */
+      parkedAtEnd: share((x) => x.parkedAtEnd),
       endedByDeadline: share((x) => x.closedByDeadline > 0),
       withYoungTokens: share((x) => x.tokenAgeMinutes !== null && x.tokenAgeMinutes < 60),
       venuesUsed: [...new Set(perMission.map((x) => x.venues))].join(", ")
@@ -41718,6 +41744,9 @@ var SIM_TOOLS = [
     schema: external_exports.object({ minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES) }),
     run: async ({ minutes }, ctx) => {
       const m = mid(ctx);
+      const before = await missionStatus(m);
+      const idle = "warning" in before && before.warning;
+      if (idle) minutes = Math.min(minutes, 1);
       const until = Date.now() + minutes * 6e4;
       while (Date.now() < until) {
         await new Promise((r) => setTimeout(r, Math.min(2e4, until - Date.now())));
@@ -41728,7 +41757,7 @@ var SIM_TOOLS = [
 ${json2(await missionStatus(m))}`;
         }
       }
-      return `Han pasado ${minutes} minutos. Hora actual: ${now()}
+      return `${idle ? "Espera acortada a 1 minuto: est\xE1s parado en efectivo y lejos del objetivo.\n" : ""}Han pasado ${minutes} minutos. Hora actual: ${now()}
 ${json2(await missionStatus(m))}`;
     }
   }),

@@ -75,6 +75,16 @@ test("creencias contradichas por los datos y límite de howtos", () => {
   assert.throws(() => memory.writeHowto({ scope: "any", topic: "extra", title: "Uno más", steps: "No cabe", missionId: null }), /18 howtos/);
 });
 
+test("parado en efectivo, lejos del objetivo y con tiempo por delante: mission_status avisa", async () => {
+  const m = await createMission(100, 150, 60, undefined, { solana: 100 });
+  const status = () => runTool("mission_status", {}, { sessionId: 1, missionId: m.id }).then((r) => String(r.content));
+  assert.doesNotMatch(await status(), /sin operar/);
+  // Lleva 15 min sin hacer nada (más del 15 % de 60 min).
+  const past = new Date(Date.now() - 15 * 60_000).toISOString();
+  db.prepare("UPDATE missions SET started_at = ?, created_at = ? WHERE id = ?").run(past, past, m.id);
+  assert.match(await status(), /Llevas 15 min sin operar.*efectivo/);
+});
+
 test("el resumen de memoria es ligero: howtos por título y su texto bajo demanda", async () => {
   const summary = memory.recallSummary(mission.id);
   assert.ok(summary.howtos.every((h) => typeof h === "string"));

@@ -150,6 +150,11 @@ Llama a \`cryptosim_start_wallet\`: abre en el navegador la página de la carter
 - desbloqueada: llama a \`cryptosim_wallet_status\` y enseña el total, el saldo por cadena y las direcciones.
 Nunca pidas ni repitas en el chat la frase ni la contraseña. Para que el agente opere con ella, se crea una misión en modo real con /cryptoagent-trading.
 `,
+  "cryptoagent-impuestos": `---
+description: Exporta a CSV las operaciones con dinero real de cryptoagent (apoyo para la declaración)
+---
+Llama a \`cryptosim_export_taxes\` (con year si el usuario indica un año: $ARGUMENTS) y enseña en pocas líneas, en español: cuántas operaciones y posiciones, el resultado realizado en USD y EUR y las rutas de los archivos. Recuerda que es un registro de apoyo, no asesoramiento fiscal (en España cada permuta es ganancia o pérdida patrimonial y Hacienda exige FIFO).
+`,
 };
 const commandsDir = path.join(configDir, "commands");
 mkdirSync(commandsDir, { recursive: true });

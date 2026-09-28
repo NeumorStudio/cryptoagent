@@ -259,6 +259,8 @@ export async function missionStatus(missionId?: number) {
           mode: "REAL: dinero de verdad de la cartera de la IA",
           approval: mission.approval === "manual" ? "el usuario aprueba cada operación (puede tardar hasta ~90 s)" : "autónoma dentro de los límites",
           limits: JSON.parse(mission.limits ?? "{}") as MissionLimits,
+          stopsBelowUsd: Number(lossFloor(mission)!.toFixed(2)),
+          stopNote: "Si la cartera baja de stopsBelowUsd, la misión se para sola: se venden los tokens a estables y termina.",
           howToTrade: "execute_swap para los swaps y execute_bridge para mover estables o el nativo entre cadenas (simulate_*, Binance y simulate_transfer no están disponibles en una misión real)",
         }
       : { mode: "simulada" }),
@@ -293,6 +295,13 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
 
+/** Valor por debajo del cual una misión real se para (pérdida máxima); null en simulación. */
+export function lossFloor(mission: Mission): number | null {
+  if (!isLive(mission) || !mission.limits) return null;
+  const { maxLossPct } = JSON.parse(mission.limits) as MissionLimits;
+  return mission.initial_usd * (1 - maxLossPct / 100);
+}
+
 /** Comprueba una misión y la cierra si ha llegado al objetivo o se le ha acabado el plazo. */
 const lastSync = new Map<number, number>();
 
@@ -308,7 +317,10 @@ async function checkOne(mission: Mission): Promise<string[]> {
   const value = v.totalUsd;
   // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido.
   const reached = value >= mission.target_usd && v.reliable;
-  if (!expired && !reached) return [];
+  // Misión real: al llegar a la pérdida máxima se para sola (se vende a estables y se cierra).
+  const floor = lossFloor(mission);
+  const lossHit = !reached && floor !== null && v.reliable && value < floor;
+  if (!expired && !reached && !lossHit) return [];
 
   // Reclamo atómico: solo un proceso cierra la misión.
   const status = reached ? "succeeded" : "expired";
@@ -316,7 +328,9 @@ async function checkOne(mission: Mission): Promise<string[]> {
 
   const reason = reached
     ? `Cierre automático: objetivo de la misión #${mission.id} alcanzado (${value.toFixed(2)} ≥ ${mission.target_usd} USD)`
-    : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
+    : lossHit
+      ? `Parada automática: la misión #${mission.id} ha llegado a la pérdida máxima (${value.toFixed(2)} < ${floor!.toFixed(2)} USD)`
+      : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
@@ -343,7 +357,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
 
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
   const summary =
-    `Misión #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD ` +
+    `Misión #${mission.id} ${reached ? "CONSEGUIDA" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +
     `(objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];

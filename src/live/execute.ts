@@ -191,15 +191,16 @@ export async function liveSwap(args: LiveSwapArgs) {
     ...("estimated" in real ? { note: "Cantidades estimadas con la cotización: no se pudo leer la transacción todavía" } : {}),
     route: quote.route,
   };
+  const valueUsd = chain.isCash(input.address) ? real.sold : chain.isCash(output.address) ? real.received : usd;
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
     summary: `Swap REAL ${Number(real.sold.toPrecision(6))} ${input.symbol} → ${Number(real.received.toPrecision(6))} ${output.symbol}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
     reasoning: args.reasoning,
-    details: { inputMint: input.address, outputMint: output.address, ...result },
+    // Para el registro fiscal: cantidades exactas y valor de la operación.
+    details: { inputMint: input.address, outputMint: output.address, soldQty: real.sold, soldSymbol: input.symbol, receivedQty: real.received, receivedSymbol: output.symbol, valueUsd, ...result },
   });
-  const valueUsd = chain.isCash(input.address) ? real.sold : chain.isCash(output.address) ? real.received : usd;
   await recordTrade({
     missionId: m,
     venue: chain.id,

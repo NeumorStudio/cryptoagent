@@ -87,25 +87,56 @@ En marketplaces que no son de Anthropic la actualización automática viene desa
 
 O activa la actualización automática de este marketplace en el gestor de plugins.
 
-## Cartera real (en desarrollo)
+## Dinero real
 
-`/cryptoagent:cartera` (o `/cryptoagent-cartera` en OpenCode) abre la página de la cartera real de la IA: una cartera **nueva**, solo para ella, en Solana, Base y BNB Chain.
+El agente también puede operar con dinero de verdad, desde una cartera **nueva** que es solo suya, en Solana, Base y BNB Chain.
 
-- **Cómo se guarda la clave.** La página la sirve el *firmante*, un proceso aparte que escucha solo en `127.0.0.1` y es el único que descifra la clave. La frase se guarda cifrada en `~/.cryptoagent/live/wallet.enc` con tu contraseña.
-- **Qué ve el modelo.** La frase de recuperación se muestra una sola vez en esa página; el modelo nunca la ve. No la pegues nunca en un chat.
-- **Verla en otras carteras.** Puedes importar la frase en MetaMask (Base y BNB Chain) y en Phantom (Solana) para ver la cartera.
-- **Misiones reales.** `/cryptoagent:trading` pregunta primero el modo. En **real**, el agente opera con el saldo de esa cartera, solo con swaps (Jupiter en Solana, KyberSwap en Base y BNB Chain), y tú eliges:
-  - **aprobación**: apruebas cada operación en la página de la cartera, o autónomo;
-  - **límites**: máximo por operación y pérdida máxima. Por debajo de la pérdida máxima, solo puede vender a estables.
-- **Puentes.** Puede mover estables o el nativo entre sus cadenas con Li.Fi (`execute_bridge`).
-- **Qué comprueba el firmante antes de firmar.**
+**Es dinero real y los memecoins pueden irse a cero en minutos.** Mete solo lo que estés dispuesto a perder entero y empieza con poco (20–50 $) y con aprobación manual.
+
+### Cómo empezar
+
+1. **Crea la cartera.** Escribe `/cryptoagent:cartera` (en OpenCode, `/cryptoagent-cartera`). Se abre en tu navegador la página de la cartera. Ahí eliges una contraseña y ves **una sola vez** la frase de recuperación: apúntala en papel. Puedes importarla en MetaMask (Base y BNB Chain) y en Phantom (Solana) para ver la cartera.
+2. **Dale fondos.** Envía USDC o USDT a las direcciones de la página, y un poco de SOL, ETH o BNB para pagar la red.
+3. **Lanza una misión real.** `/cryptoagent:trading` pregunta primero el modo; elige **Real** y decide:
+   - **aprobación**: apruebas cada operación en la página de la cartera (espera hasta 90 s), o autónomo;
+   - **límites**: máximo por operación y pérdida máxima.
+4. **Sigue la misión.** El panel muestra una banda "DINERO REAL", las aprobaciones pendientes y un enlace al explorador en cada operación.
+
+### Qué puede hacer el agente
+
+- Swaps con `execute_swap`: Jupiter en Solana y KyberSwap en Base y BNB Chain.
+- Mover estables o el nativo entre sus cadenas con `execute_bridge` (Li.Fi).
+- **No** puede enviar fondos a otra dirección: no existe ninguna herramienta para hacerlo.
+
+### Cuándo se para
+
+- Como mucho hace 6 operaciones por minuto (60 por hora).
+- Si la cartera baja de la pérdida máxima, la misión **se para sola**: vende los tokens a estables y termina.
+- Al terminar (por objetivo, por plazo o por pérdida), vende los tokens a estables y deja el nativo para el gas.
+- El botón **Parar todo** de la página de la cartera rechaza al instante todo lo pendiente y bloquea la firma hasta que vuelvas a desbloquearla.
+
+### Cómo se protege la clave
+
+- **El modelo nunca la ve.** La frase y la clave no pasan por el chat, la base de datos ni el panel. Firma un proceso aparte, el *firmante*, que escucha solo en `127.0.0.1`.
+- **Se guarda cifrada.** La frase está en `~/.cryptoagent/live/wallet.enc`, cifrada con tu contraseña (scrypt + AES-256-GCM). El firmante se desbloquea con esa contraseña en su página. Si se reinicia el ordenador, hay que volver a desbloquearla.
+- **El firmante revisa cada transacción antes de firmar:**
   - **Swaps:** solo van a Jupiter o al router de KyberSwap, y lo comprado vuelve a la propia cartera.
   - **Puentes:** solo van al contrato de Li.Fi, y el destino que devuelve Li.Fi debe ser la propia cartera.
-  - **Nunca sale más de lo aprobado:**
-    - en Base y BNB Chain, los approves son por la cantidad exacta y hay un tope para el nativo;
-    - en Solana, simula cada transacción y comprueba que ningún saldo de la cartera baja más de lo aprobado.
+  - **Nunca sale más de lo aprobado.** En Base y BNB Chain, los approves son por la cantidad exacta y hay un tope de nativo por transacción. En Solana, el firmante simula cada transacción y comprueba que ningún saldo de la cartera baje más de lo aprobado.
+  - **Límites de la misión:** máximo por operación, pérdida máxima y ritmo.
 
-  No existe ninguna herramienta para enviar fondos a una dirección ajena. El botón **Parar todo** de la página lo bloquea al instante.
+### Impuestos
+
+`/cryptoagent:impuestos` (en OpenCode, `/cryptoagent-impuestos`) exporta a CSV, para Excel, dos archivos:
+- **Operaciones reales:** todas, con hash, cantidades, valor en USD y EUR y comisión de red.
+- **Resultados por posición.**
+
+Es un registro de apoyo, no asesoramiento fiscal. En España cada permuta entre criptomonedas es una ganancia o pérdida patrimonial y Hacienda exige FIFO; aquí el coste de cada posición es el medio.
+
+### Opcional
+
+- `SOLANA_RPC_URL`: una RPC de Solana propia (por ejemplo, con una clave gratuita de Helius). La pública a veces falla al enviar transacciones.
+- `LIFI_API_KEY`: más cupo en Li.Fi (sin clave son 75 consultas cada 2 horas).
 
 ## Qué se simula y cómo
 

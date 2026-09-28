@@ -263,6 +263,24 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "export_taxes",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] Exporta a CSV (para Excel) todas las operaciones con dinero real (swaps y " +
+      "puentes, con hash, cantidades, valor en USD y EUR y comisión de red) y los resultados por posición cerrada. Devuelve las rutas de los archivos.",
+    inputSchema: { year: z.number().int().min(2020).max(2100).optional().describe("Solo ese año (por defecto, todo)") },
+  },
+  async ({ year }) => {
+    try {
+      const { exportTaxes } = await import("./live/taxes.js");
+      return text(JSON.stringify(await exportTaxes({ year })));
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
 for (const tool of SIM_TOOLS) {
   server.registerTool(tool.name, { description: tool.description, inputSchema: tool.schema.shape as z.ZodRawShape }, async (input: Record<string, unknown>) => {
     try {

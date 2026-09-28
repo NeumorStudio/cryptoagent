@@ -60,6 +60,9 @@ interface Ticket extends Intent {
 
 /** Cuánto espera una operación la aprobación del usuario. */
 export const APPROVAL_TIMEOUT_MS = 90_000;
+/** Ritmo máximo de operaciones por misión: frena un bucle del agente (sobre todo en modo autónomo). */
+export const MAX_OPS_PER_MINUTE = 6;
+export const MAX_OPS_PER_HOUR = 60;
 const TICKET_TTL_MS = 3 * 60_000;
 
 export interface SignerDeps {
@@ -120,6 +123,8 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
     ...opts.deps,
   };
   let origin = "";
+  /** Momentos de las últimas operaciones concedidas, por misión. */
+  const recentOps = new Map<number, number[]>();
 
   /** Rechaza todo lo pendiente (al bloquear o parar). */
   const rejectAllPending = () => {
@@ -152,9 +157,16 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
       currentUsd: intent.side === "buy" ? await deps.walletValueUsd() : Infinity,
     });
     if (problems.length) throw new HttpError(403, `Fuera de los límites de la misión: ${problems.join("; ")}`);
+    // Ritmo: como mucho N operaciones por minuto y por hora en cada misión.
+    const times = (recentOps.get(intent.missionId) ?? []).filter((t) => Date.now() - t < 3_600_000);
+    recentOps.set(intent.missionId, times);
+    if (times.filter((t) => Date.now() - t < 60_000).length >= MAX_OPS_PER_MINUTE || times.length >= MAX_OPS_PER_HOUR) {
+      throw new HttpError(429, `Demasiadas operaciones seguidas (máximo ${MAX_OPS_PER_MINUTE} por minuto y ${MAX_OPS_PER_HOUR} por hora): espera un poco antes de la siguiente`);
+    }
     const ticket = (): Ticket => {
       const t = { ...intent, id: randomBytes(16).toString("hex"), expiresAt: Date.now() + TICKET_TTL_MS };
       state.tickets.set(t.id, t);
+      times.push(Date.now());
       return t;
     };
     if (mission.approval !== "manual") return ticket();

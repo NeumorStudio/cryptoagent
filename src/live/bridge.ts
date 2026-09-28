@@ -153,7 +153,17 @@ export async function liveBridge(a: {
     kind: "transfer",
     summary: `Puente REAL ${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} ${src.label} → ~${Number(amountOut.toPrecision(6))} ${tout.symbol} ${dst.label}`,
     reasoning: a.reasoning,
-    details: { chain: src.id, from: src.id, ...result },
+    details: {
+      chain: src.id,
+      from: src.id,
+      to: dst.id,
+      soldQty: Number(amountIn) / 10 ** tin.decimals,
+      soldSymbol: tin.symbol,
+      receivedQty: amountOut,
+      receivedSymbol: tout.symbol,
+      valueUsd: usd,
+      ...result,
+    },
   });
   await syncHoldings(m).catch(() => undefined);
   return result;

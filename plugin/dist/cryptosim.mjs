@@ -3276,8 +3276,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path8) {
-      let input2 = path8;
+    function removeDotSegments(path9) {
+      let input2 = path9;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3686,8 +3686,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path8 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
+        const path9 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -6979,8 +6979,8 @@ var require_formats = __commonJS({
         return false;
       const year = +matches2[1];
       const month = +matches2[2];
-      const day = +matches2[3];
-      return month >= 1 && month <= 12 && day >= 1 && day <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
+      const day2 = +matches2[3];
+      return month >= 1 && month <= 12 && day2 >= 1 && day2 <= (month === 2 && isLeapYear(year) ? 29 : DAYS[month]);
     }
     function compareDate(d1, d2) {
       if (!(d1 && d2))
@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.17.0";
+    CODE_VERSION = "0.18.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9678,8 +9678,8 @@ function readInfo() {
     return null;
   }
 }
-async function api(info, path8, init = {}, timeoutMs = 5e3) {
-  const res = await fetch(`http://127.0.0.1:${info.port}${path8}`, {
+async function api(info, path9, init = {}, timeoutMs = 5e3) {
+  const res = await fetch(`http://127.0.0.1:${info.port}${path9}`, {
     ...init,
     headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
     signal: AbortSignal.timeout(timeoutMs)
@@ -9999,7 +9999,17 @@ async function liveBridge(a) {
     kind: "transfer",
     summary: `Puente REAL ${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} ${src.label} \u2192 ~${Number(amountOut.toPrecision(6))} ${tout.symbol} ${dst.label}`,
     reasoning: a.reasoning,
-    details: { chain: src.id, from: src.id, ...result }
+    details: {
+      chain: src.id,
+      from: src.id,
+      to: dst.id,
+      soldQty: Number(amountIn) / 10 ** tin.decimals,
+      soldSymbol: tin.symbol,
+      receivedQty: amountOut,
+      receivedSymbol: tout.symbol,
+      valueUsd: usd2,
+      ...result
+    }
   });
   await syncHoldings(m).catch(() => void 0);
   return result;
@@ -10557,6 +10567,8 @@ async function missionStatus(missionId) {
       mode: "REAL: dinero de verdad de la cartera de la IA",
       approval: mission.approval === "manual" ? "el usuario aprueba cada operaci\xF3n (puede tardar hasta ~90 s)" : "aut\xF3noma dentro de los l\xEDmites",
       limits: JSON.parse(mission.limits ?? "{}"),
+      stopsBelowUsd: Number(lossFloor(mission).toFixed(2)),
+      stopNote: "Si la cartera baja de stopsBelowUsd, la misi\xF3n se para sola: se venden los tokens a estables y termina.",
       howToTrade: "execute_swap para los swaps y execute_bridge para mover estables o el nativo entre cadenas (simulate_*, Binance y simulate_transfer no est\xE1n disponibles en una misi\xF3n real)"
     } : { mode: "simulada" }
   };
@@ -10581,6 +10593,11 @@ async function stopMission(closePositions, missionId) {
   });
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
+function lossFloor(mission) {
+  if (!isLive(mission) || !mission.limits) return null;
+  const { maxLossPct } = JSON.parse(mission.limits);
+  return mission.initial_usd * (1 - maxLossPct / 100);
+}
 async function checkOne(mission) {
   const expired = remaining(mission.deadline).ms <= 0;
   if (isLive(mission) && (expired || Date.now() - (lastSync.get(mission.id) ?? 0) > 2e4)) {
@@ -10591,10 +10608,12 @@ async function checkOne(mission) {
   const v = await valuation(mission.id);
   const value = v.totalUsd;
   const reached = value >= mission.target_usd && v.reliable;
-  if (!expired && !reached) return [];
+  const floor = lossFloor(mission);
+  const lossHit = !reached && floor !== null && v.reliable && value < floor;
+  if (!expired && !reached && !lossHit) return [];
   const status = reached ? "succeeded" : "expired";
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
-  const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
+  const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : lossHit ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} ha llegado a la p\xE9rdida m\xE1xima (${value.toFixed(2)} < ${floor.toFixed(2)} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
@@ -10608,7 +10627,7 @@ async function checkOne(mission) {
     return [summary2];
   }
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
-  const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
+  const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }
@@ -10791,15 +10810,16 @@ async function liveSwap(args) {
     ..."estimated" in real ? { note: "Cantidades estimadas con la cotizaci\xF3n: no se pudo leer la transacci\xF3n todav\xEDa" } : {},
     route: quote2.route
   };
+  const valueUsd = chain.isCash(input2.address) ? real.sold : chain.isCash(output2.address) ? real.received : usd2;
   logJournal({
     missionId: m,
     sessionId: args.sessionId,
     kind: "swap",
     summary: `Swap REAL ${Number(real.sold.toPrecision(6))} ${input2.symbol} \u2192 ${Number(real.received.toPrecision(6))} ${output2.symbol}${chain.id === "solana" ? "" : ` en ${chain.label}`}`,
     reasoning: args.reasoning,
-    details: { inputMint: input2.address, outputMint: output2.address, ...result }
+    // Para el registro fiscal: cantidades exactas y valor de la operación.
+    details: { inputMint: input2.address, outputMint: output2.address, soldQty: real.sold, soldSymbol: input2.symbol, receivedQty: real.received, receivedSymbol: output2.symbol, valueUsd, ...result }
   });
-  const valueUsd = chain.isCash(input2.address) ? real.sold : chain.isCash(output2.address) ? real.received : usd2;
   await recordTrade({
     missionId: m,
     venue: chain.id,
@@ -11258,6 +11278,126 @@ var init_portfolio = __esm({
   }
 });
 
+// src/live/taxes.ts
+var taxes_exports = {};
+__export(taxes_exports, {
+  exportTaxes: () => exportTaxes
+});
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import path8 from "node:path";
+async function eurRates(from, to) {
+  const out = /* @__PURE__ */ new Map();
+  let start = (/* @__PURE__ */ new Date(`${day(from)}T00:00:00Z`)).getTime();
+  const end = (/* @__PURE__ */ new Date(`${day(to)}T23:59:59Z`)).getTime();
+  while (start <= end) {
+    const rows = await fetchJson(
+      `https://api.binance.com/api/v3/klines?symbol=EURUSDT&interval=1d&startTime=${start}&endTime=${end}&limit=1000`,
+      { ttlMs: 36e5 }
+    ).catch(() => []);
+    if (!rows.length) break;
+    for (const r of rows) out.set(new Date(r[0]).toISOString().slice(0, 10), 1 / Number(r[4]));
+    start = rows.at(-1)[0] + 864e5;
+  }
+  return out;
+}
+async function exportTaxes(opts = {}) {
+  const yearFilter = opts.year ? `AND substr(j.ts, 1, 4) = '${opts.year}'` : "";
+  const ops = db.prepare(
+    `SELECT j.ts, j.mission_id, j.kind, j.summary, j.details FROM journal j JOIN missions m ON m.id = j.mission_id
+       WHERE m.mode = 'live' AND j.kind IN ('swap', 'transfer', 'transfer_arrived', 'failed_tx') ${yearFilter} ORDER BY j.id`
+  ).all();
+  const positions = db.prepare(
+    `SELECT p.mission_id, p.venue, p.symbol, p.asset, p.opened_at, p.closed_at, p.status, p.realized_cost_usd, p.realized_proceeds_usd
+       FROM positions p JOIN missions m ON m.id = p.mission_id
+       WHERE m.mode = 'live' AND p.status IN ('closed', 'partial') ${opts.year ? `AND substr(p.closed_at, 1, 4) = '${opts.year}'` : ""} ORDER BY p.closed_at`
+  ).all();
+  if (!ops.length && !positions.length) return { operations: 0, positions: 0, files: [], note: "No hay operaciones con dinero real" + (opts.year ? ` en ${opts.year}` : "") + "." };
+  const dates = [...ops.map((o) => o.ts), ...positions.map((p) => p.closed_at)].filter(Boolean).sort();
+  const eur = await eurRates(dates[0], dates.at(-1));
+  const toEur = (usd2, iso) => usd2 === null || usd2 === void 0 || !eur.get(day(iso)) ? null : usd2 * eur.get(day(iso));
+  const opRows = ops.map((o) => {
+    const d = o.details ? JSON.parse(o.details) : {};
+    const tipo = o.kind === "swap" ? "permuta (swap)" : o.kind === "transfer" ? "puente (salida)" : o.kind === "transfer_arrived" ? "puente (llegada)" : "transacci\xF3n fallida";
+    const usd2 = typeof d.valueUsd === "number" ? d.valueUsd : null;
+    return [
+      o.ts,
+      o.mission_id,
+      d.chain ?? "",
+      tipo,
+      d.soldQty ?? null,
+      d.soldSymbol ?? "",
+      d.receivedQty ?? null,
+      d.receivedSymbol ?? "",
+      usd2,
+      toEur(usd2, o.ts),
+      d.networkFee ?? "",
+      d.txHash ?? "",
+      d.explorer ?? "",
+      o.summary
+    ];
+  });
+  const posRows = positions.map((p) => {
+    const pnl = (p.realized_proceeds_usd ?? 0) - (p.realized_cost_usd ?? 0);
+    return [
+      p.closed_at,
+      p.mission_id,
+      p.venue,
+      p.symbol,
+      p.asset,
+      p.opened_at,
+      p.realized_cost_usd,
+      p.realized_proceeds_usd,
+      pnl,
+      toEur(p.realized_cost_usd, p.closed_at),
+      toEur(p.realized_proceeds_usd, p.closed_at),
+      toEur(pnl, p.closed_at),
+      p.status === "partial" ? "cierre parcial" : "cerrada"
+    ];
+  });
+  const dir = path8.join(config2.dataDir, "exports");
+  mkdirSync4(dir, { recursive: true });
+  const stamp = opts.year ? String(opts.year) : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const opsFile = path8.join(dir, `operaciones-reales-${stamp}.csv`);
+  const posFile = path8.join(dir, `resultados-por-posicion-${stamp}.csv`);
+  writeFileSync2(
+    opsFile,
+    csv(
+      ["fecha_utc", "mision", "cadena", "tipo", "cantidad_entregada", "activo_entregado", "cantidad_recibida", "activo_recibido", "valor_usd", "valor_eur", "comision_red", "hash", "explorador", "descripcion"],
+      opRows
+    )
+  );
+  writeFileSync2(
+    posFile,
+    csv(["fecha_cierre_utc", "mision", "cadena", "token", "direccion", "fecha_apertura_utc", "coste_usd", "obtenido_usd", "resultado_usd", "coste_eur", "obtenido_eur", "resultado_eur", "estado"], posRows)
+  );
+  const totalPnl = posRows.reduce((s, r) => s + (Number(r[8]) || 0), 0);
+  const totalPnlEur = posRows.reduce((s, r) => s + (Number(r[11]) || 0), 0);
+  return {
+    operations: opRows.length,
+    positions: posRows.length,
+    realizedUsd: Number(totalPnl.toFixed(2)),
+    realizedEur: Number(totalPnlEur.toFixed(2)),
+    files: [opsFile, posFile],
+    note: "Registro de apoyo, no asesoramiento fiscal. En Espa\xF1a cada permuta entre criptomonedas es una ganancia o p\xE9rdida patrimonial; Hacienda exige FIFO y aqu\xED el coste de cada posici\xF3n es el medio: tu gestor puede recalcularlo con el archivo de operaciones. El cambio a EUR es el cierre diario de EURUSDT en Binance."
+  };
+}
+var day, num2, cell2, csv;
+var init_taxes = __esm({
+  "src/live/taxes.ts"() {
+    "use strict";
+    init_config();
+    init_db();
+    init_http();
+    day = (iso) => iso.slice(0, 10);
+    num2 = (n3, d = 8) => n3 === null || n3 === void 0 || !Number.isFinite(n3) ? "" : Number(n3.toFixed(d)).toString().replace(".", ",");
+    cell2 = (v) => {
+      const s = typeof v === "number" ? num2(v) : v ?? "";
+      return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    csv = (header, rows) => "\uFEFF" + [header, ...rows].map((r) => r.map(cell2).join(";")).join("\r\n") + "\r\n";
+  }
+});
+
 // node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
@@ -11632,8 +11772,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path8, errorMaps, issueData } = params;
-  const fullPath = [...path8, ...issueData.path || []];
+  const { data, path: path9, errorMaps, issueData } = params;
+  const fullPath = [...path9, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -11748,11 +11888,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path8, key) {
+  constructor(parent, value, path9, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path8;
+    this._path = path9;
     this._key = key;
   }
   get path() {
@@ -15706,10 +15846,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path8) {
-  if (!path8)
+function getElementAtPath(obj, path9) {
+  if (!path9)
     return obj;
-  return path8.reduce((acc, key) => acc?.[key], obj);
+  return path9.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -16049,11 +16189,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path8, issues) {
+function prefixIssues(path9, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path8);
+    iss.path.unshift(path9);
     return iss;
   });
 }
@@ -16503,16 +16643,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path8 = []) => {
+  const processError = (error63, path9 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path9, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else {
-        const fullpath = [...path8, ...issue2.path];
+        const fullpath = [...path9, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -16551,17 +16691,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path8 = []) => {
+  const processError = (error63, path9 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path9, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
       } else {
-        const fullpath = [...path8, ...issue2.path];
+        const fullpath = [...path9, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -16600,8 +16740,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path8 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path8) {
+  const path9 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path9) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -32116,11 +32256,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path8) {
-  if (path8.length === 0) {
+function getDotPath(path9) {
+  if (path9.length === 0) {
     return "object root";
   }
-  return path8.reduce((acc, seg, index) => {
+  return path9.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -34347,13 +34487,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path8 = ref.slice(1).split("/").filter(Boolean);
-  if (path8.length === 0) {
+  const path9 = ref.slice(1).split("/").filter(Boolean);
+  if (path9.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path8[0] === defsKey) {
-    const key = path8[1] === void 0 ? void 0 : decodeJSONPointerSegment(path8[1]);
+  if (path9[0] === defsKey) {
+    const key = path9[1] === void 0 ? void 0 : decodeJSONPointerSegment(path9[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -41257,13 +41397,13 @@ function recordApiCall(url2, status) {
   } catch {
     return;
   }
-  const path8 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
+  const path9 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
   const ok = status >= 200 && status < 300;
   db.prepare(
     `INSERT INTO api_observations (host, path, ok, fail, last_status, last_ok_at, last_fail_at) VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(host, path) DO UPDATE SET ok = ok + excluded.ok, fail = fail + excluded.fail, last_status = excluded.last_status,
        last_ok_at = COALESCE(excluded.last_ok_at, last_ok_at), last_fail_at = COALESCE(excluded.last_fail_at, last_fail_at)`
-  ).run(u.host, path8, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
+  ).run(u.host, path9, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
 }
 function activeBeliefIds() {
   return db.prepare("SELECT id FROM beliefs WHERE status = 'active' ORDER BY id").all().map((r) => r.id);
@@ -42842,6 +42982,21 @@ server.registerTool(
           ...Object.keys(b.errors).length ? { unreadable: b.errors } : {}
         })
       );
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "export_taxes",
+  {
+    description: "[Solo para el usuario, no para el agente trader] Exporta a CSV (para Excel) todas las operaciones con dinero real (swaps y puentes, con hash, cantidades, valor en USD y EUR y comisi\xF3n de red) y los resultados por posici\xF3n cerrada. Devuelve las rutas de los archivos.",
+    inputSchema: { year: external_exports.number().int().min(2020).max(2100).optional().describe("Solo ese a\xF1o (por defecto, todo)") }
+  },
+  async ({ year }) => {
+    try {
+      const { exportTaxes: exportTaxes2 } = await Promise.resolve().then(() => (init_taxes(), taxes_exports));
+      return text(JSON.stringify(await exportTaxes2({ year })));
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }

@@ -7772,7 +7772,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.17.0";
+    CODE_VERSION = "0.18.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -63218,6 +63218,8 @@ var HttpError = class extends Error {
   status;
 };
 var APPROVAL_TIMEOUT_MS = 9e4;
+var MAX_OPS_PER_MINUTE = 6;
+var MAX_OPS_PER_HOUR = 60;
 var TICKET_TTL_MS = 3 * 6e4;
 var MAX_BODY = 16 * 1024;
 function readBody(req) {
@@ -63266,6 +63268,7 @@ function createSignerServer(opts) {
     ...opts.deps
   };
   let origin = "";
+  const recentOps = /* @__PURE__ */ new Map();
   const rejectAllPending = () => {
     for (const p of state.pending.values()) p.decide(false);
     state.pending.clear();
@@ -63293,9 +63296,15 @@ function createSignerServer(opts) {
       currentUsd: intent.side === "buy" ? await deps.walletValueUsd() : Infinity
     });
     if (problems.length) throw new HttpError(403, `Fuera de los l\xEDmites de la misi\xF3n: ${problems.join("; ")}`);
+    const times = (recentOps.get(intent.missionId) ?? []).filter((t) => Date.now() - t < 36e5);
+    recentOps.set(intent.missionId, times);
+    if (times.filter((t) => Date.now() - t < 6e4).length >= MAX_OPS_PER_MINUTE || times.length >= MAX_OPS_PER_HOUR) {
+      throw new HttpError(429, `Demasiadas operaciones seguidas (m\xE1ximo ${MAX_OPS_PER_MINUTE} por minuto y ${MAX_OPS_PER_HOUR} por hora): espera un poco antes de la siguiente`);
+    }
     const ticket = () => {
       const t = { ...intent, id: randomBytes6(16).toString("hex"), expiresAt: Date.now() + TICKET_TTL_MS };
       state.tickets.set(t.id, t);
+      times.push(Date.now());
       return t;
     };
     if (mission.approval !== "manual") return ticket();

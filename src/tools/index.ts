@@ -325,6 +325,7 @@ export const SIM_TOOLS = [
   tool({
     name: "scan_market",
     kind: "research",
+    deliversNews: true,
     researchTarget: () => undefined,
     description:
       "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalización, liquidez, " +
@@ -350,6 +351,7 @@ export const SIM_TOOLS = [
   tool({
     name: "token_report",
     kind: "research",
+    deliversNews: true,
     researchTarget: (i) => (i.tokens?.length ? i.tokens : i.token),
     description:
       "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, " +
@@ -416,7 +418,8 @@ export const SIM_TOOLS = [
   tool({
     name: "mission_status",
     kind: "misc",
-    deliversNews: true,
+    // Sin novedades del briefing: también la usa la sesión del usuario para ver si la misión sigue, y se las
+    // quedaba (marcándolas como vistas) antes de que llegaran al trader. Le llegan con el resto de sus herramientas.
     description:
       "Estado de tu misión: capital inicial, objetivo, valor actual de la cartera, cuánto falta y tiempo restante. " +
       "La misión termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",

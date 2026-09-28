@@ -8257,7 +8257,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.30.0";
+    CODE_VERSION = "0.30.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42714,6 +42714,7 @@ var SIM_TOOLS = [
   tool({
     name: "scan_market",
     kind: "research",
+    deliversNews: true,
     researchTarget: () => void 0,
     description: "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
     schema: external_exports.object({
@@ -42730,6 +42731,7 @@ var SIM_TOOLS = [
   tool({
     name: "token_report",
     kind: "research",
+    deliversNews: true,
     researchTarget: (i) => i.tokens?.length ? i.tokens : i.token,
     description: "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, variaci\xF3n, compradores, holders, impuestos, alarmas de riesgo, qu\xE9 dice tu memoria y qu\xE9 ha cambiado desde la \xFAltima lectura. Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`: el historial del creador (tokens lanzados y graduados, si est\xE1 en tu lista negra), lo que conserva, insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores): la mayor\xEDa de los rugs ocurre en los primeros ~15 minutos, as\xED que comprobar que aguanta entre dos lecturas es la mejor defensa.",
     schema: external_exports.object({
@@ -42779,7 +42781,8 @@ var SIM_TOOLS = [
   tool({
     name: "mission_status",
     kind: "misc",
-    deliversNews: true,
+    // Sin novedades del briefing: también la usa la sesión del usuario para ver si la misión sigue, y se las
+    // quedaba (marcándolas como vistas) antes de que llegaran al trader. Le llegan con el resto de sus herramientas.
     description: "Estado de tu misi\xF3n: capital inicial, objetivo, valor actual de la cartera, cu\xE1nto falta y tiempo restante. La misi\xF3n termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await missionStatus(ctx.missionId ?? void 0))

@@ -141,9 +141,11 @@ test("una creencia retirada deja de estar activa y no se puede citar", async () 
 test("el briefing del revisor llega una sola vez al agente, en su siguiente acción", async () => {
   memory.writeBriefing(mission.id, "Ten presente el howto #1.");
   const ctx = { sessionId: 1, missionId: mission.id };
-  const first = await runTool("mission_status", {}, ctx);
+  // mission_status no se la queda: también la usa la sesión del usuario para ver si la misión sigue.
+  assert.doesNotMatch(String((await runTool("mission_status", {}, ctx)).content), /El revisor ha actualizado/);
+  const first = await runTool("portfolio", {}, ctx);
   assert.match(String(first.content), /El revisor ha actualizado tu briefing[\s\S]*howto #1/);
-  const second = await runTool("mission_status", {}, ctx);
+  const second = await runTool("portfolio", {}, ctx);
   assert.doesNotMatch(String(second.content), /El revisor ha actualizado/);
 });
 

@@ -52,3 +52,61 @@ test("las esperas no pasan de 4,5 minutos", async () => {
   assert.equal((await runTool("wait", { minutes: 10 }, ctx)).isError, true);
   assert.equal((await runTool("wait_for_activity", { max_minutes: 5 }, ctx)).isError, true);
 });
+
+test("strategy_fit cuenta los costes del futuro: 50 → 55 a 20x pide ~+0,72 %, no +0,5 %", async () => {
+  const { perpMoveNeeded } = await import("../src/sim/fit.js");
+  const x = perpMoveNeeded(50, 55, 20);
+  assert.ok(x > 0.0071 && x < 0.0073, String(x));
+});
+
+test("una orden que vende el token vigila el precio de venta real (cotización), no el de la API", async () => {
+  const { tokens, setPrice } = await import("./fake-market.js");
+  const { placeOrder } = await import("../src/sim/orders.js");
+  const { getHoldings } = await import("../src/sim/portfolio.js");
+  const { USDC_MINT } = await import("../src/market/jupiter.js");
+  const mint = Object.keys(tokens).find((m) => tokens[m]!.symbol !== "USDC" && tokens[m]!.symbol !== "SOL")!;
+  setPrice(mint, 2);
+  const thesis = { why: "prueba", evidence: "prueba", sources: ["test"], exit_plan: "x", beliefs_applied: [], memory_note: "x", risks_checked: "revisé riskCheck y creencias negativas" };
+  const buy = await runTool("simulate_swap", { chain: "solana", input: "USDC", output: mint, amount: 20, slippage_bps: 100, thesis }, ctx);
+  assert.ok(!buy.isError, String(buy.content));
+  assert.ok((getHoldings(mission.id).find((h) => h.asset === mint)?.amount ?? 0) > 0);
+  // La API dice 2; vender da 2 × (1 − 0,3 %) = 1,994. Un stop en 1,996 ya se cumple con el precio de venta.
+  const action = { input: mint, output: USDC_MINT, amount: 0, sellAll: true, slippageBps: 100 };
+  await assert.rejects(
+    placeOrder({ missionId: mission.id, sessionId: null, venue: "solana", triggerAsset: mint, condition: "below", triggerPrice: 1.996, action, reasoning: "stop" }),
+    /ya se cumple \(precio actual de .*: 1\.99/,
+  );
+  // Una orden que compra el token vigilado sigue usando el precio de la API.
+  const r = await placeOrder({ missionId: mission.id, sessionId: null, venue: "solana", triggerAsset: mint, condition: "below", triggerPrice: 1.5, action: { input: USDC_MINT, output: mint, amount: 5, slippageBps: 100 }, reasoning: "compra" });
+  assert.equal("currentPrice" in r ? r.currentPrice : null, 2);
+});
+
+test("panel: el briefing previo al reloj y lo aprendido al cerrar la misión anterior salen en la misión actual", async () => {
+  const { timeline } = await import("../src/dashboard/timeline.js");
+  const { logActivity } = await import("../src/db.js");
+  const { stopMission } = await import("../src/sim/mission.js");
+  await stopMission(false, mission.id);
+  logActivity({ missionId: mission.id, sessionId: null, kind: "review", title: "Retrospectiva de la misión" });
+  const next = await createMission(1000, 1100, 30, undefined, { solana: 100 });
+  const early = new Date(Date.now() - 60_000).toISOString();
+  db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title) VALUES (?, ?, NULL, 'review', 'El revisor actualiza el briefing del agente')").run(early, next.id);
+  const ev = timeline(new Date().toISOString(), next.id);
+  assert.ok(ev.some((e) => e.title === "El revisor actualiza el briefing del agente"), "el briefing escrito antes de arrancar el reloj");
+  assert.ok(ev.some((e) => e.title === `Misión #${mission.id}: Retrospectiva de la misión`), "la retrospectiva de la anterior");
+});
+
+test("una orden que vende todo un token del que ya no queda nada se cancela sola", async () => {
+  const { tokens, setPrice } = await import("./fake-market.js");
+  const { placeOrder, checkOrders } = await import("../src/sim/orders.js");
+  const { USDC_MINT } = await import("../src/market/jupiter.js");
+  const m2 = await createMission(1000, 1100, 30, undefined, { solana: 100 });
+  const c2 = { sessionId: 1, missionId: m2.id };
+  const mint = Object.keys(tokens).find((m) => tokens[m]!.symbol !== "USDC" && tokens[m]!.symbol !== "SOL")!;
+  setPrice(mint, 2);
+  const thesis = { why: "prueba", evidence: "prueba", sources: ["test"], exit_plan: "x", beliefs_applied: [], memory_note: "x", risks_checked: "revisé riskCheck y creencias negativas" };
+  assert.ok(!(await runTool("simulate_swap", { chain: "solana", input: "USDC", output: mint, amount: 20, slippage_bps: 100, thesis }, c2)).isError);
+  const tp = await placeOrder({ missionId: m2.id, sessionId: null, venue: "solana", triggerAsset: mint, condition: "above", triggerPrice: 3, action: { input: mint, output: USDC_MINT, amount: 0, sellAll: true, slippageBps: 100 }, reasoning: "tp" });
+  assert.ok(!(await runTool("simulate_swap", { chain: "solana", input: mint, output: "USDC", sell_all: true, slippage_bps: 100, thesis }, c2)).isError);
+  await checkOrders();
+  assert.equal((db.prepare("SELECT status FROM orders WHERE id = ?").get(tp.id) as { status: string }).status, "cancelled");
+});

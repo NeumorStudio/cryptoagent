@@ -766,7 +766,9 @@ export const SIM_TOOLS = [
     description:
       "Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, " +
       "below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotización real de ese instante. " +
-      "Funciona aunque no estés en sesión. El precio se comprueba aproximadamente cada minuto, así que un pico muy breve puede no dispararla. " +
+      "Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotización de " +
+      "vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da así al crearla). " +
+      "Funciona aunque no estés en sesión. Se comprueba cada 15 s, así que un pico de pocos segundos puede no dispararla. " +
       "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. " +
       "Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan " +
       "(\"si a los 3 min no ha saltado la toma de beneficio, vendo\") aunque no estés pendiente. Cancela la que sobre cuando se ejecute la otra.",

@@ -4,7 +4,7 @@
 // periódico (watcher.ts y el servidor MCP mientras está activo).
 import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
-import { assertSimulated, binanceMarketOrder, swap } from "./portfolio.js";
+import { assertSimulated, binanceMarketOrder, getHoldings, swap } from "./portfolio.js";
 import type { ChainId, VenueId } from "./types.js";
 import { settleTransfers } from "./transfers.js";
 import { getVenue } from "./venues/index.js";
@@ -41,6 +41,30 @@ interface OrderRow {
 }
 
 const currentPrice = (venue: VenueId, asset: string) => getVenue(venue).triggerPrice(asset);
+
+/**
+ * Precio al que venderías de verdad ahora (USD por unidad): cotización de vender la cantidad de la orden (o
+ * todo el saldo) a un estable. Es lo que usan las órdenes límite reales, y evita el desfase con el precio de
+ * la API de precios, que en un memecoin que se mueve rápido va por detrás del fill: tras comprar en un pico
+ * quedaba un 4-6 % por debajo, y un stop "-8 %" saltaba a los pocos minutos. null si la orden no vende el
+ * activo vigilado (entonces se usa el precio de la API).
+ */
+async function sellPrice(venue: VenueId, missionId: number, triggerAsset: string, action: SwapAction): Promise<number | null> {
+  const v = getVenue(venue);
+  if (v.kind !== "chain") return null;
+  const input = await v.resolveToken(action.input);
+  if (input.address !== triggerAsset || v.isCash(input.address)) return null;
+  const qty = action.sellAll ? (getHoldings(missionId).find((h) => h.venue === venue && h.asset === input.address)?.amount ?? 0) : action.amount;
+  if (!(qty > 0)) return null;
+  const q = await v.quote({ input, output: v.stables[0]!, amountIn: qty, slippageBps: action.slippageBps ?? 100 });
+  return q.amountOut > 0 ? q.amountOut / qty : null;
+}
+
+/** El precio que vigila una orden: el de venta real si vende el activo vigilado; si no, el de la API. */
+async function watchedPrice(venue: VenueId, missionId: number, triggerAsset: string, action: SwapAction | BinanceAction) {
+  const sell = getVenue(venue).kind === "chain" ? await sellPrice(venue, missionId, triggerAsset, action as SwapAction).catch(() => null) : null;
+  return sell ?? (await currentPrice(venue, triggerAsset));
+}
 
 const isTriggered = (condition: "above" | "below", price: number, trigger: number) =>
   condition === "above" ? price >= trigger : price <= trigger;
@@ -94,7 +118,7 @@ export async function placeOrder(args: {
     await binance.getSymbolInfo((args.action as BinanceAction).symbol);
   }
 
-  const price = await currentPrice(args.venue, triggerAsset);
+  const price = await watchedPrice(args.venue, args.missionId, triggerAsset, args.action);
   if (isTriggered(args.condition, price, triggerPrice)) {
     throw new Error(
       `La condición ya se cumple (precio actual de ${triggerLabel}: ${price}). Si quieres operar ahora, usa directamente la operación simulada.`,
@@ -203,9 +227,22 @@ export async function checkOrders(): Promise<string[]> {
       await execute(order, `Orden por tiempo #${order.id} ejecutada (hora alcanzada: ${hms(order.trigger_price)}). Motivo original: ${order.reasoning ?? "-"}`, null, log);
       continue;
     }
-    const key = `${order.venue}:${order.trigger_asset}`;
+    // El precio de venta depende de la cantidad: una clave por orden. El de la API, uno por activo.
+    const action = JSON.parse(order.action) as SwapAction | BinanceAction;
+    const sells = getVenue(order.venue).kind === "chain" && (action as SwapAction).input !== undefined;
+    const key = sells ? `orden:${order.id}` : `${order.venue}:${order.trigger_asset}`;
+    // Una orden que vende todo un token del que ya no queda nada (se vendió a mano o saltó la otra orden)
+    // sobra: se cancela sola en vez de dispararse y fallar.
+    if (sells && (action as SwapAction).sellAll && (action as SwapAction).input === order.trigger_asset) {
+      const left = getHoldings(order.mission_id).find((h) => h.venue === order.venue && h.asset === order.trigger_asset)?.amount ?? 0;
+      if (left <= 0 && db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), order.id).changes) {
+        logJournal({ missionId: order.mission_id, sessionId: null, kind: "order_cancelled", summary: `Orden #${order.id} cancelada: ya no te queda ${order.trigger_label.replace("/USD", "")}` });
+        log.push(`Orden #${order.id} cancelada: ya no queda saldo`);
+        continue;
+      }
+    }
     try {
-      if (!prices.has(key)) prices.set(key, await currentPrice(order.venue, order.trigger_asset));
+      if (!prices.has(key)) prices.set(key, await watchedPrice(order.venue, order.mission_id, order.trigger_asset, action));
     } catch (err) {
       log.push(`Sin precio para ${order.trigger_label}: ${(err as Error).message}`);
       continue;

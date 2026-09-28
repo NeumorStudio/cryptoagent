@@ -6,6 +6,7 @@
 // un +10 % a SOL en 15 min es casi imposible; con futuros a 10x basta un +1 %, a cambio de liquidación.
 import * as binance from "../market/binance.js";
 import { perpMarkets } from "../market/hyperliquid.js";
+import { PERP_DEPOSIT_FEE_USD, PERP_TAKER_FEE, PERP_WITHDRAW_FEE_USD } from "./perps.js";
 import { getMission, type Mission } from "./mission.js";
 import { valuation } from "./portfolio.js";
 import { listPositions } from "./positions.js";
@@ -37,6 +38,15 @@ async function volatility(symbol: string): Promise<{ sigma: number; change1hPct:
 
 const pct = (p: number) => Math.round(p * 100);
 const label = (p: number) => (p >= 0.25 ? "encaja" : p >= 0.05 ? "posible" : "no encaja");
+
+/**
+ * Movimiento del precio (fracción) que necesita un futuro con toda la cartera como margen para llegar al
+ * objetivo, contando el depósito, la retirada y la comisión de apertura y cierre sobre el nocional.
+ */
+export function perpMoveNeeded(totalUsd: number, targetUsd: number, leverage: number): number {
+  const margin = Math.max(1, totalUsd - PERP_DEPOSIT_FEE_USD);
+  return (targetUsd - totalUsd + PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD) / (margin * leverage) + 2 * PERP_TAKER_FEE;
+}
 
 export interface FitRow {
   strategy: string;
@@ -76,9 +86,13 @@ export async function strategyFit(missionOrId: Mission | number) {
     });
     const maxLev = perpMax.get(sym) ?? 0;
     for (const lev of LEVERAGES.filter((l) => l <= maxLev)) {
-      // Con apalancamiento L basta un movimiento de need/L. La liquidación llega cuando la pérdida se come el
-      // margen hasta el mantenimiento: 1/L − 1/(2·apalancamiento máximo de la moneda).
-      const move = Math.log(1 + need / lev);
+      // Con todo como margen (menos el depósito), el movimiento necesario cubre lo que falta más los costes
+      // fijos (depósito y retirada) y la comisión de apertura y cierre sobre el nocional: sin ellos, a 20x
+      // parecía que bastaba un +0,5 % cuando hacía falta un +0,75 %. La liquidación llega cuando la pérdida
+      // se come el margen hasta el mantenimiento: 1/L − 1/(2·apalancamiento máximo de la moneda).
+      const margin = Math.max(1, v.totalUsd - PERP_DEPOSIT_FEE_USD);
+      const needMove = perpMoveNeeded(v.totalUsd, mission.target_usd, lev);
+      const move = Math.log(1 + Math.max(needMove, 0));
       const liqDistance = 1 / lev - 1 / (2 * maxLev);
       const liq = -Math.log(1 - liqDistance);
       const reach = probTouch(move, s);
@@ -88,7 +102,7 @@ export async function strategyFit(missionOrId: Mission | number) {
         reachTargetPct: pct(reach),
         ruinPct: pct(ruin),
         fit: label(reach * (1 - ruin)),
-        basis: `necesita ${((need / lev) * 100).toFixed(2)} % a favor; liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
+        basis: `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
         available: true,
       });
     }

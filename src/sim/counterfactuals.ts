@@ -26,7 +26,7 @@ export interface Counterfactual {
 }
 
 const cache = new Map<number, Counterfactual>();
-const pct = (a: number, b: number) => Number(((b / a - 1) * 100).toFixed(1));
+const pct = (a: number, b: number, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
 
 async function candles(venue: string, token: string, fromSec: number, toSec: number): Promise<Array<[number, number, number, number, number]>> {
   const net = NETWORK[venue];
@@ -44,6 +44,16 @@ async function candles(venue: string, token: string, fromSec: number, toSec: num
   return [...res.data.attributes.ohlcv_list].sort((a, b) => a[0] - b[0]);
 }
 
+/** Velas de 1 min del subyacente de un futuro en Binance (SOL, ETH, BNB…), en segundos como las de GeckoTerminal. */
+async function perpCandles(coin: string, fromSec: number, toSec: number): Promise<Array<[number, number, number, number, number]>> {
+  const limit = Math.min(1000, Math.ceil((toSec - fromSec) / 60) + 3);
+  const raw = await fetchJson<Array<[number, string, string, string, string]>>(
+    `https://api.binance.com/api/v3/klines?symbol=${coin.toUpperCase()}USDT&interval=1m&startTime=${fromSec * 1000}&endTime=${toSec * 1000}&limit=${limit}`,
+    { ttlMs: 600_000 },
+  );
+  return raw.map((k) => [Math.floor(k[0] / 1000), Number(k[1]), Number(k[2]), Number(k[3]), Number(k[4])]);
+}
+
 /** Precio de cierre de la última vela en o antes de `sec`. */
 const priceAt = (cs: Array<[number, number, number, number, number]>, sec: number) => {
   let p: number | undefined;
@@ -53,25 +63,31 @@ const priceAt = (cs: Array<[number, number, number, number, number]>, sec: numbe
 
 async function one(p: Pos): Promise<Counterfactual> {
   const base: Counterfactual = { positionId: p.id, symbol: p.symbol, actualPct: p.pnlPct ?? null };
-  if (!p.closedAt || !NETWORK[p.venue]) return { ...base, unavailable: "sin datos de precio para esta cadena" };
+  // Futuros: el símbolo es "SOL-PERP largo 20x". Los porcentajes van en el sentido de la posición (en un corto,
+  // que baje el precio es a favor) y sobre el precio, sin apalancar.
+  const perp = p.venue === "hyperliquid" ? p.symbol.match(/^(\w+)-PERP (largo|corto) (\d+)x/) : null;
+  if (!p.closedAt || (!NETWORK[p.venue] && !perp)) return { ...base, unavailable: "sin datos de precio para esta cadena" };
   const open = Math.floor(new Date(p.openedAt).getTime() / 1000);
   const close = Math.floor(new Date(p.closedAt).getTime() / 1000);
   const now = Math.floor(Date.now() / 1000);
   const end = Math.min(now, close + 30 * 60);
-  const cs = await candles(p.venue, p.asset, open - 120, end);
+  const raw = perp ? await perpCandles(perp[1]!, open - 120, end) : await candles(p.venue, p.asset, open - 120, end);
+  // En un corto se invierten las velas (1/precio): así "subir" siempre es a favor y el resto no cambia.
+  const cs = perp?.[2] === "corto" ? raw.map(([t, o, h, l, c]) => [t, 1 / o, 1 / l, 1 / h, 1 / c] as [number, number, number, number, number]) : raw;
   const entry = priceAt(cs, open) ?? cs[0]?.[4];
   const exit = priceAt(cs, close);
   if (!entry || !exit) return { ...base, unavailable: "sin velas en ese intervalo" };
   const held = cs.filter((c) => c[0] >= open - 60 && c[0] <= close);
   const at15 = close + 15 * 60 <= now ? priceAt(cs, close + 15 * 60) : undefined;
   const at30 = close + 30 * 60 <= now ? priceAt(cs, close + 30 * 60) : undefined;
+  const d = perp ? 2 : 1;
   const out: Counterfactual = {
     ...base,
-    marketMovePct: pct(entry, exit),
-    bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[2]))) : undefined,
-    worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[3]))) : undefined,
-    ifHeld15Pct: at15 ? pct(entry, at15) : undefined,
-    ifHeld30Pct: at30 ? pct(entry, at30) : undefined,
+    marketMovePct: pct(entry, exit, d),
+    bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[2])), d) : undefined,
+    worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[3])), d) : undefined,
+    ifHeld15Pct: at15 ? pct(entry, at15, d) : undefined,
+    ifHeld30Pct: at30 ? pct(entry, at30, d) : undefined,
   };
   const notes: string[] = [];
   if (out.bestWhileHeldPct !== undefined && out.marketMovePct !== undefined && out.bestWhileHeldPct - out.marketMovePct >= 20) {
@@ -84,7 +100,8 @@ async function one(p: Pos): Promise<Counterfactual> {
     if (out.ifHeld30Pct < out.marketMovePct - 15) notes.push(`mantenerla 30 min más habría dado ${out.ifHeld30Pct} %: la salida fue buena`);
     else if (out.ifHeld30Pct > out.marketMovePct + 15) notes.push(`mantenerla 30 min más habría dado ${out.ifHeld30Pct} %: salió demasiado pronto`);
   }
-  if (out.bestWhileHeldPct !== undefined && out.bestWhileHeldPct < 3 && (p.pnlPct ?? 0) < 0) notes.push("nunca llegó a ir en positivo: el problema fue la entrada, no la salida");
+  if (out.bestWhileHeldPct !== undefined && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) notes.push("nunca llegó a ir en positivo: el problema fue la entrada, no la salida");
+  if (perp) notes.push(`futuro a ${perp[3]}x: los % son del precio en el sentido de la posición; sobre el margen, por ${perp[3]}`);
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== undefined) cache.set(p.id, out); // completa: ya no cambia
   return out;

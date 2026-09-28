@@ -322,3 +322,13 @@ setInterval(async () => {
   await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misión: ${(err as Error).message}`));
 }, config.watchIntervalSeconds * 1000);
+
+// Con órdenes por precio abiertas, se miran cada 15 s: un pico de un memecoin dura segundos y con la revisión
+// de cada minuto la toma de beneficios no llegaba a saltar (en las órdenes reales vigilan bots sin pausa).
+setInterval(async () => {
+  if (supersededBy()) return;
+  const open = db
+    .prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1")
+    .get();
+  if (open) await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
+}, 15_000);

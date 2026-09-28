@@ -8211,7 +8211,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.28.0";
+    CODE_VERSION = "0.29.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8345,6 +8345,9 @@ var init_http = __esm({
       "aggregator-api.kyberswap.com": 350,
       // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
       "api.gopluslabs.io": 2e3,
+      // GeckoTerminal gratis: unas 30 peticiones por minuto. La usan a la vez el escaneo del trader y los
+      // contrafactuales del revisor; sin turnos, el revisor se quedaba sin velas (HTTP 429).
+      "api.geckoterminal.com": 2100,
       // Binance limita por "peso" (6000 por minuto e IP); si se pasa, bloquea la IP (HTTP 418).
       "api.binance.com": 100
     };
@@ -11629,6 +11632,7 @@ var init_portfolio = __esm({
 // src/sim/fit.ts
 var fit_exports = {};
 __export(fit_exports, {
+  perpMoveNeeded: () => perpMoveNeeded,
   probTouch: () => probTouch,
   strategyFit: () => strategyFit
 });
@@ -11646,6 +11650,10 @@ async function volatility(symbol2) {
   const last = k.at(-1)[4];
   const hourAgo = k.at(-61)?.[4] ?? k[0][4];
   return { sigma, change1hPct: Number(((last / hourAgo - 1) * 100).toFixed(2)) };
+}
+function perpMoveNeeded(totalUsd, targetUsd, leverage) {
+  const margin = Math.max(1, totalUsd - PERP_DEPOSIT_FEE_USD);
+  return (targetUsd - totalUsd + PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD) / (margin * leverage) + 2 * PERP_TAKER_FEE;
 }
 async function strategyFit(missionOrId) {
   const mission = typeof missionOrId === "number" ? getMission(missionOrId) : missionOrId;
@@ -11672,7 +11680,9 @@ async function strategyFit(missionOrId) {
     });
     const maxLev = perpMax.get(sym) ?? 0;
     for (const lev of LEVERAGES.filter((l) => l <= maxLev)) {
-      const move = Math.log(1 + need / lev);
+      const margin = Math.max(1, v.totalUsd - PERP_DEPOSIT_FEE_USD);
+      const needMove = perpMoveNeeded(v.totalUsd, mission.target_usd, lev);
+      const move = Math.log(1 + Math.max(needMove, 0));
       const liqDistance = 1 / lev - 1 / (2 * maxLev);
       const liq = -Math.log(1 - liqDistance);
       const reach = probTouch(move, s);
@@ -11682,7 +11692,7 @@ async function strategyFit(missionOrId) {
         reachTargetPct: pct(reach),
         ruinPct: pct(ruin),
         fit: label(reach * (1 - ruin)),
-        basis: `necesita ${(need / lev * 100).toFixed(2)} % a favor; liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
+        basis: `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
         available: true
       });
     }
@@ -11716,6 +11726,7 @@ var init_fit = __esm({
     "use strict";
     init_binance();
     init_hyperliquid();
+    init_perps();
     init_mission();
     init_portfolio();
     init_positions();
@@ -11747,27 +11758,38 @@ async function candles(venue, token2, fromSec, toSec) {
   );
   return [...res.data.attributes.ohlcv_list].sort((a, b) => a[0] - b[0]);
 }
+async function perpCandles(coin, fromSec, toSec) {
+  const limit = Math.min(1e3, Math.ceil((toSec - fromSec) / 60) + 3);
+  const raw = await fetchJson(
+    `https://api.binance.com/api/v3/klines?symbol=${coin.toUpperCase()}USDT&interval=1m&startTime=${fromSec * 1e3}&endTime=${toSec * 1e3}&limit=${limit}`,
+    { ttlMs: 6e5 }
+  );
+  return raw.map((k) => [Math.floor(k[0] / 1e3), Number(k[1]), Number(k[2]), Number(k[3]), Number(k[4])]);
+}
 async function one(p) {
   const base2 = { positionId: p.id, symbol: p.symbol, actualPct: p.pnlPct ?? null };
-  if (!p.closedAt || !NETWORK2[p.venue]) return { ...base2, unavailable: "sin datos de precio para esta cadena" };
+  const perp = p.venue === "hyperliquid" ? p.symbol.match(/^(\w+)-PERP (largo|corto) (\d+)x/) : null;
+  if (!p.closedAt || !NETWORK2[p.venue] && !perp) return { ...base2, unavailable: "sin datos de precio para esta cadena" };
   const open2 = Math.floor(new Date(p.openedAt).getTime() / 1e3);
   const close2 = Math.floor(new Date(p.closedAt).getTime() / 1e3);
   const now2 = Math.floor(Date.now() / 1e3);
   const end = Math.min(now2, close2 + 30 * 60);
-  const cs = await candles(p.venue, p.asset, open2 - 120, end);
+  const raw = perp ? await perpCandles(perp[1], open2 - 120, end) : await candles(p.venue, p.asset, open2 - 120, end);
+  const cs = perp?.[2] === "corto" ? raw.map(([t, o, h, l, c]) => [t, 1 / o, 1 / l, 1 / h, 1 / c]) : raw;
   const entry = priceAt(cs, open2) ?? cs[0]?.[4];
   const exit = priceAt(cs, close2);
   if (!entry || !exit) return { ...base2, unavailable: "sin velas en ese intervalo" };
   const held = cs.filter((c) => c[0] >= open2 - 60 && c[0] <= close2);
   const at15 = close2 + 15 * 60 <= now2 ? priceAt(cs, close2 + 15 * 60) : void 0;
   const at30 = close2 + 30 * 60 <= now2 ? priceAt(cs, close2 + 30 * 60) : void 0;
+  const d = perp ? 2 : 1;
   const out = {
     ...base2,
-    marketMovePct: pct2(entry, exit),
-    bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[2]))) : void 0,
-    worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[3]))) : void 0,
-    ifHeld15Pct: at15 ? pct2(entry, at15) : void 0,
-    ifHeld30Pct: at30 ? pct2(entry, at30) : void 0
+    marketMovePct: pct2(entry, exit, d),
+    bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[2])), d) : void 0,
+    worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[3])), d) : void 0,
+    ifHeld15Pct: at15 ? pct2(entry, at15, d) : void 0,
+    ifHeld30Pct: at30 ? pct2(entry, at30, d) : void 0
   };
   const notes = [];
   if (out.bestWhileHeldPct !== void 0 && out.marketMovePct !== void 0 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
@@ -11780,7 +11802,8 @@ async function one(p) {
     if (out.ifHeld30Pct < out.marketMovePct - 15) notes.push(`mantenerla 30 min m\xE1s habr\xEDa dado ${out.ifHeld30Pct} %: la salida fue buena`);
     else if (out.ifHeld30Pct > out.marketMovePct + 15) notes.push(`mantenerla 30 min m\xE1s habr\xEDa dado ${out.ifHeld30Pct} %: sali\xF3 demasiado pronto`);
   }
-  if (out.bestWhileHeldPct !== void 0 && out.bestWhileHeldPct < 3 && (p.pnlPct ?? 0) < 0) notes.push("nunca lleg\xF3 a ir en positivo: el problema fue la entrada, no la salida");
+  if (out.bestWhileHeldPct !== void 0 && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) notes.push("nunca lleg\xF3 a ir en positivo: el problema fue la entrada, no la salida");
+  if (perp) notes.push(`futuro a ${perp[3]}x: los % son del precio en el sentido de la posici\xF3n; sobre el margen, por ${perp[3]}`);
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== void 0) cache2.set(p.id, out);
   return out;
@@ -11806,7 +11829,7 @@ var init_counterfactuals = __esm({
     init_positions();
     NETWORK2 = { solana: "solana", base: "base", bsc: "bsc" };
     cache2 = /* @__PURE__ */ new Map();
-    pct2 = (a, b) => Number(((b / a - 1) * 100).toFixed(1));
+    pct2 = (a, b, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
     priceAt = (cs, sec) => {
       let p;
       for (const c of cs) if (c[0] <= sec) p = c[4];
@@ -41251,6 +41274,20 @@ init_portfolio();
 init_transfers();
 init_venues();
 var currentPrice = (venue, asset2) => getVenue(venue).triggerPrice(asset2);
+async function sellPrice(venue, missionId, triggerAsset, action) {
+  const v = getVenue(venue);
+  if (v.kind !== "chain") return null;
+  const input2 = await v.resolveToken(action.input);
+  if (input2.address !== triggerAsset || v.isCash(input2.address)) return null;
+  const qty = action.sellAll ? getHoldings(missionId).find((h) => h.venue === venue && h.asset === input2.address)?.amount ?? 0 : action.amount;
+  if (!(qty > 0)) return null;
+  const q = await v.quote({ input: input2, output: v.stables[0], amountIn: qty, slippageBps: action.slippageBps ?? 100 });
+  return q.amountOut > 0 ? q.amountOut / qty : null;
+}
+async function watchedPrice(venue, missionId, triggerAsset, action) {
+  const sell = getVenue(venue).kind === "chain" ? await sellPrice(venue, missionId, triggerAsset, action).catch(() => null) : null;
+  return sell ?? await currentPrice(venue, triggerAsset);
+}
 var isTriggered = (condition, price, trigger) => condition === "above" ? price >= trigger : price <= trigger;
 function describeAction(venue, action) {
   const v = getVenue(venue);
@@ -41281,7 +41318,7 @@ async function placeOrder(args) {
     triggerLabel = triggerAsset;
     await getSymbolInfo(args.action.symbol);
   }
-  const price = await currentPrice(args.venue, triggerAsset);
+  const price = await watchedPrice(args.venue, args.missionId, triggerAsset, args.action);
   if (isTriggered(args.condition, price, triggerPrice)) {
     throw new Error(
       `La condici\xF3n ya se cumple (precio actual de ${triggerLabel}: ${price}). Si quieres operar ahora, usa directamente la operaci\xF3n simulada.`
@@ -41357,9 +41394,19 @@ async function checkOrders() {
       await execute(order, `Orden por tiempo #${order.id} ejecutada (hora alcanzada: ${hms(order.trigger_price)}). Motivo original: ${order.reasoning ?? "-"}`, null, log);
       continue;
     }
-    const key = `${order.venue}:${order.trigger_asset}`;
+    const action = JSON.parse(order.action);
+    const sells = getVenue(order.venue).kind === "chain" && action.input !== void 0;
+    const key = sells ? `orden:${order.id}` : `${order.venue}:${order.trigger_asset}`;
+    if (sells && action.sellAll && action.input === order.trigger_asset) {
+      const left = getHoldings(order.mission_id).find((h) => h.venue === order.venue && h.asset === order.trigger_asset)?.amount ?? 0;
+      if (left <= 0 && db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), order.id).changes) {
+        logJournal({ missionId: order.mission_id, sessionId: null, kind: "order_cancelled", summary: `Orden #${order.id} cancelada: ya no te queda ${order.trigger_label.replace("/USD", "")}` });
+        log.push(`Orden #${order.id} cancelada: ya no queda saldo`);
+        continue;
+      }
+    }
     try {
-      if (!prices.has(key)) prices.set(key, await currentPrice(order.venue, order.trigger_asset));
+      if (!prices.has(key)) prices.set(key, await watchedPrice(order.venue, order.mission_id, order.trigger_asset, action));
     } catch (err) {
       log.push(`Sin precio para ${order.trigger_label}: ${err.message}`);
       continue;
@@ -42937,7 +42984,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
-    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Funciona aunque no est\xE9s en sesi\xF3n. El precio se comprueba aproximadamente cada minuto, as\xED que un pico muy breve puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cancela la que sobre cuando se ejecute la otra.',
+    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotizaci\xF3n de vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da as\xED al crearla). Funciona aunque no est\xE9s en sesi\xF3n. Se comprueba cada 15 s, as\xED que un pico de pocos segundos puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cancela la que sobre cuando se ejecute la otra.',
     schema: external_exports.object({
       chain: chainParam,
       trigger_asset: external_exports.string().optional().describe(`Direcci\xF3n del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),
@@ -43633,7 +43680,15 @@ function dbEvents(missionId) {
   return events;
 }
 function timeline(since, missionId) {
-  return [...agentEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+  return [...agentEvents(since).filter((e) => e.ts && e.ts >= since), ...previousLessons(missionId), ...dbEvents(missionId)].sort(
+    (a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id)
+  );
+}
+function previousLessons(missionId) {
+  if (missionId === null) return [];
+  const prev = db.prepare("SELECT id, ended_at FROM missions WHERE id < ? AND ended_at IS NOT NULL ORDER BY id DESC LIMIT 1").get(missionId);
+  if (!prev) return [];
+  return db.prepare("SELECT id, ts, kind, title, body FROM activity WHERE mission_id = ? AND kind IN ('lesson', 'review') AND ts >= ? ORDER BY id").all(prev.id, prev.ended_at).map((a) => ({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: `Misi\xF3n #${prev.id}: ${a.title}`, body: a.body ?? void 0 }));
 }
 
 // src/dashboard/server.ts
@@ -44208,3 +44263,8 @@ setInterval(async () => {
   await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misi\xF3n: ${err.message}`));
 }, config2.watchIntervalSeconds * 1e3);
+setInterval(async () => {
+  if (supersededBy()) return;
+  const open2 = db.prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1").get();
+  if (open2) await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
+}, 15e3);

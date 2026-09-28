@@ -18,6 +18,9 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   "aggregator-api.kyberswap.com": 350,
   // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
   "api.gopluslabs.io": 2_000,
+  // GeckoTerminal gratis: unas 30 peticiones por minuto. La usan a la vez el escaneo del trader y los
+  // contrafactuales del revisor; sin turnos, el revisor se quedaba sin velas (HTTP 429).
+  "api.geckoterminal.com": 2_100,
   // Binance limita por "peso" (6000 por minuto e IP); si se pasa, bloquea la IP (HTTP 418).
   "api.binance.com": 100,
 };

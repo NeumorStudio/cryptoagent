@@ -285,7 +285,27 @@ function dbEvents(missionId: number | null): TimelineEvent[] {
 
 /** Eventos desde `since` (ISO), ordenados del más antiguo al más reciente. */
 export function timeline(since: string, missionId: number | null): TimelineEvent[] {
-  return [...agentEvents(since), ...dbEvents(missionId)]
-    .filter((e) => e.ts && e.ts >= since)
-    .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+  // Lo de la base de datos ya va filtrado por misión: no se recorta por hora. El inicio de la misión se
+  // mueve al arrancar el reloj, y el briefing que el revisor escribe justo antes quedaba fuera.
+  return [...agentEvents(since).filter((e) => e.ts && e.ts >= since), ...previousLessons(missionId), ...dbEvents(missionId)].sort(
+    (a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id),
+  );
+}
+
+/**
+ * Lo que aprendió el revisor al cerrar la misión anterior (retrospectiva y cambios en la memoria): es lo que
+ * el trader aplica en esta, así que también sale en el panel. Se guarda con la misión anterior; sin esto,
+ * la pestaña Aprende se quedaba vacía al empezar cada misión.
+ */
+function previousLessons(missionId: number | null): TimelineEvent[] {
+  if (missionId === null) return [];
+  const prev = db.prepare("SELECT id, ended_at FROM missions WHERE id < ? AND ended_at IS NOT NULL ORDER BY id DESC LIMIT 1").get(missionId) as
+    | { id: number; ended_at: string }
+    | undefined;
+  if (!prev) return [];
+  return (
+    db
+      .prepare("SELECT id, ts, kind, title, body FROM activity WHERE mission_id = ? AND kind IN ('lesson', 'review') AND ts >= ? ORDER BY id")
+      .all(prev.id, prev.ended_at) as Array<{ id: number; ts: string; kind: EventKind; title: string; body: string | null }>
+  ).map((a) => ({ id: `a${a.id}`, ts: a.ts, kind: a.kind, title: `Misión #${prev.id}: ${a.title}`, body: a.body ?? undefined }));
 }

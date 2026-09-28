@@ -10,23 +10,26 @@
 <style>
   :root {
     color-scheme: dark;
-    /* Asfalto, tinta hueso y amarillo de pista (el amarillo es solo para la carrera: pista, corredor, meta y curva). */
+    /* Asfalto y tinta hueso. La carrera (pista, corredor, meta y curva) va en hueso: el color queda para las cadenas. */
     --bg: #14161A;
     --surface: #1C1F24;
     --surface-2: #23262C;
     --rule: #2C3037;
     --ink: #EDE9E1;
     --muted: #A5A197;
-    --accent: #F2C230;
+    --accent: #EDE9E1;
+    /* Aviso de dinero real: no es parte de ningún gráfico. */
+    --warn: #F2C230;
     --accent-ink: #14161A;
     --up: #5BD08F;
     --down: #F0776E;
-    /* Un color fijo por cadena (validado para daltonismo sobre este fondo, en este orden). */
-    --solana: #199E70;
-    --base: #3987E5;
-    --bsc: #D95926;
-    --binance: #9085E9;
-    --hyperliquid: #D65A9C;
+    /* Un color fijo por cadena, cerca de su marca (Solana morado, Base azul, BNB Chain dorado; Binance en cobre
+       para no confundirla con BNB). Validado para daltonismo y contraste sobre este fondo. */
+    --solana: #AD6DFB;
+    --base: #285CDC;
+    --bsc: #BA8C05;
+    --binance: #BE4A30;
+    --hyperliquid: #199686;
     --font: "Anybody", "Arial Narrow", system-ui, sans-serif;
     --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -160,7 +163,7 @@
   .bets li { grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
   .legend .chain, .bets .chain { color: var(--muted); font-size: 13px; margin-left: 6px; }
   .bets .pl.up { color: var(--up); } .bets .pl.down { color: var(--down); }
-  .real-band { position: sticky; top: 0; z-index: 5; background: var(--accent); color: #141518; padding: 8px 16px; font-size: 14px; text-align: center; }
+  .real-band { position: sticky; top: 0; z-index: 5; background: var(--warn); color: #141518; padding: 8px 16px; font-size: 14px; text-align: center; }
   .real-band b { font-stretch: 130%; letter-spacing: .04em; margin-right: 8px; }
   .real-band a { color: #141518; font-weight: 700; }
   .real-wallet { margin-top: 8px; }
@@ -169,17 +172,28 @@
   .rw-sub a { color: var(--ink); }
   .quiet { color: var(--muted); font-size: 15px; }
 
-  .review { font-size: 16px; }
+  .review { font-size: 16px; white-space: pre-line; }
+  .review.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .linkish { background: none; border: 0; padding: 4px 0; min-height: 32px; font-size: 13px; color: var(--ink); text-decoration: underline; cursor: pointer; }
+  .runs-head { display: flex; align-items: baseline; gap: 8px 24px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .runs-big { font-size: clamp(34px, 4vw, 48px); font-weight: 800; font-stretch: 140%; line-height: 1; }
+  .runs-big small { font-size: .42em; font-stretch: 110%; font-weight: 600; color: var(--muted); margin-left: 8px; }
+  .runs-stats { font-size: 15px; color: var(--muted); }
+  .runs-stats b { color: var(--ink); font-weight: 600; }
+  .runs-chart { display: block; width: 100%; height: 250px; overflow: visible; }
+  .runs-chart .zero { stroke: var(--muted); stroke-width: 1; opacity: .7; }
+  .runs-chart .goal { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 4; }
+  .runs-chart .goal-label, .runs-chart .axis { fill: var(--muted); font-size: 12px; }
+  .runs-chart .val { fill: var(--ink); font-size: 12px; font-weight: 600; }
+  .runs-chart .num { fill: var(--muted); font-size: 11px; }
+  .runs-chart .bar.win { fill: var(--accent); }
+  .runs-chart .bar.up { fill: var(--up); }
+  .runs-chart .bar.down { fill: var(--down); }
+  .runs-chart .bar.bust { fill: #000; stroke: var(--down); stroke-width: 1; }
+  .runs-chart .clip { stroke: var(--bg); stroke-width: 2; }
+  .runs-chart .hit { fill: transparent; }
+  .runs-chart g.m:hover .bar { opacity: .85; }
   .review-when { font-size: 13px; color: var(--muted); margin-top: 4px; }
-  .runs { display: flex; align-items: center; gap: clamp(2px, 0.6vw, 6px); height: 96px; margin-top: 8px; position: relative; }
-  .runs::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--rule); }
-  .run { flex: 0 1 18px; height: 100%; position: relative; z-index: 1; }
-  .run i { position: absolute; left: 0; right: 0; }
-  .run.up i { bottom: 50%; background: var(--up); border-radius: 4px 4px 0 0; }
-  .run.down i { top: 50%; background: var(--down); border-radius: 0 0 4px 4px; }
-  .run.win i { background: var(--accent); }
-  /* Sin fondos: la barra en negro (sobre el fondo oscuro, con un filo rojo para que se vea). */
-  .run.bust i { background: #000; box-shadow: inset 0 0 0 1px var(--down); }
   .pill.bust { background: #000; color: var(--ink); box-shadow: inset 0 0 0 1px var(--down); }
   .runs-legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
   .beliefs { display: grid; gap: 10px; }
@@ -324,6 +338,13 @@
     <details class="data"><summary>Ver los datos</summary><table><thead><tr><th>Hora</th><th>Valor</th></tr></thead><tbody id="chartTable"></tbody></table></details>
   </section>
 
+  <section aria-labelledby="h-runs">
+    <div class="sec-head"><h2 id="h-runs">Todas sus misiones</h2><span class="hint" id="runsHint"></span></div>
+    <div class="runs-head"><p class="runs-big tab" id="runsBig"></p><p class="runs-stats" id="runsStats"></p></div>
+    <div class="chart-wrap"><svg class="runs-chart" id="runsChart" role="img" aria-label="Resultado de cada misión"></svg></div>
+    <p class="runs-legend" id="runsLegend"></p>
+  </section>
+
   <div class="duo">
     <section aria-labelledby="h-money">
       <h2 id="h-money">Dónde está el dinero</h2>
@@ -340,11 +361,8 @@
 
     <section aria-labelledby="h-learn">
       <h2 id="h-learn">Qué aprende</h2>
-      <p class="review" id="review"></p>
-      <p class="review-when" id="reviewWhen"></p>
-      <p class="sub">Misiones anteriores</p>
-      <div class="runs" id="runs" role="img" aria-label="Resultado de las misiones anteriores"></div>
-      <p class="runs-legend" id="runsLegend"></p>
+      <p class="review clamped" id="review"></p>
+      <p class="review-when"><span id="reviewWhen"></span> <button class="linkish" id="reviewMore" type="button" hidden>Leer entera</button></p>
       <p class="sub">Lo que tiene más claro</p>
       <ul class="beliefs" id="beliefs"></ul>
       <div id="ask"></div>
@@ -739,30 +757,100 @@ function renderMoney(v) {
 }
 
 // ── Qué aprende ──────────────────────────────────────────────
+// ── Todas sus misiones ───────────────────────────────────────
+const isWin = (h) => h.outcome === "objetivo conseguido";
+const isBust = (h) => h.outcome.startsWith("sin fondos");
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs = {}, text) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function renderRuns() {
+  const finished = state.history.filter((h) => h.resultPct != null);
+  const past = finished.slice(-40);
+  const wins = finished.filter(isWin).length;
+  $("runsBig").replaceChildren(finished.length ? `${wins} de ${finished.length}` : "0", el("small", {}, finished.length ? "con la meta" : "misiones"));
+  // Racha: cuántas seguidas terminan igual (con o sin meta) al final de la lista.
+  let streak = 0;
+  for (let i = finished.length - 1; i >= 0 && isWin(finished[i]) === isWin(finished.at(-1)); i--) streak++;
+  const best = finished.length ? Math.max(...finished.map((h) => h.resultPct)) : null;
+  const worst = finished.length ? Math.min(...finished.map((h) => h.resultPct)) : null;
+  $("runsStats").replaceChildren(
+    ...(finished.length
+      ? [
+          el("b", {}, streak === 1 ? (isWin(finished.at(-1)) ? "la última, conseguida" : "la última, sin meta") : `${streak} seguidas ${isWin(finished.at(-1)) ? "con meta" : "sin meta"}`),
+          " · mejor ", el("b", {}, signed(best, " %")), " · peor ", el("b", {}, signed(worst, " %")),
+        ]
+      : ["Todavía no ha terminado ninguna misión."]),
+  );
+  $("runsHint").textContent = past.length < finished.length ? `las últimas ${past.length}` : "cada barra es una misión";
+
+  const chart = $("runsChart");
+  chart.replaceChildren();
+  if (!past.length) return;
+  const W = Math.max(280, chart.clientWidth || 800), H = 250;
+  const m = { l: 44, r: 12, t: 22, b: 48 };
+  const goal = past.at(-1).targetPct ?? 10;
+  // Escala recortada: un -86 % no debe aplastar un +12 %. Lo que se sale llega al borde con una muesca y su cifra.
+  const D = Math.min(40, Math.max(goal * 2.5, 20, ...past.map((h) => Math.abs(h.resultPct)).filter((v) => v <= 40)));
+  const y = (v) => m.t + ((D - Math.max(-D, Math.min(D, v))) / (2 * D)) * (H - m.t - m.b);
+  chart.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  for (const v of [D, 0, -D]) chart.append(svg("text", { class: "axis", x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, v === 0 ? "0 %" : signed(v, " %")));
+  chart.append(svg("line", { class: "zero", x1: m.l, x2: W - m.r, y1: y(0), y2: y(0) }));
+  chart.append(svg("line", { class: "goal", x1: m.l, x2: W - m.r, y1: y(goal), y2: y(goal) }));
+  chart.append(svg("text", { class: "goal-label", x: W - m.r, y: y(goal) - 6, "text-anchor": "end" }, `meta ${signed(goal, " %")}`));
+  const band = (W - m.l - m.r) / past.length;
+  const bw = Math.max(4, Math.min(34, band * 0.62));
+  const showVals = past.length <= 20;
+  past.forEach((h, i) => {
+    const cx = m.l + band * (i + 0.5);
+    const v = h.resultPct;
+    const y0 = y(0), y1 = y(v);
+    const top = Math.min(y0, y1), hgt = Math.max(2, Math.abs(y1 - y0));
+    const kind = isBust(h) ? "bust" : isWin(h) ? "win" : v >= 0 ? "up" : "down";
+    const g = svg("g", { class: "m" });
+    g.append(svg("title", {}, `Misión #${h.missionId}: ${signed(v, " %")} (${h.finalUsd} $) · ${h.outcome}`));
+    g.append(svg("rect", { class: "hit", x: cx - band / 2, y: m.t, width: band, height: H - m.t - m.b }));
+    // Esquinas redondeadas solo en el extremo del dato; la base, pegada al cero.
+    const r = Math.min(4, bw / 2, hgt);
+    const x0 = cx - bw / 2, x1 = cx + bw / 2;
+    const d = v >= 0
+      ? `M${x0},${y0} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x1 - r} Q${x1},${top} ${x1},${top + r} V${y0} Z`
+      : `M${x0},${y0} V${y0 + hgt - r} Q${x0},${y0 + hgt} ${x0 + r},${y0 + hgt} H${x1 - r} Q${x1},${y0 + hgt} ${x1},${y0 + hgt - r} V${y0} Z`;
+    g.append(svg("path", { class: `bar ${kind}`, d }));
+    const clipped = Math.abs(v) > D;
+    if (clipped) {
+      const yc = v > 0 ? top + 10 : top + hgt - 10;
+      g.append(svg("line", { class: "clip", x1: x0 - 1, x2: x1 + 1, y1: yc + 3, y2: yc - 3 }));
+    }
+    if (showVals || clipped || isWin(h)) {
+      const ty = v >= 0 ? top - 6 : top + hgt + 14;
+      g.append(svg("text", { class: "val", x: cx, y: Math.max(12, Math.min(H - m.b + 16, ty)), "text-anchor": "middle" }, `${v >= 0 ? "+" : "−"}${fmt(Math.abs(v), Math.abs(v) >= 10 ? 0 : 1)}`));
+    }
+    if (past.length <= 20 || i % 5 === 0 || i === past.length - 1) g.append(svg("text", { class: "num", x: cx, y: H - 6, "text-anchor": "middle" }, `#${h.missionId}`));
+    chart.append(g);
+  });
+  const busts = past.filter(isBust).length;
+  $("runsLegend").textContent =
+    `En blanco, las que llegaron a la meta; en rojo, las que no${busts ? "; en negro, sin fondos" : ""}. ` +
+    (past.some((h) => Math.abs(h.resultPct) > D) ? `Las barras con muesca pasan de ±${D} % (la cifra es la real).` : "");
+}
+
+let reviewOpen = false;
+$("reviewMore").addEventListener("click", () => { reviewOpen = !reviewOpen; renderLearn(); });
+
 function renderLearn() {
   const r = state.lastReview;
   $("review").textContent = r ? (r.body ? r.body : r.title) : "El revisor todavía no ha pasado por esta misión.";
   $("reviewWhen").textContent = r ? `El revisor, ${ago(r.ts)}` : "";
 
-  const runs = $("runs");
-  runs.replaceChildren();
-  const finished = state.history.filter((h) => h.resultPct != null);
-  const past = finished.slice(-40);
-  const maxAbs = Math.max(10, ...past.map((h) => Math.abs(h.resultPct)));
-  for (const h of past) {
-    const up = h.resultPct >= 0;
-    const bar = el("i", { style: `height:${Math.max(4, (Math.abs(h.resultPct) / maxAbs) * 50)}%` });
-    const kind = h.outcome === "objetivo conseguido" ? " win" : h.outcome.startsWith("sin fondos") ? " bust" : "";
-    runs.append(el("div", { class: `run ${up ? "up" : "down"}${kind}`, title: `Misión #${h.missionId}: ${signed(h.resultPct, " %")} · ${h.outcome}` }, bar));
-  }
-  const wins = (list) => list.filter((h) => h.outcome === "objetivo conseguido").length;
-  const busts = past.filter((h) => h.outcome.startsWith("sin fondos")).length;
-  const bustNote = busts ? ` ${busts} sin fondos (en negro).` : "";
-  $("runsLegend").textContent = !past.length
-    ? "Es su primera misión."
-    : past.length === finished.length
-      ? `${past.length} misiones, ${wins(past)} con la meta alcanzada (en amarillo).${bustNote}`
-      : `Las últimas ${past.length} de ${finished.length} misiones: ${wins(past)} con la meta alcanzada (en amarillo); ${wins(finished)} en total.${bustNote}`;
+  $("review").classList.toggle("clamped", !reviewOpen);
+  $("reviewMore").hidden = !r || (r.body ?? r.title).length < 280;
+  $("reviewMore").textContent = reviewOpen ? "Ver menos" : "Leer entera";
+  renderRuns();
 
   const beliefs = $("beliefs");
   beliefs.replaceChildren();

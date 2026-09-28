@@ -21,7 +21,7 @@ const INDEX_HTML = asset("index.html", "src/dashboard/index.html");
 type Valuation = Awaited<ReturnType<typeof valuation>>;
 let cached: { at: string; value: Valuation } | null = null;
 let lastSnapshot = 0;
-let running: { url: string } | null = null;
+let running: { url: string; server?: http.Server; timers?: NodeJS.Timeout[] } | null = null;
 
 // La valoración consulta precios reales, así que se refresca en segundo plano y no en cada petición.
 async function refreshValuation(log: (msg: string) => void) {
@@ -145,6 +145,12 @@ function handler(port: number) {
         return send(res, 200, "text/html; charset=utf-8", readFileSync(INDEX_HTML, "utf8"));
       }
       if (url.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
+      // Cerrar el panel (lo pide stop_dashboard, también desde otro proceso). Solo POST.
+      if (url.pathname === "/api/shutdown" && req.method === "POST") {
+        send(res, 200, "application/json", JSON.stringify({ ok: true }));
+        setTimeout(() => closeLocal(), 50);
+        return;
+      }
       if (url.pathname === "/api/events") {
         const mission = getActiveMission() ?? getLastMission();
         const since = url.searchParams.get("all") ? "1970" : (mission?.created_at ?? "1970");
@@ -185,16 +191,37 @@ export async function startDashboard(opts: { port?: number; log?: (msg: string) 
     );
     server.listen(port, "127.0.0.1", resolve);
   });
-  running = { url };
+  const timers = [
+    setInterval(() => refreshValuation(log), 15_000),
+    // Con una misión real, más a menudo (para avisar de aprobaciones pendientes).
+    setInterval(() => {
+      const live = (getActiveMission() as { mode?: string } | undefined)?.mode === "live";
+      if (live || !walletCache || Date.now() - walletCache.at > 60_000) void refreshWallet(log);
+    }, 10_000),
+  ];
+  for (const t of timers) t.unref();
+  running = { url, server, timers };
   await refreshValuation(log);
-  setInterval(() => refreshValuation(log), 15_000).unref();
   void refreshWallet(log);
-  // Con una misión real, más a menudo (para avisar de aprobaciones pendientes).
-  setInterval(() => {
-    const live = (getActiveMission() as { mode?: string } | undefined)?.mode === "live";
-    if (live || !walletCache || Date.now() - walletCache.at > 60_000) void refreshWallet(log);
-  }, 10_000).unref();
   return { url, alreadyRunning: false };
+}
+
+function closeLocal(): boolean {
+  if (!running?.server) return false;
+  for (const t of running.timers ?? []) clearInterval(t);
+  running.server.close();
+  running.server.closeAllConnections?.();
+  running = null;
+  return true;
+}
+
+/** Cierra el panel, esté en este proceso o en otro (de otra sesión). Devuelve si había uno abierto. */
+export async function stopDashboard(opts: { port?: number } = {}): Promise<boolean> {
+  if (closeLocal()) return true;
+  const url = `http://localhost:${opts.port ?? Number(process.env.DASHBOARD_PORT || 4321)}`;
+  if (!(await isOurDashboard(url))) return false;
+  await fetch(`${url}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(3000) }).catch(() => undefined);
+  return true;
 }
 
 /** Abre una URL en el navegador por defecto del sistema. */

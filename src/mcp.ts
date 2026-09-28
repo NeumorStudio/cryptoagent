@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
-import { openInBrowser, startDashboard } from "./dashboard/server.js";
+import { openInBrowser, startDashboard, stopDashboard } from "./dashboard/server.js";
 import { checkMission, createLiveMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission } from "./sim/mission.js";
 import { liveWalletSnapshot } from "./live/sync.js";
 import { config } from "./config.js";
@@ -203,6 +203,21 @@ server.registerTool(
       const { url, alreadyRunning } = await startDashboard({ log: (m) => console.error(m) });
       if (open_in_system_browser) openInBrowser(url);
       return text(`${alreadyRunning ? "El panel ya estaba en marcha" : "Panel arrancado"} en ${url}${open_in_system_browser ? " (abierto en el navegador)" : ""}`);
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "stop_dashboard",
+  {
+    description: "[Solo para el usuario, no para el agente trader] Cierra el panel web local (deja de escuchar en localhost). Se puede volver a abrir con start_dashboard.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return text((await stopDashboard()) ? "Panel cerrado." : "No había ningún panel abierto.");
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }

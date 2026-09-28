@@ -29,6 +29,7 @@ const MCP_ROLES: Record<string, "trader" | "user"> = {
   stop_mission: "user",
   status_report: "user",
   start_dashboard: "user",
+  stop_dashboard: "user",
   start_wallet: "user",
   wallet_status: "user",
   export_taxes: "user",

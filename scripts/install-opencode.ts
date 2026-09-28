@@ -126,7 +126,8 @@ description: Detiene la misión activa de cryptoagent
 Habla en español. ${ASK}
 1. Llama a \`cryptosim_mission_status\`. Si no hay misión activa, dilo y termina.
 2. Pregunta qué hacer con la cartera: cerrar posiciones (vender todo a mercado), dejarla como está o no detenerla.
-3. Llama a \`cryptosim_stop_mission\` con close_positions según la respuesta y resume el valor final en una línea.
+3. Llama a \`cryptosim_stop_mission\` con close_positions según la respuesta.
+4. Cierra el panel con \`cryptosim_stop_dashboard\` y resume en una línea el valor final y que el panel se ha cerrado.
 `,
   "cryptoagent-peticiones": `---
 description: Lo que el agente de cryptoagent ha pedido y no tiene (cuentas, herramientas, mercados)

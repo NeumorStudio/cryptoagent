@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.22.0";
+    CODE_VERSION = "0.22.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42865,6 +42865,11 @@ function handler(port) {
         return send(res, 200, "text/html; charset=utf-8", readFileSync5(INDEX_HTML, "utf8"));
       }
       if (url2.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
+      if (url2.pathname === "/api/shutdown" && req.method === "POST") {
+        send(res, 200, "application/json", JSON.stringify({ ok: true }));
+        setTimeout(() => closeLocal(), 50);
+        return;
+      }
       if (url2.pathname === "/api/events") {
         const mission = getActiveMission() ?? getLastMission();
         const since = url2.searchParams.get("all") ? "1970" : mission?.created_at ?? "1970";
@@ -42898,15 +42903,34 @@ async function startDashboard(opts = {}) {
     );
     server2.listen(port, "127.0.0.1", resolve);
   });
-  running = { url: url2 };
+  const timers = [
+    setInterval(() => refreshValuation(log), 15e3),
+    // Con una misión real, más a menudo (para avisar de aprobaciones pendientes).
+    setInterval(() => {
+      const live = getActiveMission()?.mode === "live";
+      if (live || !walletCache || Date.now() - walletCache.at > 6e4) void refreshWallet(log);
+    }, 1e4)
+  ];
+  for (const t of timers) t.unref();
+  running = { url: url2, server: server2, timers };
   await refreshValuation(log);
-  setInterval(() => refreshValuation(log), 15e3).unref();
   void refreshWallet(log);
-  setInterval(() => {
-    const live = getActiveMission()?.mode === "live";
-    if (live || !walletCache || Date.now() - walletCache.at > 6e4) void refreshWallet(log);
-  }, 1e4).unref();
   return { url: url2, alreadyRunning: false };
+}
+function closeLocal() {
+  if (!running?.server) return false;
+  for (const t of running.timers ?? []) clearInterval(t);
+  running.server.close();
+  running.server.closeAllConnections?.();
+  running = null;
+  return true;
+}
+async function stopDashboard(opts = {}) {
+  if (closeLocal()) return true;
+  const url2 = `http://localhost:${opts.port ?? Number(process.env.DASHBOARD_PORT || 4321)}`;
+  if (!await isOurDashboard(url2)) return false;
+  await fetch(`${url2}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(3e3) }).catch(() => void 0);
+  return true;
 }
 function openInBrowser(url2) {
   const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
@@ -43211,6 +43235,20 @@ server.registerTool(
       const { url: url2, alreadyRunning } = await startDashboard({ log: (m) => console.error(m) });
       if (open_in_system_browser) openInBrowser(url2);
       return text(`${alreadyRunning ? "El panel ya estaba en marcha" : "Panel arrancado"} en ${url2}${open_in_system_browser ? " (abierto en el navegador)" : ""}`);
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "stop_dashboard",
+  {
+    description: "[Solo para el usuario, no para el agente trader] Cierra el panel web local (deja de escuchar en localhost). Se puede volver a abrir con start_dashboard.",
+    inputSchema: {}
+  },
+  async () => {
+    try {
+      return text(await stopDashboard() ? "Panel cerrado." : "No hab\xEDa ning\xFAn panel abierto.");
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }

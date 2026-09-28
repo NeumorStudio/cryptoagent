@@ -95,7 +95,8 @@ test("creencia con condición: el simulador la contrasta con todas las operacion
     { trades: b.evidence.matchingTrades!.trades, inFavor: b.evidence.matchingTrades!.inFavor, against: b.evidence.matchingTrades!.against },
     { trades: 3, inFavor: 2, against: 1 },
   );
-  assert.match(b.evidence.verdict, /se sostiene/);
+  // 2 a favor y 1 en contra: con tan pocos casos no se puede concluir nada (intervalo de Wilson).
+  assert.ok(b.evidence.verdict.includes("sin confirmar (2 a favor, 1 en contra; acierto 67 %, intervalo 21-94 %) · hipótesis"), b.evidence.verdict);
   // También cuánto se movieron: media, mejor y cuántas dieron +20 % o más.
   assert.match(b.evidence.verdict, /mejor 30 %, 1 de 3 con \+20 % o más/);
 });

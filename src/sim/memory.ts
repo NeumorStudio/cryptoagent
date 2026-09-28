@@ -158,6 +158,29 @@ interface BeliefRow {
   legacy_evidence: string | null;
 }
 
+/**
+ * Intervalo de Wilson al 95 % de un porcentaje de acierto: con pocos casos es ancho y no deja concluir
+ * nada. Con 3 de 3 va del 44 % al 100 %; con 17 de 18, del 74 % al 99 %.
+ */
+export function wilson(successes: number, n: number): { low: number; high: number } {
+  if (!n) return { low: 0, high: 100 };
+  const z = 1.96;
+  const p = successes / n;
+  const denom = 1 + (z * z) / n;
+  const center = (p + (z * z) / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  return { low: Math.round(Math.max(0, center - half) * 100), high: Math.round(Math.min(1, center + half) * 100) };
+}
+
+/** Etapa de una creencia según cuántas operaciones decisivas la respaldan o la refutan. */
+export type BeliefStage = "hypothesis" | "provisional" | "rule";
+export const beliefStage = (decided: number): BeliefStage => (decided >= 30 ? "rule" : decided >= 10 ? "provisional" : "hypothesis");
+const STAGE_LABEL: Record<BeliefStage, string> = {
+  hypothesis: "hipótesis (menos de 10 casos: puede ser suerte)",
+  provisional: "provisional (10-29 casos)",
+  rule: "regla (30 casos o más)",
+};
+
 function beliefEvidence(b: BeliefRow, closed: Pos[]) {
   const applied = summarizeTrades(closed.filter((p) => p.beliefsApplied.includes(b.id)));
   const cond = b.condition ? (JSON.parse(b.condition) as Condition) : null;
@@ -172,16 +195,20 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
     const [inFavor, against] = b.expectation === "negative" ? [losses, wins] : [wins, losses];
     const decided = inFavor + against;
     const support = decided ? Math.round((inFavor / decided) * 100) : null;
+    const ci = wilson(inFavor, decided);
+    const stage = beliefStage(decided);
     const summary = summarizeTrades(ps);
-    matched = { ...summary, inFavor, against, supportPct: support };
+    matched = { ...summary, inFavor, against, supportPct: support, wilsonLowPct: ci.low, wilsonHighPct: ci.high, stage };
+    const counts = `${inFavor} a favor, ${against} en contra; acierto ${support} %, intervalo ${ci.low}-${ci.high} %`;
     verdict =
       decided < 3
         ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)`
-        : support! >= 60
-          ? `se sostiene (${inFavor} a favor, ${against} en contra)`
-          : support! <= 40
-            ? `los datos la contradicen (${inFavor} a favor, ${against} en contra)`
-            : `dudosa (${inFavor} a favor, ${against} en contra)`;
+        : ci.low >= 50
+          ? `se sostiene (${counts})`
+          : ci.high < 50
+            ? `los datos la contradicen (${counts})`
+            : `sin confirmar (${counts})`;
+    if (decided >= 3) verdict += ` · ${STAGE_LABEL[stage]}`;
     verdict += magnitude(summary);
   }
   return { verdict, appliedIn: applied, ...(matched ? { matchingTrades: matched } : {}) };
@@ -240,7 +267,8 @@ const closedPositions = () => listPositions().filter((p) => p.status === "closed
  * la ignore de forma explícita y diga por qué. Así lo aprendido no se olvida por despiste, pero el
  * agente sigue siendo libre de explorar (y esas compras siguen contando como evidencia).
  */
-export const STRONG_NEGATIVE = { minDecided: 4, minSupportPct: 75, maxAvgPnlPct: -15 };
+/** Fuerte: al menos 4 casos decisivos, el límite inferior del intervalo de Wilson ≥ 50 % y una media ≤ -15 %. */
+export const STRONG_NEGATIVE = { minDecided: 4, minWilsonLowPct: 50, maxAvgPnlPct: -15 };
 
 export interface BlockingBelief {
   id: number;
@@ -272,11 +300,11 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
     .filter((b) => matches(JSON.parse(b.condition!) as Condition, pos))
     .map((b) => ({ b, ev: beliefEvidence(b, closed) }))
     .filter(({ ev }) => {
-      const t = ev.matchingTrades as { inFavor?: number; against?: number; supportPct?: number | null; avgPnlPct?: number } | undefined;
+      const t = ev.matchingTrades as { inFavor?: number; against?: number; wilsonLowPct?: number; avgPnlPct?: number } | undefined;
       return (
         t !== undefined &&
         (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided &&
-        (t.supportPct ?? 0) >= STRONG_NEGATIVE.minSupportPct &&
+        (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct &&
         (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct
       );
     })
@@ -339,11 +367,23 @@ export function recall(missionId?: number | null, limit?: number) {
 
   const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
   const cut = <T>(xs: T[]) => (limit ? xs.slice(0, limit) : xs);
+  // Con límite, tantas creencias negativas como positivas: si solo ve las que le animan a entrar, las elige a su favor.
+  const balanced = (xs: typeof beliefs) => {
+    if (!limit) return xs;
+    const neg = xs.filter((b) => b.expectation === "tiende a perder");
+    const rest = xs.filter((b) => b.expectation !== "tiende a perder");
+    const out: typeof beliefs = [];
+    for (let i = 0; out.length < limit && (i < neg.length || i < rest.length); i++) {
+      if (i < rest.length) out.push(rest[i]!);
+      if (i < neg.length && out.length < limit) out.push(neg[i]!);
+    }
+    return out;
+  };
   return {
     currentMission: current && curProfile ? { missionId: current.id, profile: describe(curProfile) } : null,
     missionHistory: cut(history),
     howtos,
-    beliefs: cut(beliefs),
+    beliefs: balanced(beliefs),
     totalBeliefs: beliefs.length,
     tradeStats: {
       note: "Resultados reales de las operaciones cerradas, calculados por el simulador. Ganada/perdida = se movió al menos un 1 %.",
@@ -365,7 +405,7 @@ const clip = (text: unknown, n: number) => {
  * y el agente la consulta a menudo: el detalle completo está en recall con detail "completo".
  */
 export function recallSummary(missionId?: number | null) {
-  const full = recall(missionId);
+  const full = recall(missionId, 8);
   return {
     currentMission: full.currentMission,
     missionHistory: full.missionHistory.slice(0, 5).map(({ distance: _d, ...h }) => ({ ...h, ...(h.nextTime ? { nextTime: clip(h.nextTime, 220) } : {}) })),
@@ -496,8 +536,9 @@ export function memoryHygiene() {
   }
   const contradicted = withEv
     .filter(({ ev }) => {
-      const t = ev.matchingTrades as { inFavor?: number; against?: number; supportPct?: number | null } | undefined;
-      return t && (t.inFavor ?? 0) + (t.against ?? 0) >= 3 && (t.supportPct ?? 100) <= 40;
+      // Contradicha: incluso el límite superior del intervalo queda por debajo del 50 %.
+      const t = ev.matchingTrades as { inFavor?: number; against?: number; wilsonHighPct?: number } | undefined;
+      return t && (t.inFavor ?? 0) + (t.against ?? 0) >= 3 && (t.wilsonHighPct ?? 100) < 50;
     })
     .map(({ b, ev }) => ({ id: b.id, statement: clip(b.statement, 120), verdict: ev.verdict }));
   const howtos = db.prepare("SELECT id, scope, topic, title, LENGTH(steps) AS chars FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all() as Array<{

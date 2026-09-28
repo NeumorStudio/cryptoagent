@@ -67,6 +67,13 @@ const thesis = z
       .string()
       .min(1)
       .describe("Cómo aplicas tu memoria aquí (creencias, howtos, el briefing del revisor) o por qué nada de ella aplica a esta situación"),
+    risks_checked: z
+      .string()
+      .optional()
+      .describe(
+        "Obligatorio al comprar un token: qué has comprobado en contra de la compra (creencias negativas de tu memoria que podrían aplicar y " +
+          "las alarmas de riskCheck en token_report) y por qué no la descartan. Pensar en lo que puede salir mal antes de entrar.",
+      ),
     overrides: z
       .array(z.object({ id: z.number().int(), reason: z.string().min(10) }))
       .optional()
@@ -79,6 +86,7 @@ const thesis = z
 
 const formatThesis = (t: z.infer<typeof thesis>) =>
   `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}\nMemoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` +
+  (t.risks_checked ? `\nRiesgos comprobados: ${t.risks_checked}` : "") +
   (t.overrides?.length ? `\nIgnora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 
 const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
@@ -283,7 +291,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
       return json(
         await sim.swap({
           missionId: mid(ctx),
@@ -321,7 +329,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
       return json(
         await sim.swap({
           missionId: mid(ctx),
@@ -481,7 +489,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === undefined) throw new Error("Indica amount o sell_all");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
       return json(
         await orders.placeOrder({
           missionId: mid(ctx),
@@ -691,9 +699,16 @@ export const SIM_TOOLS = [
     description:
       "Todo lo ocurrido en una misión en una sola llamada: misión, estadísticas, posiciones (con tesis, creencias aplicadas, datos de entrada " +
       "y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. " +
-      "Con since (fecha ISO) solo lo posterior a esa fecha (útil a mitad de misión).",
+      "Con since (fecha ISO) solo lo posterior a esa fecha (útil a mitad de misión). Sin since incluye `counterfactuals`: para cada " +
+      "operación cerrada, con el precio real minuto a minuto, cuánto llegó a subir mientras la tenía y qué habría dado mantenerla 15 o " +
+      "30 min más. Sirve para distinguir una mala entrada de una mala salida.",
     schema: z.object({ mission_id: z.number().int(), since: z.string().optional() }),
-    run: async ({ mission_id, since }) => toText(memory.missionReviewData(mission_id, since)),
+    run: async ({ mission_id, since }) => {
+      const data = memory.missionReviewData(mission_id, since);
+      if (since) return toText(data);
+      const { missionCounterfactuals } = await import("../sim/counterfactuals.js");
+      return toText({ ...data, counterfactuals: await missionCounterfactuals(mission_id).catch((e) => [{ unavailable: (e as Error).message }]) });
+    },
   }),
   tool({
     name: "memory_catalog",

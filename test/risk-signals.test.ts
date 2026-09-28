@@ -13,7 +13,7 @@ installFakeMarket();
 
 const mission = await createMission(1000, 1200, 60, undefined, { solana: 100 });
 const ctx = { sessionId: 1, missionId: mission.id };
-const thesis = { why: "prueba", evidence: "prueba", sources: ["test"], exit_plan: "x", beliefs_applied: [], memory_note: "x" };
+const thesis = { why: "prueba", evidence: "prueba", sources: ["test"], exit_plan: "x", beliefs_applied: [], memory_note: "x", risks_checked: "revisé riskCheck y creencias negativas" };
 
 test("launchpad de BNB Chain por la dirección", () => {
   assert.equal(bscLaunchpad("0xb1cee4255275ea7954647f8acda8a399da377777"), "flap.sh");

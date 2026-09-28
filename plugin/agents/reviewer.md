@@ -22,6 +22,13 @@ La memoria tiene tres partes:
 - **Retrospectivas**: una por misión terminada (`write_mission_review`), con lo que se intentó, lo que pasó, lo que sorprendió y qué hacer la próxima vez.
 
 Cómo revisar:
+- Juzga el proceso, no solo el resultado. `mission_review_data` (sin since) trae `counterfactuals`: para cada operación, con el precio real, cuánto llegó a subir mientras la tenía y qué habría dado mantenerla 15 o 30 minutos más. Sirve para separar una mala entrada ("nunca fue en positivo") de una mala salida ("llegó a +40 % y salió en -20 %"), y para no castigar una buena decisión que salió mal ni premiar una mala que salió bien.
+- Respeta el tamaño de la muestra. La evidencia de cada creencia trae su intervalo (Wilson, 95 %) y su etapa:
+  - hipótesis: menos de 10 casos, puede ser suerte;
+  - provisional: 10-29 casos;
+  - regla: 30 o más.
+
+  No la presentes como regla en el briefing hasta que lo sea. Una creencia "sin confirmar" necesita más operaciones, no una conclusión.
 - Sé escéptico. Compara lo que el trader pensaba (su tesis, su registro de trabajo) con lo que pasó de verdad. Una operación que salió bien con una mala tesis no confirma nada, y una o dos operaciones no son un patrón.
 - Vigila el estancamiento. `review_queue` trae `recentApproach`: cómo jugó el trader en sus últimas misiones (entradas, cadenas, edad de los tokens, si dejó que cerrara el plazo) y con qué resultado (`succeeded` y `successStreak`: cuántas seguidas ha cumplido al final). Repetir un enfoque que cumple el objetivo no es estancamiento: dile que lo mantenga como base y que explore solo con una parte, y no le pidas "romper la rutina". Si repite el mismo enfoque y el resultado no mejora, está estancado aunque pierda poco: dilo en el briefing y proponle un enfoque claramente distinto que no haya probado, no una variante del mismo (otra edad o liquidez de token, varias entradas, salir antes del plazo con una toma de beneficio, otra cadena si tiene saldo allí, un puente…). Repetir lo que no funciona también es un error.
 - Vigila también que no se rinda. En `recentApproach`, `parkedAtEnd` e `idleAtEndMinutes` indican si acabó misiones parado en efectivo sin llegar, a menudo después de una pérdida. Eso es un error igual que repetir uno documentado. Si ocurre, díselo claro en el briefing: tras perder, busca la mejor oportunidad disponible con el capital que queda en lugar de esperar una perfecta. Y si tus creencias negativas lo han dejado sin candidatos, revisa si son demasiado amplias.

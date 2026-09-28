@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.22.1";
+    CODE_VERSION = "0.23.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -11025,10 +11025,10 @@ async function solUsdPrice() {
 }
 function validateAllocation(allocation) {
   const clean = {};
-  for (const [venue, pct2] of Object.entries(allocation)) {
+  for (const [venue, pct3] of Object.entries(allocation)) {
     if (!VENUES.includes(venue)) throw new Error(`Reparto: "${venue}" no existe. Disponibles: ${VENUES.join(", ")}`);
-    if (!(typeof pct2 === "number" && pct2 >= 0)) throw new Error(`Reparto: el porcentaje de ${venue} debe ser un n\xFAmero positivo`);
-    if (pct2 > 0) clean[venue] = pct2;
+    if (!(typeof pct3 === "number" && pct3 >= 0)) throw new Error(`Reparto: el porcentaje de ${venue} debe ser un n\xFAmero positivo`);
+    if (pct3 > 0) clean[venue] = pct3;
   }
   const total = Object.values(clean).reduce((t, x) => t + x, 0);
   if (Math.abs(total - 100) > 0.5) throw new Error(`Reparto: los porcentajes suman ${total} y deben sumar 100`);
@@ -11036,8 +11036,8 @@ function validateAllocation(allocation) {
 }
 function planPortfolio(initialUsd, allocation, nativePrices) {
   const holdings = [];
-  for (const [venue, pct2] of Object.entries(validateAllocation(allocation))) {
-    const shareUsd = initialUsd * pct2 / 100;
+  for (const [venue, pct3] of Object.entries(validateAllocation(allocation))) {
+    const shareUsd = initialUsd * pct3 / 100;
     const v = getVenue(venue);
     if (v.kind === "cex") {
       holdings.push({ venue, asset: "USDT", symbol: "USDT", decimals: 8, amount: shareUsd });
@@ -11340,6 +11340,94 @@ var init_portfolio = __esm({
     QUOTE_TTL_MS = 6e4;
     quoteKey = (missionId, chain, input2, output2) => `${missionId}:${chain}:${input2}:${output2}`;
     evmAddress = (missionId) => `0x${createHash2("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
+  }
+});
+
+// src/sim/counterfactuals.ts
+var counterfactuals_exports = {};
+__export(counterfactuals_exports, {
+  missionCounterfactuals: () => missionCounterfactuals
+});
+async function candles(venue, token2, fromSec, toSec) {
+  const net = NETWORK2[venue];
+  if (!net) throw new Error("cadena sin datos de velas");
+  const pools = await fetchJson(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${token2}/pools?page=1`, {
+    ttlMs: 36e5
+  });
+  const pool = pools.data[0]?.attributes.address;
+  if (!pool) throw new Error("sin pool en GeckoTerminal");
+  const limit = Math.min(1e3, Math.ceil((toSec - fromSec) / 60) + 3);
+  const res = await fetchJson(
+    `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${pool}/ohlcv/minute?aggregate=1&limit=${limit}&before_timestamp=${toSec}&currency=usd&token=${token2}`,
+    { ttlMs: 6e5 }
+  );
+  return [...res.data.attributes.ohlcv_list].sort((a, b) => a[0] - b[0]);
+}
+async function one(p) {
+  const base2 = { positionId: p.id, symbol: p.symbol, actualPct: p.pnlPct ?? null };
+  if (!p.closedAt || !NETWORK2[p.venue]) return { ...base2, unavailable: "sin datos de precio para esta cadena" };
+  const open2 = Math.floor(new Date(p.openedAt).getTime() / 1e3);
+  const close2 = Math.floor(new Date(p.closedAt).getTime() / 1e3);
+  const now2 = Math.floor(Date.now() / 1e3);
+  const end = Math.min(now2, close2 + 30 * 60);
+  const cs = await candles(p.venue, p.asset, open2 - 120, end);
+  const entry = priceAt(cs, open2) ?? cs[0]?.[4];
+  const exit = priceAt(cs, close2);
+  if (!entry || !exit) return { ...base2, unavailable: "sin velas en ese intervalo" };
+  const held = cs.filter((c) => c[0] >= open2 - 60 && c[0] <= close2);
+  const at15 = close2 + 15 * 60 <= now2 ? priceAt(cs, close2 + 15 * 60) : void 0;
+  const at30 = close2 + 30 * 60 <= now2 ? priceAt(cs, close2 + 30 * 60) : void 0;
+  const out = {
+    ...base2,
+    marketMovePct: pct(entry, exit),
+    bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[2]))) : void 0,
+    worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[3]))) : void 0,
+    ifHeld15Pct: at15 ? pct(entry, at15) : void 0,
+    ifHeld30Pct: at30 ? pct(entry, at30) : void 0
+  };
+  const notes = [];
+  if (out.bestWhileHeldPct !== void 0 && out.marketMovePct !== void 0 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
+    notes.push(`lleg\xF3 a +${out.bestWhileHeldPct} % mientras la ten\xEDa y sali\xF3 en ${out.marketMovePct} %: la salida dej\xF3 dinero en la mesa`);
+  }
+  if (out.ifHeld15Pct !== void 0 && out.marketMovePct !== void 0 && out.ifHeld15Pct > out.marketMovePct + 30) {
+    notes.push(`a los 15 min de vender iba ${out.ifHeld15Pct} %`);
+  }
+  if (out.ifHeld30Pct !== void 0 && out.marketMovePct !== void 0) {
+    if (out.ifHeld30Pct < out.marketMovePct - 15) notes.push(`mantenerla 30 min m\xE1s habr\xEDa dado ${out.ifHeld30Pct} %: la salida fue buena`);
+    else if (out.ifHeld30Pct > out.marketMovePct + 15) notes.push(`mantenerla 30 min m\xE1s habr\xEDa dado ${out.ifHeld30Pct} %: sali\xF3 demasiado pronto`);
+  }
+  if (out.bestWhileHeldPct !== void 0 && out.bestWhileHeldPct < 3 && (p.pnlPct ?? 0) < 0) notes.push("nunca lleg\xF3 a ir en positivo: el problema fue la entrada, no la salida");
+  out.reading = notes.join("; ") || "sin nada destacable";
+  if (at30 !== void 0) cache2.set(p.id, out);
+  return out;
+}
+async function missionCounterfactuals(missionId, limit = 8) {
+  const closed = listPositions(missionId).filter((p) => p.status === "closed").slice(-limit);
+  const out = [];
+  for (const p of closed) {
+    const cached3 = cache2.get(p.id);
+    if (cached3) {
+      out.push(cached3);
+      continue;
+    }
+    out.push(await one(p).catch((err) => ({ positionId: p.id, symbol: p.symbol, actualPct: p.pnlPct ?? null, unavailable: err.message.slice(0, 120) })));
+  }
+  return out;
+}
+var NETWORK2, cache2, pct, priceAt;
+var init_counterfactuals = __esm({
+  "src/sim/counterfactuals.ts"() {
+    "use strict";
+    init_http();
+    init_positions();
+    NETWORK2 = { solana: "solana", base: "base", bsc: "bsc" };
+    cache2 = /* @__PURE__ */ new Map();
+    pct = (a, b) => Number(((b / a - 1) * 100).toFixed(1));
+    priceAt = (cs, sec) => {
+      let p;
+      for (const c of cs) if (c[0] <= sec) p = c[4];
+      return p;
+    };
   }
 });
 
@@ -20671,7 +20759,7 @@ function az_default() {
 }
 
 // node_modules/zod/v4/locales/be.js
-function getBelarusianPlural(count, one, few, many) {
+function getBelarusianPlural(count, one2, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
@@ -20679,7 +20767,7 @@ function getBelarusianPlural(count, one, few, many) {
     return many;
   }
   if (lastDigit === 1) {
-    return one;
+    return one2;
   }
   if (lastDigit >= 2 && lastDigit <= 4) {
     return few;
@@ -23319,8 +23407,8 @@ function hu_default() {
 }
 
 // node_modules/zod/v4/locales/hy.js
-function getArmenianPlural(count, one, many) {
-  return Math.abs(count) === 1 ? one : many;
+function getArmenianPlural(count, one2, many) {
+  return Math.abs(count) === 1 ? one2 : many;
 }
 function withDefiniteArticle(word) {
   if (!word)
@@ -26058,7 +26146,7 @@ function ro_default() {
 }
 
 // node_modules/zod/v4/locales/ru.js
-function getRussianPlural(count, one, few, many) {
+function getRussianPlural(count, one2, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
@@ -26066,7 +26154,7 @@ function getRussianPlural(count, one, few, many) {
     return many;
   }
   if (lastDigit === 1) {
-    return one;
+    return one2;
   }
   if (lastDigit >= 2 && lastDigit <= 4) {
     return few;
@@ -32089,21 +32177,21 @@ function visit(schema, fnOrHandlers) {
     const h = fnOrHandlers[node2._zod.def.type];
     return h ? h(node2, rewritten) : node2;
   };
-  const cache2 = /* @__PURE__ */ new Map();
+  const cache3 = /* @__PURE__ */ new Map();
   function run(s) {
-    const cached3 = cache2.get(s);
+    const cached3 = cache3.get(s);
     if (cached3 === RESOLVING) {
       return new $ZodLazy({
         type: "lazy",
-        getter: () => cache2.get(s)
+        getter: () => cache3.get(s)
       });
     }
     if (cached3 !== void 0)
       return cached3;
-    cache2.set(s, RESOLVING);
+    cache3.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
-    cache2.set(s, mapped);
+    cache3.set(s, mapped);
     return mapped;
   }
   function mapInner(s) {
@@ -40986,6 +41074,21 @@ function summarizeTrades(ps) {
 }
 var BIG_WIN_PCT = 20;
 var magnitude = (t) => t.trades ? `; media ${t.avgPnlPct} %, mejor ${t.bestPct} %, ${t.bigWins} de ${t.trades} con +${BIG_WIN_PCT} % o m\xE1s` : "";
+function wilson(successes, n3) {
+  if (!n3) return { low: 0, high: 100 };
+  const z2 = 1.96;
+  const p = successes / n3;
+  const denom = 1 + z2 * z2 / n3;
+  const center = (p + z2 * z2 / (2 * n3)) / denom;
+  const half = z2 * Math.sqrt(p * (1 - p) / n3 + z2 * z2 / (4 * n3 * n3)) / denom;
+  return { low: Math.round(Math.max(0, center - half) * 100), high: Math.round(Math.min(1, center + half) * 100) };
+}
+var beliefStage = (decided) => decided >= 30 ? "rule" : decided >= 10 ? "provisional" : "hypothesis";
+var STAGE_LABEL = {
+  hypothesis: "hip\xF3tesis (menos de 10 casos: puede ser suerte)",
+  provisional: "provisional (10-29 casos)",
+  rule: "regla (30 casos o m\xE1s)"
+};
 function beliefEvidence(b, closed) {
   const applied = summarizeTrades(closed.filter((p) => p.beliefsApplied.includes(b.id)));
   const cond = b.condition ? JSON.parse(b.condition) : null;
@@ -40998,9 +41101,13 @@ function beliefEvidence(b, closed) {
     const [inFavor, against] = b.expectation === "negative" ? [losses, wins] : [wins, losses];
     const decided = inFavor + against;
     const support = decided ? Math.round(inFavor / decided * 100) : null;
+    const ci = wilson(inFavor, decided);
+    const stage = beliefStage(decided);
     const summary = summarizeTrades(ps);
-    matched = { ...summary, inFavor, against, supportPct: support };
-    verdict = decided < 3 ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)` : support >= 60 ? `se sostiene (${inFavor} a favor, ${against} en contra)` : support <= 40 ? `los datos la contradicen (${inFavor} a favor, ${against} en contra)` : `dudosa (${inFavor} a favor, ${against} en contra)`;
+    matched = { ...summary, inFavor, against, supportPct: support, wilsonLowPct: ci.low, wilsonHighPct: ci.high, stage };
+    const counts = `${inFavor} a favor, ${against} en contra; acierto ${support} %, intervalo ${ci.low}-${ci.high} %`;
+    verdict = decided < 3 ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)` : ci.low >= 50 ? `se sostiene (${counts})` : ci.high < 50 ? `los datos la contradicen (${counts})` : `sin confirmar (${counts})`;
+    if (decided >= 3) verdict += ` \xB7 ${STAGE_LABEL[stage]}`;
     verdict += magnitude(summary);
   }
   return { verdict, appliedIn: applied, ...matched ? { matchingTrades: matched } : {} };
@@ -41042,7 +41149,7 @@ function tradeStats(ps) {
   }).filter(Boolean);
 }
 var closedPositions = () => listPositions().filter((p) => p.status === "closed");
-var STRONG_NEGATIVE = { minDecided: 4, minSupportPct: 75, maxAvgPnlPct: -15 };
+var STRONG_NEGATIVE = { minDecided: 4, minWilsonLowPct: 50, maxAvgPnlPct: -15 };
 function creatorRugs(creator) {
   if (!creator) return [];
   return db.prepare(
@@ -41056,7 +41163,7 @@ function blockingBeliefs(venue, entry, asset2 = "") {
   const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: {} };
   return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => {
     const t = ev.matchingTrades;
-    return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.supportPct ?? 0) >= STRONG_NEGATIVE.minSupportPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
+    return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
   }).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
 }
 function recall(missionId, limit) {
@@ -41093,11 +41200,22 @@ function recall(missionId, limit) {
   const howtos = db.prepare("SELECT id, scope, topic, title, steps, updated_at FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all();
   const similarIds = new Set(history.filter((h) => h.distance <= 1.5).map((h) => h.missionId));
   const cut = (xs) => limit ? xs.slice(0, limit) : xs;
+  const balanced = (xs) => {
+    if (!limit) return xs;
+    const neg = xs.filter((b) => b.expectation === "tiende a perder");
+    const rest = xs.filter((b) => b.expectation !== "tiende a perder");
+    const out = [];
+    for (let i = 0; out.length < limit && (i < neg.length || i < rest.length); i++) {
+      if (i < rest.length) out.push(rest[i]);
+      if (i < neg.length && out.length < limit) out.push(neg[i]);
+    }
+    return out;
+  };
   return {
     currentMission: current && curProfile ? { missionId: current.id, profile: describe3(curProfile) } : null,
     missionHistory: cut(history),
     howtos,
-    beliefs: cut(beliefs),
+    beliefs: balanced(beliefs),
     totalBeliefs: beliefs.length,
     tradeStats: {
       note: "Resultados reales de las operaciones cerradas, calculados por el simulador. Ganada/perdida = se movi\xF3 al menos un 1 %.",
@@ -41113,7 +41231,7 @@ var clip = (text2, n3) => {
   return s.length > n3 ? `${s.slice(0, n3).replace(/\s\S*$/, "")}\u2026` : s;
 };
 function recallSummary(missionId) {
-  const full = recall(missionId);
+  const full = recall(missionId, 8);
   return {
     currentMission: full.currentMission,
     missionHistory: full.missionHistory.slice(0, 5).map(({ distance: _d, ...h }) => ({ ...h, ...h.nextTime ? { nextTime: clip(h.nextTime, 220) } : {} })),
@@ -41199,7 +41317,7 @@ function memoryHygiene() {
   }
   const contradicted = withEv.filter(({ ev }) => {
     const t = ev.matchingTrades;
-    return t && (t.inFavor ?? 0) + (t.against ?? 0) >= 3 && (t.supportPct ?? 100) <= 40;
+    return t && (t.inFavor ?? 0) + (t.against ?? 0) >= 3 && (t.wilsonHighPct ?? 100) < 50;
   }).map(({ b, ev }) => ({ id: b.id, statement: clip(b.statement, 120), verdict: ev.verdict }));
   const howtos = db.prepare("SELECT id, scope, topic, title, LENGTH(steps) AS chars FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all();
   const fps = new Map(howtos.map((h) => [h.id, fingerprint(`${h.title} ${h.topic}`)]));
@@ -41672,6 +41790,11 @@ async function checkBuyAgainstMemory(a) {
   const chain = getChain(a.chain);
   const out = await chain.resolveToken(a.output);
   if (chain.isCash(out.address) || out.address === chain.native.address) return [];
+  if (!a.risksChecked || a.risksChecked.trim().length < 15) {
+    throw new Error(
+      `Antes de comprar ${out.symbol}, rellena thesis.risks_checked: qu\xE9 creencias negativas de tu memoria podr\xEDan aplicar y qu\xE9 alarmas da riskCheck en token_report, y por qu\xE9 no descartan la compra.`
+    );
+  }
   const features = await chain.entryFeatures(out.address).catch(() => null);
   if (!features) return [];
   if (features.honeypot === true) {
@@ -41758,6 +41881,9 @@ var thesis = external_exports.object({
   exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)"),
   beliefs_applied: external_exports.array(external_exports.number().int()).describe("Ids de las creencias de tu memoria que aplicas en esta operaci\xF3n (vac\xEDo si ninguna). El simulador medir\xE1 c\xF3mo le va a cada una"),
   memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria aqu\xED (creencias, howtos, el briefing del revisor) o por qu\xE9 nada de ella aplica a esta situaci\xF3n"),
+  risks_checked: external_exports.string().optional().describe(
+    "Obligatorio al comprar un token: qu\xE9 has comprobado en contra de la compra (creencias negativas de tu memoria que podr\xEDan aplicar y las alarmas de riskCheck en token_report) y por qu\xE9 no la descartan. Pensar en lo que puede salir mal antes de entrar."
+  ),
   overrides: external_exports.array(external_exports.object({ id: external_exports.number().int(), reason: external_exports.string().min(10) })).optional().describe(
     "Solo si el simulador rechaz\xF3 la compra porque tu memoria la desaconseja: las creencias que decides ignorar a sabiendas, cada una con el motivo concreto por el que esta vez es distinto. La operaci\xF3n cuenta igual como evidencia de esas creencias."
   )
@@ -41766,7 +41892,8 @@ var formatThesis = (t) => `Por qu\xE9: ${t.why}
 Pruebas: ${t.evidence}
 Fuentes: ${t.sources.join(" \xB7 ")}
 Plan: ${t.exit_plan}
-Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` + (t.overrides?.length ? `
+Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` + (t.risks_checked ? `
+Riesgos comprobados: ${t.risks_checked}` : "") + (t.overrides?.length ? `
 Ignora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 var lastReads = /* @__PURE__ */ new Map();
@@ -41933,7 +42060,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
       return json2(
         await swap({
           missionId: mid(ctx),
@@ -41966,7 +42093,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (!isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
       return json2(
         await swap({
           missionId: mid(ctx),
@@ -42101,7 +42228,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === void 0) throw new Error("Indica amount o sell_all");
-      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked });
       return json2(
         await placeOrder({
           missionId: mid(ctx),
@@ -42277,9 +42404,14 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "mission_review_data",
     kind: "memory",
     role: "reviewer",
-    description: "Todo lo ocurrido en una misi\xF3n en una sola llamada: misi\xF3n, estad\xEDsticas, posiciones (con tesis, creencias aplicadas, datos de entrada y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. Con since (fecha ISO) solo lo posterior a esa fecha (\xFAtil a mitad de misi\xF3n).",
+    description: "Todo lo ocurrido en una misi\xF3n en una sola llamada: misi\xF3n, estad\xEDsticas, posiciones (con tesis, creencias aplicadas, datos de entrada y resultado), diario, registro de trabajo del agente, notas, observaciones, errores, briefing y tus revisiones anteriores. Con since (fecha ISO) solo lo posterior a esa fecha (\xFAtil a mitad de misi\xF3n). Sin since incluye `counterfactuals`: para cada operaci\xF3n cerrada, con el precio real minuto a minuto, cu\xE1nto lleg\xF3 a subir mientras la ten\xEDa y qu\xE9 habr\xEDa dado mantenerla 15 o 30 min m\xE1s. Sirve para distinguir una mala entrada de una mala salida.",
     schema: external_exports.object({ mission_id: external_exports.number().int(), since: external_exports.string().optional() }),
-    run: async ({ mission_id, since }) => toText(missionReviewData(mission_id, since))
+    run: async ({ mission_id, since }) => {
+      const data = missionReviewData(mission_id, since);
+      if (since) return toText(data);
+      const { missionCounterfactuals: missionCounterfactuals2 } = await Promise.resolve().then(() => (init_counterfactuals(), counterfactuals_exports));
+      return toText({ ...data, counterfactuals: await missionCounterfactuals2(mission_id).catch((e) => [{ unavailable: e.message }]) });
+    }
   }),
   tool({
     name: "memory_catalog",
@@ -43015,7 +43147,7 @@ init_mission();
 init_portfolio();
 init_positions();
 var usd = (n3) => `${n3.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
-var pct = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
+var pct2 = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
 var hhmm3 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
@@ -43031,7 +43163,7 @@ async function statusReport(missionId) {
   const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : m.status === "bust" ? "SIN FONDOS: se qued\xF3 sin dinero para operar" : "detenida por el usuario";
   const lines = [];
   lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
-  lines.push(`Valor: ${usd(current)} (${pct(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
+  lines.push(`Valor: ${usd(current)} (${pct2(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
   const open2 = listPositions(m.id).filter((p) => p.status === "open");
   if (m.status === "active") {
@@ -43042,7 +43174,7 @@ async function statusReport(missionId) {
       const share = h && h.amount > 0 ? Math.min(1, p.qtyOpen / h.amount) : 0;
       const now2 = (h?.usd ?? 0) * share;
       const cost = p.openCostUsd;
-      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
+      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct2(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
     }
     const orders = listOrders(m.id, "open");
     if (orders.length) {
@@ -43053,7 +43185,7 @@ async function statusReport(missionId) {
   if (closed.length) {
     const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
     lines.push("", `Operaciones cerradas: ${closed.length} (${wins} con beneficio)`);
-    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
+    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct2(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
   }
   const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE mission_id = ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.id);
   if (recent.length) {

@@ -16,10 +16,17 @@ export interface BeliefOverride {
 export const CREATOR_BLACKLIST_ID = 0;
 
 /** Comprueba una compra (lo que se recibe no es efectivo ni el nativo). Lanza un error si hay que frenarla. */
-export async function checkBuyAgainstMemory(a: { chain: ChainId; output: string; overrides?: BeliefOverride[] }): Promise<BeliefOverride[]> {
+export async function checkBuyAgainstMemory(a: { chain: ChainId; output: string; overrides?: BeliefOverride[]; risksChecked?: string }): Promise<BeliefOverride[]> {
   const chain = getChain(a.chain);
   const out = await chain.resolveToken(a.output);
   if (chain.isCash(out.address) || out.address === chain.native.address) return [];
+  // Checklist previo: antes de comprar, pensar en lo que puede salir mal (no solo en por qué entrar).
+  if (!a.risksChecked || a.risksChecked.trim().length < 15) {
+    throw new Error(
+      `Antes de comprar ${out.symbol}, rellena thesis.risks_checked: qué creencias negativas de tu memoria podrían aplicar y qué alarmas ` +
+        "da riskCheck en token_report, y por qué no descartan la compra.",
+    );
+  }
   const features = await chain.entryFeatures(out.address).catch(() => null);
   if (!features) return [];
   if (features.honeypot === true) {

@@ -43,6 +43,7 @@ const NOT_TOOLS = new Set([
   "max_trade_usd",
   "max_loss_pct",
   "howto_ids",
+  "risks_checked",
   "belief_ids",
   "superseded_by",
 ]);

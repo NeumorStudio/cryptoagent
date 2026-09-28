@@ -20,7 +20,7 @@ function closed(entry: Record<string, unknown>, pnlPct: number) {
      VALUES (?, 'solana', ?, 'T', ?, ?, 'closed', 0, 0, 10, ?, ?, '{}')`,
   ).run(mission.id, `hyg${++n}`, now(), now(), 10 * (1 + pnlPct / 100), JSON.stringify({ venue: "solana", ...entry }));
 }
-const thesis = { why: "prueba", evidence: "prueba", sources: ["test"], exit_plan: "x", beliefs_applied: [], memory_note: "x" };
+const thesis = { why: "prueba", evidence: "prueba", sources: ["test"], exit_plan: "x", beliefs_applied: [], memory_note: "x", risks_checked: "revisé riskCheck y creencias negativas" };
 
 test("una creencia negativa fuerte frena la compra, salvo que se ignore a sabiendas con un motivo", async () => {
   for (const pnl of [-60, -80, -100, -40]) closed({ launchpad: "fábrica-de-rugs" }, pnl);
@@ -61,7 +61,7 @@ test("dos creencias que cubren las mismas operaciones son la misma: no se guarda
 });
 
 test("creencias contradichas por los datos y límite de howtos", () => {
-  for (const pnl of [30, 25, 40]) closed({ holders: 5000 }, pnl);
+  for (const pnl of [30, 25, 40, 22, 35]) closed({ holders: 5000 }, pnl);
   const c = memory.writeBelief({ statement: "Muchos holders pierde", appliesTo: "t", expectation: "negative", condition: { all: [{ f: "holders", op: ">", v: 1000 }] }, missionId: null });
   assert.ok(memory.memoryHygiene().contradictedBeliefs.some((x) => x.id === c.id));
 

@@ -28,7 +28,7 @@ export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 
 // ─── RPC ────────────────────────────────────────────────────────────────────
 
-async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>): Promise<unknown[]> {
+export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>): Promise<unknown[]> {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(EVM_CHAINS[chain].rpc, {
     method: "POST",

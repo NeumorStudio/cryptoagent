@@ -11,6 +11,10 @@ import { listOrders } from "../sim/orders.js";
 import { valuation } from "../sim/portfolio.js";
 import { listPositions } from "../sim/positions.js";
 import { timeline } from "./timeline.js";
+import { walletBalances } from "../live/chain.js";
+import { signerStatus, walletUrl } from "../live/client.js";
+import { readWalletPublic } from "../live/keystore.js";
+import { liveDir } from "../live/paths.js";
 
 const INDEX_HTML = asset("index.html", "src/dashboard/index.html");
 
@@ -32,6 +36,33 @@ async function refreshValuation(log: (msg: string) => void) {
     if (record) lastSnapshot = Date.now();
   } catch (err) {
     log(`Error valorando la cartera: ${(err as Error).message}`);
+  }
+}
+
+// Cartera real de la IA (si existe): saldos leídos de la cadena, como mucho cada minuto.
+let walletCache: { at: number; value: unknown } | null = null;
+
+async function refreshWallet(log: (msg: string) => void) {
+  try {
+    const running = await signerStatus();
+    const pub = running?.status.wallet ?? readWalletPublic(liveDir());
+    if (!pub) {
+      walletCache = { at: Date.now(), value: null };
+      return;
+    }
+    const b = await walletBalances(pub);
+    walletCache = {
+      at: Date.now(),
+      value: {
+        signer: running ? (running.status.stopped ? "parado" : running.status.unlocked ? "desbloqueado" : "bloqueado") : "apagado",
+        walletUrl: running ? walletUrl(running.info) : null,
+        addresses: { solana: pub.solana, evm: pub.evm },
+        totalUsd: b.totalUsd,
+        byChain: b.byChain,
+      },
+    };
+  } catch (err) {
+    log(`Error leyendo la cartera real: ${(err as Error).message}`);
   }
 }
 
@@ -70,6 +101,7 @@ function state() {
     snapshots,
     history: missionHistory(),
     memory: memorySummary(mission?.id ?? null),
+    realWallet: walletCache?.value ?? null,
     ...(mission ? missionDetail(mission.id) : { trades: [], positions: [], lastNote: null, lastReview: null }),
   };
 }
@@ -155,6 +187,8 @@ export async function startDashboard(opts: { port?: number; log?: (msg: string) 
   running = { url };
   await refreshValuation(log);
   setInterval(() => refreshValuation(log), 15_000).unref();
+  void refreshWallet(log);
+  setInterval(() => refreshWallet(log), 60_000).unref();
   return { url, alreadyRunning: false };
 }
 

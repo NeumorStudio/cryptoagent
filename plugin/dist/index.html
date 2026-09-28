@@ -151,6 +151,10 @@
   .bets li { grid-template-columns: 1fr auto auto; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
   .legend .chain, .bets .chain { color: var(--muted); font-size: 13px; margin-left: 6px; }
   .bets .pl.up { color: var(--up); } .bets .pl.down { color: var(--down); }
+  .real-wallet { margin-top: 8px; }
+  .rw-total { font-size: 26px; font-weight: 800; font-stretch: 130%; margin: 0; }
+  .rw-sub { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
+  .rw-sub a { color: var(--ink); }
   .quiet { color: var(--muted); font-size: 15px; }
 
   .note { font-size: clamp(19px, 1.8vw, 23px); line-height: 1.4; font-weight: 500; }
@@ -278,6 +282,11 @@
       <ul class="legend" id="legend"></ul>
       <p class="sub">Operaciones de esta misión</p>
       <ul class="bets" id="bets"></ul>
+      <div class="real-wallet" id="realWallet" hidden>
+        <p class="sub">Cartera real de la IA</p>
+        <p class="rw-total" id="rwTotal"></p>
+        <p class="rw-sub" id="rwSub"></p>
+      </div>
     </section>
 
     <section aria-labelledby="h-now">
@@ -433,6 +442,7 @@ function render() {
   }
   renderChart();
   renderMoney(v);
+  renderRealWallet();
   renderNow();
   renderLearn();
 }
@@ -588,6 +598,17 @@ function renderChart() {
   firstChart = false;
 }
 new ResizeObserver(() => state?.mission && renderChart()).observe($("chartWrap"));
+
+// ── Cartera real (solo lectura; se gestiona en la página del firmante) ──
+function renderRealWallet() {
+  const w = state.realWallet;
+  $("realWallet").hidden = !w;
+  if (!w) return;
+  $("rwTotal").textContent = usd(w.totalUsd);
+  const parts = Object.entries(w.byChain).map(([c, v]) => `${LABEL[c]} ${usd(v)}`);
+  $("rwSub").replaceChildren(`${parts.join(" · ")} · firmante ${w.signer}`,
+    ...(w.walletUrl ? [" · ", el("a", { href: w.walletUrl, target: "_blank", rel: "noopener" }, "abrir la cartera")] : []));
+}
 
 // ── Dónde está el dinero ─────────────────────────────────────
 function renderMoney(v) {

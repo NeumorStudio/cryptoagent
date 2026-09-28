@@ -152,6 +152,7 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
     label: cfg.label,
     native: cfg.native,
     cash: cfg.cash,
+    stables: cfg.stables,
     liquidationReserve: cfg.liquidationReserve,
     gasBudgetUsd: cfg.gasBudgetUsd,
     isCash,

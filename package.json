@@ -10,6 +10,7 @@
     "report": "tsx src/report.ts",
     "watcher": "tsx src/watcher.ts",
     "dashboard": "tsx src/dashboard/cli.ts",
+    "signer": "tsx src/live/signer/main.ts",
     "reset": "tsx src/reset.ts",
     "typecheck": "tsc --noEmit",
     "build:plugin": "node scripts/build-plugin.mjs",
@@ -19,6 +20,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "@modelcontextprotocol/sdk": "^1.30.1",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
     "dotenv": "^18.0.4",
     "playwright": "^1.63.0",
     "zod": "^4.6.5"

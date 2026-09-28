@@ -100,6 +100,7 @@ export const solana: ChainAdapter = {
   label: "Solana",
   native: SOL,
   cash: USDC,
+  stables: [USDC, { address: USDT_MINT, symbol: "USDT", decimals: 6 }],
   liquidationReserve: config.solanaTxFeeSol,
   // Entre ~0,005 SOL (la fee de muchas operaciones y la renta de dos tokens a la vez) y ~0,05 SOL.
   gasBudgetUsd: { min: 0.75, max: 7.5 },

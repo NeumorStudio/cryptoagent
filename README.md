@@ -87,6 +87,15 @@ En marketplaces que no son de Anthropic la actualización automática viene desa
 
 O activa la actualización automática de este marketplace en el gestor de plugins.
 
+## Cartera real (en desarrollo)
+
+`/cryptoagent:cartera` (o `/cryptoagent-cartera` en OpenCode) abre la página de la cartera real de la IA: una cartera **nueva**, solo para ella, en Solana, Base y BNB Chain.
+
+- **Cómo se guarda la clave.** La página la sirve el *firmante*, un proceso aparte que escucha solo en `127.0.0.1` y es el único que descifra la clave. La frase se guarda cifrada en `~/.cryptoagent/live/wallet.enc` con tu contraseña.
+- **Qué ve el modelo.** La frase de recuperación se muestra una sola vez en esa página; el modelo nunca la ve. No la pegues nunca en un chat.
+- **Verla en otras carteras.** Puedes importar la frase en MetaMask (Base y BNB Chain) y en Phantom (Solana) para ver la cartera.
+- **Qué hace de momento.** Es solo de lectura: muestra direcciones y saldos. Operar con dinero real (con tu aprobación por operación o en autónomo con límites) llega en las próximas versiones.
+
 ## Qué se simula y cómo
 
 | Acción | Cálculo |

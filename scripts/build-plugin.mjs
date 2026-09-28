@@ -8,9 +8,11 @@ const out = "plugin/dist";
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
-await build({
-  entryPoints: ["src/mcp.ts"],
-  outfile: `${out}/cryptosim.mjs`,
+// Dos programas: el servidor MCP y el firmante de la cartera real (un proceso aparte, el único que
+// descifra la clave).
+for (const [entry, file] of [["src/mcp.ts", "cryptosim.mjs"], ["src/live/signer/main.ts", "signer.mjs"]]) await build({
+  entryPoints: [entry],
+  outfile: `${out}/${file}`,
   bundle: true,
   platform: "node",
   format: "esm",
@@ -32,7 +34,7 @@ copyFileSync("src/dashboard/index.html", `${out}/index.html`);
 copyFileSync("knowledge/guia-del-terreno.md", `${out}/guia-del-terreno.md`);
 
 const kb = (f) => (statSync(f).size / 1024).toFixed(0);
-console.log(`Plugin empaquetado: ${out}/cryptosim.mjs (${kb(`${out}/cryptosim.mjs`)} KB), index.html, guia-del-terreno.md`);
+console.log(`Plugin empaquetado: ${out}/cryptosim.mjs (${kb(`${out}/cryptosim.mjs`)} KB), signer.mjs (${kb(`${out}/signer.mjs`)} KB), index.html, guia-del-terreno.md`);
 
 // El plugin se distribuye desde el marketplace NeumorStudio/claude-plugins. Si está clonado junto a
 // este repositorio (../claude-plugins), se copia allí el plugin y se sincroniza su versión en el catálogo.

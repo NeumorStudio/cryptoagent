@@ -13,6 +13,10 @@ import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { DEFAULT_ALLOCATION, VENUES } from "./sim/types.js";
 import { statusReport } from "./sim/status.js";
 import { SIM_TOOLS, runTool } from "./tools/index.js";
+import { walletBalances } from "./live/chain.js";
+import { ensureSigner, signerStatus, walletUrl } from "./live/client.js";
+import { readWalletPublic } from "./live/keystore.js";
+import { liveDir } from "./live/paths.js";
 
 const server = new McpServer({ name: "cryptosim", version: "0.1.0" });
 
@@ -171,6 +175,60 @@ server.registerTool(
       const { url, alreadyRunning } = await startDashboard({ log: (m) => console.error(m) });
       if (open_in_system_browser) openInBrowser(url);
       return text(`${alreadyRunning ? "El panel ya estaba en marcha" : "Panel arrancado"} en ${url}${open_in_system_browser ? " (abierto en el navegador)" : ""}`);
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+// ─── Cartera real: el firmante es un proceso aparte que guarda la clave. Aquí solo se arranca y se
+// consulta; la frase y las claves no pasan nunca por este proceso ni por el modelo.
+
+server.registerTool(
+  "start_wallet",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] Arranca el firmante de la cartera real de la IA (si no está en marcha) y abre " +
+      "su página en el navegador del usuario, donde se crea la cartera, se desbloquea con la contraseña y se para todo. " +
+      "Nunca pidas al usuario la frase ni la contraseña en el chat: se escriben solo en esa página.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const { info, status, started } = await ensureSigner();
+      openInBrowser(walletUrl(info));
+      const state = !status.exists ? "todavía no hay cartera: el usuario debe crearla en la página" : status.unlocked ? "cartera desbloqueada" : "cartera bloqueada: el usuario debe desbloquearla en la página";
+      return text(`${started ? "Firmante arrancado" : "El firmante ya estaba en marcha"}; página abierta en el navegador (${walletUrl(info)}). Estado: ${state}.`);
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "wallet_status",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] Estado de la cartera real de la IA: si existe, si el firmante está en marcha y " +
+      "desbloqueado, sus direcciones y los saldos reales por cadena (Solana, Base, BNB Chain) en USD.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const running = await signerStatus();
+      const pub = running?.status.wallet ?? readWalletPublic(liveDir());
+      if (!pub) return text(JSON.stringify({ wallet: null, message: "No hay cartera real. Usa start_wallet para crearla." }));
+      const b = await walletBalances(pub);
+      return text(
+        JSON.stringify({
+          signer: running ? (running.status.stopped ? "parado" : running.status.unlocked ? "desbloqueado" : "bloqueado") : "no está en marcha",
+          addresses: { solana: pub.solana, evm: pub.evm },
+          totalUsd: Number(b.totalUsd.toFixed(2)),
+          byChain: Object.fromEntries(Object.entries(b.byChain).map(([c, v]) => [c, Number(v.toFixed(2))])),
+          balances: b.balances.map((x) => ({ chain: x.venue, symbol: x.symbol, amount: Number(x.amount.toPrecision(8)), usd: Number(x.usd.toFixed(2)) })),
+          ...(Object.keys(b.errors).length ? { unreadable: b.errors } : {}),
+        }),
+      );
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }

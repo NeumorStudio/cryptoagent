@@ -3268,8 +3268,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path6) {
-      let input2 = path6;
+    function removeDotSegments(path8) {
+      let input2 = path8;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3678,8 +3678,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path6 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
+        const path8 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7968,8 +7968,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path6, errorMaps, issueData } = params;
-  const fullPath = [...path6, ...issueData.path || []];
+  const { data, path: path8, errorMaps, issueData } = params;
+  const fullPath = [...path8, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -8084,11 +8084,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path6, key) {
+  constructor(parent, value, path8, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path6;
+    this._path = path8;
     this._key = key;
   }
   get path() {
@@ -12042,10 +12042,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path6) {
-  if (!path6)
+function getElementAtPath(obj, path8) {
+  if (!path8)
     return obj;
-  return path6.reduce((acc, key) => acc?.[key], obj);
+  return path8.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12385,11 +12385,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path6, issues) {
+function prefixIssues(path8, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path6);
+    iss.path.unshift(path8);
     return iss;
   });
 }
@@ -12839,16 +12839,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path6 = []) => {
+  const processError = (error63, path8 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path6, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -12887,17 +12887,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path6 = []) => {
+  const processError = (error63, path8 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path6, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -12936,8 +12936,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path6 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path6) {
+  const path8 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path8) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -28452,11 +28452,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path6) {
-  if (path6.length === 0) {
+function getDotPath(path8) {
+  if (path8.length === 0) {
     return "object root";
   }
-  return path6.reduce((acc, seg, index) => {
+  return path8.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -30683,13 +30683,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path6 = ref.slice(1).split("/").filter(Boolean);
-  if (path6.length === 0) {
+  const path8 = ref.slice(1).split("/").filter(Boolean);
+  if (path8.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path6[0] === defsKey) {
-    const key = path6[1] === void 0 ? void 0 : decodeJSONPointerSegment(path6[1]);
+  if (path8[0] === defsKey) {
+    const key = path8[1] === void 0 ? void 0 : decodeJSONPointerSegment(path8[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.14.4";
+var CODE_VERSION = "0.15.0";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -38004,6 +38004,7 @@ function evmAdapter(cfg) {
     label: cfg.label,
     native: cfg.native,
     cash: cfg.cash,
+    stables: cfg.stables,
     liquidationReserve: cfg.liquidationReserve,
     gasBudgetUsd: cfg.gasBudgetUsd,
     isCash,
@@ -38483,6 +38484,7 @@ var solana = {
   label: "Solana",
   native: SOL,
   cash: USDC,
+  stables: [USDC, { address: USDT_MINT2, symbol: "USDT", decimals: 6 }],
   liquidationReserve: config2.solanaTxFeeSol,
   // Entre ~0,005 SOL (la fee de muchas operaciones y la renta de dos tokens a la vez) y ~0,05 SOL.
   gasBudgetUsd: { min: 0.75, max: 7.5 },
@@ -39541,8 +39543,8 @@ async function execute(order, reasoning2, price, log) {
 }
 
 // src/dashboard/server.ts
-import { spawn } from "node:child_process";
-import { readFileSync as readFileSync3 } from "node:fs";
+import { spawn as spawn2 } from "node:child_process";
+import { readFileSync as readFileSync5 } from "node:fs";
 import http from "node:http";
 
 // src/sim/mission.ts
@@ -40287,13 +40289,13 @@ function recordApiCall(url2, status) {
   } catch {
     return;
   }
-  const path6 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
+  const path8 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
   const ok = status >= 200 && status < 300;
   db.prepare(
     `INSERT INTO api_observations (host, path, ok, fail, last_status, last_ok_at, last_fail_at) VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(host, path) DO UPDATE SET ok = ok + excluded.ok, fail = fail + excluded.fail, last_status = excluded.last_status,
        last_ok_at = COALESCE(excluded.last_ok_at, last_ok_at), last_fail_at = COALESCE(excluded.last_fail_at, last_fail_at)`
-  ).run(u.host, path6, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
+  ).run(u.host, path8, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
 }
 function activeBeliefIds() {
   return db.prepare("SELECT id FROM beliefs WHERE status = 'active' ORDER BY id").all().map((r) => r.id);
@@ -41288,6 +41290,143 @@ function timeline(since, missionId) {
   return [...agentEvents(since), ...dbEvents(missionId)].filter((e) => e.ts && e.ts >= since).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
 }
 
+// src/live/chain.ts
+var solanaRpcUrl = () => process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+var TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
+async function solanaRpc(method, params, ttlMs = 5e3) {
+  const res = await fetchJson(solanaRpcUrl(), {
+    method: "POST",
+    body: { jsonrpc: "2.0", id: 1, method, params },
+    ttlMs
+  });
+  if (res.error) throw new Error(`RPC de Solana (${method}): ${res.error.message}`);
+  return res.result;
+}
+async function solanaHoldings(owner) {
+  const lamports = (await solanaRpc("getBalance", [owner])).value;
+  const holdings = [{ venue: "solana", asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: lamports / 1e9 }];
+  for (const programId of TOKEN_PROGRAMS) {
+    const { value } = await solanaRpc(
+      "getTokenAccountsByOwner",
+      [owner, { programId }, { encoding: "jsonParsed" }]
+    );
+    for (const a of value) {
+      const { mint, tokenAmount } = a.account.data.parsed.info;
+      const amount = Number(tokenAmount.amount) / 10 ** tokenAmount.decimals;
+      if (amount <= 0) continue;
+      const symbol2 = await getVenue("solana").resolveToken(mint).then((t) => t.symbol, () => `${mint.slice(0, 4)}\u2026`);
+      holdings.push({ venue: "solana", asset: mint, symbol: symbol2, decimals: tokenAmount.decimals, amount });
+    }
+  }
+  return holdings;
+}
+var pad32 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+async function evmHoldings(chain, owner, extraTokens) {
+  const venue = getVenue(chain);
+  const seen = /* @__PURE__ */ new Set();
+  const tokens = [...venue.stables, ...extraTokens].filter((t) => {
+    const a = t.address.toLowerCase();
+    if (a === NATIVE || seen.has(a)) return false;
+    seen.add(a);
+    return true;
+  });
+  const results = await rpcBatch(chain, [
+    { method: "eth_getBalance", params: [owner, "latest"] },
+    ...tokens.map((t) => ({ method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, "latest"] }))
+  ]);
+  const holdings = [
+    { venue: chain, asset: NATIVE, symbol: venue.native.symbol, decimals: 18, amount: Number(BigInt(results[0])) / 1e18 }
+  ];
+  tokens.forEach((t, i) => {
+    const raw = results[i + 1];
+    const amount = raw && raw !== "0x" ? Number(BigInt(raw)) / 10 ** t.decimals : 0;
+    if (amount > 0) holdings.push({ venue: chain, asset: t.address.toLowerCase(), symbol: t.symbol, decimals: t.decimals, amount });
+  });
+  return holdings;
+}
+async function walletBalances(pub, extraEvmTokens = {}) {
+  const reads = [
+    ["solana", solanaHoldings(pub.solana)],
+    ...Object.keys(EVM_CHAINS).map((c) => [c, evmHoldings(c, pub.evm, extraEvmTokens[c] ?? [])])
+  ];
+  const out = { totalUsd: 0, byChain: { solana: 0, base: 0, bsc: 0 }, balances: [], errors: {} };
+  for (const [chain, p] of reads) {
+    try {
+      for (const h of await p) {
+        const v = await getVenue(chain).liquidationValue(h).catch(() => ({ usd: 0, method: "sin precio" }));
+        out.balances.push({ ...h, usd: Number(v.usd.toFixed(4)), valuedBy: v.method });
+        out.byChain[chain] += v.usd;
+        out.totalUsd += v.usd;
+      }
+    } catch (err) {
+      out.errors[chain] = err.message;
+    }
+  }
+  return out;
+}
+
+// src/live/client.ts
+import { spawn } from "node:child_process";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+
+// src/live/paths.ts
+import path6 from "node:path";
+var liveDir = () => path6.join(config2.dataDir, "live");
+var signerInfoFile = () => path6.join(liveDir(), "signer.json");
+
+// src/live/client.ts
+function readInfo() {
+  try {
+    return existsSync3(signerInfoFile()) ? JSON.parse(readFileSync3(signerInfoFile(), "utf8")) : null;
+  } catch {
+    return null;
+  }
+}
+var walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
+async function api(info, path8, init = {}) {
+  const res = await fetch(`http://127.0.0.1:${info.port}${path8}`, {
+    ...init,
+    headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
+    signal: AbortSignal.timeout(init.signal ? 12e4 : 5e3)
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body;
+}
+async function signerStatus() {
+  const info = readInfo();
+  if (!info) return null;
+  try {
+    return { info, status: await api(info, "/api/status") };
+  } catch {
+    return null;
+  }
+}
+async function ensureSigner() {
+  const running2 = await signerStatus();
+  if (running2) return { ...running2, started: false };
+  const entry = asset("signer.mjs", "src/live/signer/main.ts");
+  const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
+  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
+  child.unref();
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    const s = await signerStatus();
+    if (s && s.status.pid === child.pid) return { ...s, started: true };
+  }
+  throw new Error("El firmante no ha arrancado");
+}
+
+// src/live/keystore.ts
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync } from "node:fs";
+import path7 from "node:path";
+var SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
+var files = (dir) => ({ secret: path7.join(dir, "wallet.enc"), pub: path7.join(dir, "wallet.json") });
+function readWalletPublic(dir) {
+  const f = files(dir).pub;
+  return existsSync4(f) ? JSON.parse(readFileSync4(f, "utf8")) : null;
+}
+
 // src/dashboard/server.ts
 var INDEX_HTML = asset("index.html", "src/dashboard/index.html");
 var cached2 = null;
@@ -41305,6 +41444,30 @@ async function refreshValuation(log) {
     if (record2) lastSnapshot = Date.now();
   } catch (err) {
     log(`Error valorando la cartera: ${err.message}`);
+  }
+}
+var walletCache = null;
+async function refreshWallet(log) {
+  try {
+    const running2 = await signerStatus();
+    const pub = running2?.status.wallet ?? readWalletPublic(liveDir());
+    if (!pub) {
+      walletCache = { at: Date.now(), value: null };
+      return;
+    }
+    const b = await walletBalances(pub);
+    walletCache = {
+      at: Date.now(),
+      value: {
+        signer: running2 ? running2.status.stopped ? "parado" : running2.status.unlocked ? "desbloqueado" : "bloqueado" : "apagado",
+        walletUrl: running2 ? walletUrl(running2.info) : null,
+        addresses: { solana: pub.solana, evm: pub.evm },
+        totalUsd: b.totalUsd,
+        byChain: b.byChain
+      }
+    };
+  } catch (err) {
+    log(`Error leyendo la cartera real: ${err.message}`);
   }
 }
 var memoryCache = null;
@@ -41336,6 +41499,7 @@ function state() {
     snapshots,
     history: missionHistory(),
     memory: memorySummary(mission?.id ?? null),
+    realWallet: walletCache?.value ?? null,
     ...mission ? missionDetail(mission.id) : { trades: [], positions: [], lastNote: null, lastReview: null }
   };
 }
@@ -41362,7 +41526,7 @@ function handler(port) {
     const url2 = new URL(req.url ?? "/", `http://localhost:${port}`);
     try {
       if (url2.pathname === "/") {
-        return send(res, 200, "text/html; charset=utf-8", readFileSync3(INDEX_HTML, "utf8"));
+        return send(res, 200, "text/html; charset=utf-8", readFileSync5(INDEX_HTML, "utf8"));
       }
       if (url2.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
       if (url2.pathname === "/api/events") {
@@ -41401,11 +41565,13 @@ async function startDashboard(opts = {}) {
   running = { url: url2 };
   await refreshValuation(log);
   setInterval(() => refreshValuation(log), 15e3).unref();
+  void refreshWallet(log);
+  setInterval(() => refreshWallet(log), 6e4).unref();
   return { url: url2, alreadyRunning: false };
 }
 function openInBrowser(url2) {
   const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
-  spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
+  spawn2(cmd, args, { detached: true, stdio: "ignore" }).unref();
 }
 
 // src/sim/session.ts
@@ -41661,6 +41827,50 @@ server.registerTool(
       const { url: url2, alreadyRunning } = await startDashboard({ log: (m) => console.error(m) });
       if (open_in_system_browser) openInBrowser(url2);
       return text(`${alreadyRunning ? "El panel ya estaba en marcha" : "Panel arrancado"} en ${url2}${open_in_system_browser ? " (abierto en el navegador)" : ""}`);
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "start_wallet",
+  {
+    description: "[Solo para el usuario, no para el agente trader] Arranca el firmante de la cartera real de la IA (si no est\xE1 en marcha) y abre su p\xE1gina en el navegador del usuario, donde se crea la cartera, se desbloquea con la contrase\xF1a y se para todo. Nunca pidas al usuario la frase ni la contrase\xF1a en el chat: se escriben solo en esa p\xE1gina.",
+    inputSchema: {}
+  },
+  async () => {
+    try {
+      const { info, status, started } = await ensureSigner();
+      openInBrowser(walletUrl(info));
+      const state2 = !status.exists ? "todav\xEDa no hay cartera: el usuario debe crearla en la p\xE1gina" : status.unlocked ? "cartera desbloqueada" : "cartera bloqueada: el usuario debe desbloquearla en la p\xE1gina";
+      return text(`${started ? "Firmante arrancado" : "El firmante ya estaba en marcha"}; p\xE1gina abierta en el navegador (${walletUrl(info)}). Estado: ${state2}.`);
+    } catch (err) {
+      return { ...text(`Error: ${err.message}`), isError: true };
+    }
+  }
+);
+server.registerTool(
+  "wallet_status",
+  {
+    description: "[Solo para el usuario, no para el agente trader] Estado de la cartera real de la IA: si existe, si el firmante est\xE1 en marcha y desbloqueado, sus direcciones y los saldos reales por cadena (Solana, Base, BNB Chain) en USD.",
+    inputSchema: {}
+  },
+  async () => {
+    try {
+      const running2 = await signerStatus();
+      const pub = running2?.status.wallet ?? readWalletPublic(liveDir());
+      if (!pub) return text(JSON.stringify({ wallet: null, message: "No hay cartera real. Usa start_wallet para crearla." }));
+      const b = await walletBalances(pub);
+      return text(
+        JSON.stringify({
+          signer: running2 ? running2.status.stopped ? "parado" : running2.status.unlocked ? "desbloqueado" : "bloqueado" : "no est\xE1 en marcha",
+          addresses: { solana: pub.solana, evm: pub.evm },
+          totalUsd: Number(b.totalUsd.toFixed(2)),
+          byChain: Object.fromEntries(Object.entries(b.byChain).map(([c, v]) => [c, Number(v.toFixed(2))])),
+          balances: b.balances.map((x) => ({ chain: x.venue, symbol: x.symbol, amount: Number(x.amount.toPrecision(8)), usd: Number(x.usd.toFixed(2)) })),
+          ...Object.keys(b.errors).length ? { unreadable: b.errors } : {}
+        })
+      );
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }

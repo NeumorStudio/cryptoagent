@@ -23,7 +23,7 @@ const MCP = "cryptosim";
 const dist = path.join(root, "plugin", "dist");
 if (!existsSync(path.join(dist, "cryptosim.mjs"))) throw new Error("Falta plugin/dist: ejecuta antes npm run build:plugin");
 mkdirSync(serverDir, { recursive: true });
-for (const f of ["cryptosim.mjs", "index.html", "guia-del-terreno.md"]) copyFileSync(path.join(dist, f), path.join(serverDir, f));
+for (const f of ["cryptosim.mjs", "signer.mjs", "index.html", "guia-del-terreno.md"]) copyFileSync(path.join(dist, f), path.join(serverDir, f));
 const serverFile = path.join(serverDir, "cryptosim.mjs");
 
 // ── 2. opencode.json ────────────────────────────────────────────────────────
@@ -138,6 +138,15 @@ Habla en español. ${ASK}
 description: Abre el panel en directo de cryptoagent
 ---
 Llama a \`cryptosim_start_dashboard\` con open_in_system_browser: true y di en una línea dónde está el panel.
+`,
+  "cryptoagent-cartera": `---
+description: Abre la cartera real de la IA de cryptoagent (crearla, desbloquearla, ver saldos o pararla)
+---
+Llama a \`cryptosim_start_wallet\`: abre en el navegador la página de la cartera real de la IA. Explica en pocas líneas, en español, según el estado:
+- sin cartera: que la cree en la página; verá la frase de recuperación una sola vez y debe apuntarla en papel (puede importarla en MetaMask y Phantom para verla);
+- bloqueada: que escriba su contraseña en la página;
+- desbloqueada: llama a \`cryptosim_wallet_status\` y enseña el total, el saldo por cadena y las direcciones.
+Nunca pidas ni repitas en el chat la frase ni la contraseña. De momento la cartera es solo de lectura: el agente aún no opera con dinero real.
 `,
 };
 const commandsDir = path.join(configDir, "commands");

@@ -94,6 +94,8 @@ export interface ChainAdapter extends VenueBase {
   native: TokenRef;
   /** Stablecoin a la que se liquida al cerrar posiciones. */
   cash: TokenRef;
+  /** Todas las stablecoins que cuentan como efectivo en la cadena. */
+  stables: TokenRef[];
   /** Nativo que se deja sin vender al liquidar, para pagar esa última transacción. */
   liquidationReserve: number;
   /** Cuánto del capital de la cadena se entrega en nativo para el gas al empezar una misión (USD). */

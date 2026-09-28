@@ -3,6 +3,7 @@
 // con su propio navegador. stdout es el canal del protocolo: no usar console.log.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { slimToolList } from "./tools/schema-slim.js";
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard, stopDashboard } from "./dashboard/server.js";
@@ -308,7 +309,11 @@ for (const tool of SIM_TOOLS) {
   });
 }
 
-await server.connect(new StdioServerTransport());
+// La lista de herramientas sale sin el relleno que añade la conversión desde zod (ver schema-slim.ts).
+const transport = new StdioServerTransport();
+const send = transport.send.bind(transport);
+transport.send = (message) => send(slimToolList(message));
+await server.connect(transport);
 
 // Mientras Claude Code está abierto, este proceso también vigila las órdenes condicionales
 // y la misión (el reclamo atómico evita ejecutar dos veces si además corre `npm run watcher`).

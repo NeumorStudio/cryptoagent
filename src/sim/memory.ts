@@ -865,19 +865,49 @@ export function missionReviewData(missionId: number, since?: string) {
   const m = getMission(missionId);
   if (!m) throw new Error(`No existe la misión #${missionId}`);
   const from = since ?? "";
+  const { benchmark: _b, benchmark_sol_price: _s, ...mission } = m as Mission & { benchmark?: unknown; benchmark_sol_price?: unknown };
+  const briefing = db.prepare("SELECT text, updated_at, seen_at FROM briefings WHERE mission_id = ?").get(missionId) as
+    | { text: string; updated_at: string; seen_at: string | null }
+    | undefined;
+  const errors = db.prepare("SELECT id, ts, tool, error_class, message, howto_id FROM tool_errors WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from) as Array<
+    Record<string, unknown> & { error_class: string; message: string }
+  >;
+  // A mitad de misión (since), solo lo nuevo: el revisor ya leyó el resto en su revisión anterior. Las
+  // posiciones abiertas antes siguen saliendo (su estado importa), pero sin la tesis ni los datos de entrada.
+  const allPositions = listPositions(missionId);
+  const positions = since
+    ? allPositions
+        .filter((p) => p.status === "open" || p.openedAt > from || (p.closedAt ?? "") > from)
+        .map((p) => (p.openedAt > from ? p : { ...p, thesis: undefined, lessonsApplied: undefined, entry: undefined, research: undefined, note: "abierta antes de tu última revisión" }))
+    : allPositions;
   return {
-    mission: { ...m, profile: describe(profile(m)) },
+    mission: { ...mission, profile: describe(profile(m)) },
     stats: missionStats(missionId),
-    briefing: db.prepare("SELECT text, updated_at, seen_at FROM briefings WHERE mission_id = ?").get(missionId) ?? null,
-    checkpoints: db.prepare("SELECT ts, summary FROM review_checkpoints WHERE mission_id = ? ORDER BY id").all(missionId),
-    positions: listPositions(missionId),
+    briefing: !briefing
+      ? null
+      : since && briefing.updated_at <= from
+        ? { updated_at: briefing.updated_at, seen_at: briefing.seen_at, text: "(sin cambios desde tu última revisión)" }
+        : briefing,
+    ...(since
+      ? { checkpoints: `${(db.prepare("SELECT COUNT(*) AS n FROM review_checkpoints WHERE mission_id = ?").get(missionId) as { n: number }).n} revisiones anteriores` }
+      : { checkpoints: db.prepare("SELECT ts, summary FROM review_checkpoints WHERE mission_id = ? ORDER BY id").all(missionId) }),
+    positions,
+    ...(since && positions.length < allPositions.length ? { positionsNote: `${allPositions.length - positions.length} posiciones cerradas antes de tu última revisión no salen` } : {}),
     journal: db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id LIMIT 400").all(missionId, from),
     workLog: db
       .prepare("SELECT ts, kind, title FROM activity WHERE mission_id = ? AND ts > ? AND kind IN ('thought', 'text') ORDER BY id LIMIT 300")
       .all(missionId, from),
-    notes: db.prepare("SELECT ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId),
-    observations: db.prepare("SELECT id, ts, kind, text, status FROM observations WHERE mission_id = ? ORDER BY id").all(missionId),
-    toolErrors: db.prepare("SELECT id, ts, tool, error_class, message, howto_id FROM tool_errors WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from),
+    notes: db.prepare("SELECT ts, text FROM notes WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from),
+    // Las pendientes siempre (hay que procesarlas); las ya resueltas, solo si son nuevas.
+    observations: db
+      .prepare("SELECT id, ts, kind, text, status FROM observations WHERE mission_id = ? AND (status = 'pending' OR ts > ?) ORDER BY id")
+      .all(missionId, from),
+    // El mensaje solo si dice algo más que su clase normalizada.
+    toolErrors: errors.map(({ error_class, message, ...e }) => ({
+      ...e,
+      error: error_class,
+      ...(message && message !== error_class && !message.startsWith(error_class) ? { message: message.length > 240 ? message.slice(0, 240) + "…" : message } : {}),
+    })),
   };
 }
 

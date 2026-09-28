@@ -1,5 +1,5 @@
 import { db, now } from "../db.js";
-import { getBriefing, markBriefingSeen, recall } from "./memory.js";
+import { getBriefing, markBriefingSeen, recallSummary } from "./memory.js";
 import { getMission, missionStatus } from "./mission.js";
 import { listOrders } from "./orders.js";
 import { valuation } from "./portfolio.js";
@@ -29,17 +29,13 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
       memoryLines.push("Briefing del revisor para esta misión (lo prepara otro agente a partir de tu memoria):", briefing.text, "");
       markBriefingSeen(missionId);
     }
-    const mem = recall(missionId, 6);
-    const clip = (t: string, n = 300) => (t.length > n ? t.slice(0, n) + "…" : t);
+    // El mismo resumen que da recall_memory, para que no haga falta pedirlo otra vez (la misión ya va arriba).
+    const { currentMission: _m, note: _n, ...mem } = recallSummary(missionId);
     memoryLines.push(
       mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length
-        ? "Tu memoria, resumida y ordenada por parecido con esta misión (recall_memory tiene el detalle completo):\n" +
-            toText({
-              missionHistory: mem.missionHistory.map(({ distance: _d, ...h }) => h),
-              howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
-              beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
-              totalBeliefs: mem.totalBeliefs,
-            })
+        ? "Tu memoria, resumida y ordenada por parecido con esta misión. Es lo mismo que recall_memory sin parámetros: no hace falta " +
+            "pedirla otra vez. Con recall_memory y howto_ids lees el texto de los howtos que te sirvan:\n" +
+            toText(mem)
         : "Es tu primera misión: todavía no tienes memoria.",
       "",
     );

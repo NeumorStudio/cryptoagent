@@ -8211,7 +8211,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.25.0";
+    CODE_VERSION = "0.26.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -10857,7 +10857,17 @@ async function missionStatus(missionId) {
     return {
       active: false,
       message: `La misi\xF3n #${mission.id} ha terminado (${mission.status}). No se puede operar hasta que el usuario cree una nueva.`,
-      mission
+      mission: {
+        id: mission.id,
+        status: mission.status,
+        mode: mission.mode,
+        initialUsd: mission.initial_usd,
+        targetUsd: mission.target_usd,
+        finalUsd: mission.final_usd,
+        deadline: mission.deadline,
+        endedAt: mission.ended_at,
+        instructions: mission.instructions
+      }
     };
   }
   const v = await valuation(mission.id);
@@ -38752,11 +38762,11 @@ var Protocol = class {
    *
    * The Protocol object assumes ownership of the Transport, replacing any callbacks that have already been set, and expects that it is the only user of the Transport instance going forward.
    */
-  async connect(transport) {
+  async connect(transport2) {
     if (this._transport) {
       throw new Error("Already connected to a transport. Call close() before connecting to a new transport, or use a separate Protocol instance per connection.");
     }
-    this._transport = transport;
+    this._transport = transport2;
     const _onclose = this.transport?.onclose;
     this._transport.onclose = () => {
       _onclose?.();
@@ -40337,8 +40347,8 @@ var McpServer = class {
    *
    * The `server` object assumes ownership of the Transport, replacing any callbacks that have already been set, and expects that it is the only user of the Transport instance going forward.
    */
-  async connect(transport) {
-    return await this.server.connect(transport);
+  async connect(transport2) {
+    return await this.server.connect(transport2);
   }
   /**
    * Closes the connection.
@@ -41203,6 +41213,37 @@ var StdioServerTransport = class {
   }
 };
 
+// src/tools/schema-slim.ts
+var SAFE = Number.MAX_SAFE_INTEGER;
+function slimSchema(node2) {
+  if (Array.isArray(node2)) return node2.map(slimSchema);
+  if (!node2 || typeof node2 !== "object") return node2;
+  const out = {};
+  for (const [k, v] of Object.entries(node2)) {
+    if (k === "$schema") continue;
+    if (k === "minimum" && v === -SAFE || k === "maximum" && v === SAFE) continue;
+    if (k === "minLength" && v === 1) continue;
+    out[k] = slimSchema(v);
+  }
+  return out;
+}
+function slimToolList(message) {
+  const tools = message?.result?.tools;
+  if (!Array.isArray(tools)) return message;
+  const slim = tools.map((t) => {
+    const { execution, inputSchema, outputSchema, ...rest } = t;
+    const isDefault = execution && typeof execution === "object" && execution.taskSupport === "forbidden" && Object.keys(execution).length === 1;
+    return {
+      ...rest,
+      ...inputSchema ? { inputSchema: slimSchema(inputSchema) } : {},
+      ...outputSchema ? { outputSchema: slimSchema(outputSchema) } : {},
+      ...execution && !isDefault ? { execution } : {}
+    };
+  });
+  const m = message;
+  return { ...m, result: { ...m.result, tools: slim } };
+}
+
 // src/sim/orders.ts
 init_db();
 init_binance();
@@ -41947,17 +41988,29 @@ function missionReviewData(missionId, since) {
   const m = getMission(missionId);
   if (!m) throw new Error(`No existe la misi\xF3n #${missionId}`);
   const from = since ?? "";
+  const { benchmark: _b, benchmark_sol_price: _s, ...mission } = m;
+  const briefing = db.prepare("SELECT text, updated_at, seen_at FROM briefings WHERE mission_id = ?").get(missionId);
+  const errors = db.prepare("SELECT id, ts, tool, error_class, message, howto_id FROM tool_errors WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from);
+  const allPositions = listPositions(missionId);
+  const positions = since ? allPositions.filter((p) => p.status === "open" || p.openedAt > from || (p.closedAt ?? "") > from).map((p) => p.openedAt > from ? p : { ...p, thesis: void 0, lessonsApplied: void 0, entry: void 0, research: void 0, note: "abierta antes de tu \xFAltima revisi\xF3n" }) : allPositions;
   return {
-    mission: { ...m, profile: describe3(profile(m)) },
+    mission: { ...mission, profile: describe3(profile(m)) },
     stats: missionStats(missionId),
-    briefing: db.prepare("SELECT text, updated_at, seen_at FROM briefings WHERE mission_id = ?").get(missionId) ?? null,
-    checkpoints: db.prepare("SELECT ts, summary FROM review_checkpoints WHERE mission_id = ? ORDER BY id").all(missionId),
-    positions: listPositions(missionId),
+    briefing: !briefing ? null : since && briefing.updated_at <= from ? { updated_at: briefing.updated_at, seen_at: briefing.seen_at, text: "(sin cambios desde tu \xFAltima revisi\xF3n)" } : briefing,
+    ...since ? { checkpoints: `${db.prepare("SELECT COUNT(*) AS n FROM review_checkpoints WHERE mission_id = ?").get(missionId).n} revisiones anteriores` } : { checkpoints: db.prepare("SELECT ts, summary FROM review_checkpoints WHERE mission_id = ? ORDER BY id").all(missionId) },
+    positions,
+    ...since && positions.length < allPositions.length ? { positionsNote: `${allPositions.length - positions.length} posiciones cerradas antes de tu \xFAltima revisi\xF3n no salen` } : {},
     journal: db.prepare("SELECT ts, kind, summary, reasoning, details FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id LIMIT 400").all(missionId, from),
     workLog: db.prepare("SELECT ts, kind, title FROM activity WHERE mission_id = ? AND ts > ? AND kind IN ('thought', 'text') ORDER BY id LIMIT 300").all(missionId, from),
-    notes: db.prepare("SELECT ts, text FROM notes WHERE mission_id = ? ORDER BY id").all(missionId),
-    observations: db.prepare("SELECT id, ts, kind, text, status FROM observations WHERE mission_id = ? ORDER BY id").all(missionId),
-    toolErrors: db.prepare("SELECT id, ts, tool, error_class, message, howto_id FROM tool_errors WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from)
+    notes: db.prepare("SELECT ts, text FROM notes WHERE mission_id = ? AND ts > ? ORDER BY id").all(missionId, from),
+    // Las pendientes siempre (hay que procesarlas); las ya resueltas, solo si son nuevas.
+    observations: db.prepare("SELECT id, ts, kind, text, status FROM observations WHERE mission_id = ? AND (status = 'pending' OR ts > ?) ORDER BY id").all(missionId, from),
+    // El mensaje solo si dice algo más que su clase normalizada.
+    toolErrors: errors.map(({ error_class, message, ...e }) => ({
+      ...e,
+      error: error_class,
+      ...message && message !== error_class && !message.startsWith(error_class) ? { message: message.length > 240 ? message.slice(0, 240) + "\u2026" : message } : {}
+    }))
   };
 }
 async function waitForActivity(maxMinutes) {
@@ -42201,29 +42254,42 @@ Si aun as\xED quieres comprarlo, repite la operaci\xF3n con thesis.overrides = [
 init_paths();
 
 // src/tools/format.ts
-var json2 = (value) => JSON.stringify(value);
+function roundFor(key, v) {
+  if (!Number.isFinite(v) || Number.isInteger(v)) return v;
+  const abs = Math.abs(v);
+  if (/pct$/i.test(key)) return Number(v.toFixed(abs >= 10 ? 1 : 2));
+  if (/usd$/i.test(key)) return abs >= 1e3 ? Math.round(v) : abs >= 1 ? Number(v.toFixed(2)) : Number(v.toPrecision(3));
+  if (/price$/i.test(key)) return Number(v.toPrecision(5));
+  return v;
+}
+function compactReplacer(key, value) {
+  if (value === null && !Array.isArray(this)) return void 0;
+  return typeof value === "number" ? roundFor(key, value) : value;
+}
+var json2 = (value) => JSON.stringify(value, compactReplacer);
 var isRecord = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
-function cell(v) {
-  if (v === void 0 || v === null) return "";
-  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+var isEmpty = (v) => v === void 0 || v === null;
+function cell(key, v) {
+  if (isEmpty(v)) return "";
+  const s = typeof v === "object" ? json2(v) : typeof v === "number" ? String(roundFor(key, v)) : String(v);
   return s.replace(/\|/g, "\xA6").replace(/\r?\n/g, " ");
 }
 function table(rows, indent = "") {
-  const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-  return [`${indent}[${rows.length}] ${keys.join("|")}`, ...rows.map((r) => indent + keys.map((k) => cell(r[k])).join("|"))].join("\n");
+  const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((k) => rows.some((r) => !isEmpty(r[k]) && r[k] !== ""));
+  return [`${indent}[${rows.length}] ${keys.join("|")}`, ...rows.map((r) => indent + keys.map((k) => cell(k, r[k])).join("|"))].join("\n");
 }
 function toText(value, indent = "") {
   if (Array.isArray(value) && value.length > 1 && value.every(isRecord)) return table(value, indent);
   if (isRecord(value)) {
-    return Object.entries(value).filter(([, v]) => v !== void 0).map(([k, v]) => {
+    return Object.entries(value).filter(([, v]) => !isEmpty(v)).map(([k, v]) => {
       if (Array.isArray(v) && v.length > 1 && v.every(isRecord)) return `${indent}${k}:
 ${table(v, indent + "  ")}`;
       if (isRecord(v) && Object.keys(v).length > 0) return `${indent}${k}:
 ${toText(v, indent + "  ")}`;
-      return `${indent}${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`;
+      return `${indent}${k}: ${typeof v === "string" ? v : typeof v === "number" ? roundFor(k, v) : json2(v)}`;
     }).join("\n");
   }
-  return indent + JSON.stringify(value);
+  return indent + json2(value);
 }
 
 // src/tools/define.ts
@@ -42252,18 +42318,14 @@ var conditionSchema = external_exports.object({
 var TOKEN_ALIASES = "en Solana: SOL y USDC; en Base: ETH, WETH y USDC; en BNB Chain (bsc): BNB, WBNB, USDT y USDC";
 var thesis = external_exports.object({
   why: external_exports.string().min(1).describe("Por qu\xE9 esta operaci\xF3n y por qu\xE9 ahora"),
-  evidence: external_exports.string().min(1).describe("Qu\xE9 has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
-  sources: external_exports.array(external_exports.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
-  exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)"),
-  beliefs_applied: external_exports.array(external_exports.number().int()).describe("Ids de las creencias de tu memoria que aplicas en esta operaci\xF3n (vac\xEDo si ninguna). El simulador medir\xE1 c\xF3mo le va a cada una"),
-  memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria aqu\xED (creencias, howtos, el briefing del revisor) o por qu\xE9 nada de ella aplica a esta situaci\xF3n"),
-  risks_checked: external_exports.string().optional().describe(
-    "Obligatorio al comprar un token: qu\xE9 has comprobado en contra de la compra (creencias negativas de tu memoria que podr\xEDan aplicar y las alarmas de riskCheck en token_report) y por qu\xE9 no la descartan. Pensar en lo que puede salir mal antes de entrar."
-  ),
-  overrides: external_exports.array(external_exports.object({ id: external_exports.number().int(), reason: external_exports.string().min(10) })).optional().describe(
-    "Solo si el simulador rechaz\xF3 la compra porque tu memoria la desaconseja: las creencias que decides ignorar a sabiendas, cada una con el motivo concreto por el que esta vez es distinto. La operaci\xF3n cuenta igual como evidencia de esas creencias."
-  )
-}).describe("Tesis de la operaci\xF3n. Queda en el diario y el usuario la ve en el panel.");
+  evidence: external_exports.string().min(1).describe("Datos concretos comprobados que la respaldan (no solo que el precio se mueve)"),
+  sources: external_exports.array(external_exports.string().min(1)).min(1).describe("URLs o APIs consultadas"),
+  exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (en una venta: qu\xE9 har\xE1s despu\xE9s)"),
+  beliefs_applied: external_exports.array(external_exports.number().int()).describe("Ids de las creencias que aplicas (vac\xEDo si ninguna); el simulador mide c\xF3mo le va a cada una"),
+  memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria (creencias, howtos, briefing) o por qu\xE9 no aplica"),
+  risks_checked: external_exports.string().optional().describe("Obligatorio al comprar un token: qu\xE9 has comprobado en contra (creencias negativas, flags de riskCheck) y por qu\xE9 no la descartan"),
+  overrides: external_exports.array(external_exports.object({ id: external_exports.number().int(), reason: external_exports.string().min(10) })).optional().describe("Solo si el simulador rechaz\xF3 la compra por tu memoria: creencias que ignoras a sabiendas, con el motivo concreto; cuentan igual como evidencia")
+}).describe("Tesis de la operaci\xF3n (queda en el diario y en el panel)");
 var formatThesis = (t) => `Por qu\xE9: ${t.why}
 Pruebas: ${t.evidence}
 Fuentes: ${t.sources.join(" \xB7 ")}
@@ -42296,7 +42358,6 @@ function riskCheck(chain, token2, f) {
     insidersDetected: f.insidersDetected,
     lpLockedPct: f.lpLockedPct,
     launchpad: f.launchpad,
-    ageMinutes: f.ageMinutes,
     flags: flags.length ? flags : ["ninguna se\xF1al de alarma en los datos disponibles"],
     ...prev ? {
       sinceLastRead: {
@@ -42309,14 +42370,75 @@ function riskCheck(chain, token2, f) {
     } : { sinceLastRead: "primera lectura: vuelve a leerlo en 2-3 minutos para ver si aguanta" }
   };
 }
+var SOURCE_CODE = {
+  jupiter_trending_5m: "jup5m",
+  jupiter_trending_1h: "jup1h",
+  pumpfun_live: "pump",
+  dexscreener_boosted: "dexBoost",
+  geckoterminal_trending: "gecko",
+  geckoterminal_trending_pools: "gecko",
+  geckoterminal_new_pools: "geckoNew"
+};
+function compactScan(scan) {
+  if (!scan || typeof scan !== "object" || !Array.isArray(scan.candidates)) return scan;
+  const s = scan;
+  return {
+    ...s,
+    sourcesStatus: void 0,
+    sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h \xB7 pump: en directo en pump.fun \xB7 dexBoost: promocionado en DexScreener \xB7 gecko/geckoNew: GeckoTerminal tendencia/nuevos",
+    candidates: s.candidates.map(({ sources, name, symbol: symbol2, ...c }) => {
+      const same = typeof name === "string" && typeof symbol2 === "string" && name.trim().toLowerCase() === symbol2.trim().toLowerCase();
+      return {
+        ...Object.fromEntries(Object.entries(c).slice(0, 1)),
+        symbol: symbol2,
+        ...same || !name ? {} : { name: String(name).slice(0, 24) },
+        sources: Array.isArray(sources) ? sources.map((x) => SOURCE_CODE[x] ?? x).join(",") : sources,
+        ...Object.fromEntries(Object.entries(c).slice(1))
+      };
+    })
+  };
+}
+function compactReport(report) {
+  const r = { ...report };
+  delete r.mint;
+  if (r.token && typeof r.token === "object") {
+    const { address: _a3, ...token2 } = r.token;
+    r.token = token2;
+  }
+  const pump = r.pumpfun;
+  if (pump && typeof pump === "object") {
+    const verdict = pump.securityVerdict?.verdict;
+    const { securityVerdict: _v, url: _u, ...rest } = pump;
+    r.pumpfun = { ...rest, ...verdict ? { securityVerdict: verdict } : {} };
+  }
+  return r;
+}
+function fieldGuide(text2, sections) {
+  const parts = text2.split(/^(?=## \d+\.)/m);
+  const intro = parts[0].trim();
+  const byNumber = new Map(parts.slice(1).map((p) => [Number(p.match(/^## (\d+)\./)[1]), p.trim()]));
+  if (sections?.length) {
+    const found = sections.map((n3) => byNumber.get(n3) ?? `## ${n3}. (no existe esta secci\xF3n)`);
+    return found.join("\n\n");
+  }
+  const index = [...byNumber.entries()].map(([n3, p]) => {
+    const [title, ...body] = p.split("\n");
+    const first = body.find((l) => l.trim() && !l.startsWith("#"))?.trim() ?? "";
+    return `${title.replace(/^## /, "")}: ${first.length > 160 ? first.slice(0, 160) + "\u2026" : first}`;
+  });
+  return `${intro}
+
+\xCDndice (pide el texto con field_guide y sections, p. ej. sections: [1, 5]):
+${index.join("\n")}`;
+}
 var SIM_TOOLS = [
   tool({
     name: "scan_market",
     kind: "research",
     researchTarget: () => void 0,
     description: "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
-    schema: external_exports.object({ chain: chainParam, limit: external_exports.number().int().min(5).max(60).default(25) }),
-    run: async ({ chain, limit }) => toText(await getChain(chain).research.scan(limit))
+    schema: external_exports.object({ chain: chainParam, limit: external_exports.number().int().min(5).max(60).default(15) }),
+    run: async ({ chain, limit }) => toText(compactScan(await getChain(chain).research.scan(limit)))
   }),
   tool({
     name: "token_report",
@@ -42327,7 +42449,7 @@ var SIM_TOOLS = [
     run: async ({ chain, token: token2 }) => {
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
-      return json2({ ...report, ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {} });
+      return json2({ ...compactReport(report), ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {} });
     }
   }),
   tool({
@@ -42346,9 +42468,9 @@ var SIM_TOOLS = [
     name: "field_guide",
     kind: "research",
     role: "both",
-    description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
-    schema: external_exports.object({}),
-    run: async () => readFileSync3(FIELD_GUIDE, "utf8")
+    description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones. Sin sections, el \xEDndice; con sections, el texto de esas secciones.",
+    schema: external_exports.object({ sections: external_exports.array(external_exports.number().int().min(1).max(20)).optional().describe("N\xFAmeros de secci\xF3n que quieres leer") }),
+    run: async ({ sections }) => fieldGuide(readFileSync3(FIELD_GUIDE, "utf8"), sections)
   }),
   tool({
     name: "log_progress",
@@ -42791,9 +42913,22 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "memory",
     role: "trader",
     researchTarget: () => void 0,
-    description: "Tus posiciones (de la misi\xF3n indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos), cu\xE1nto hab\xEDas investigado antes, tu tesis y las creencias que aplicaste.",
-    schema: external_exports.object({ mission_id: external_exports.number().int().optional(), limit: external_exports.number().int().min(1).max(200).default(50) }),
-    run: async ({ mission_id, limit }) => toText(listPositions(mission_id).slice(0, limit))
+    description: "Tus posiciones: coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antig\xFCedad, liquidez, variaci\xF3n, holders, riesgos), cu\xE1nto hab\xEDas investigado antes, tu tesis y las creencias que aplicaste. Por defecto, las de la misi\xF3n actual; con mission_id, las de otra; con all_missions: true, las \xFAltimas de todas (largo).",
+    schema: external_exports.object({
+      mission_id: external_exports.number().int().optional(),
+      all_missions: external_exports.boolean().default(false),
+      limit: external_exports.number().int().min(1).max(200).default(30)
+    }),
+    run: async ({ mission_id, all_missions, limit }, ctx) => {
+      const target = all_missions ? void 0 : mission_id ?? ctx.missionId ?? void 0;
+      return toText(
+        listPositions(target).slice(0, limit).map(({ lessonsApplied, missionId, ...p }) => ({
+          ...target === void 0 ? { missionId } : {},
+          ...p,
+          ...lessonsApplied && !(p.thesis ?? "").includes(lessonsApplied) ? { lessonsApplied } : {}
+        }))
+      );
+    }
   }),
   tool({
     name: "report_observation",
@@ -43530,15 +43665,9 @@ async function sessionBriefing(sessionId, missionId) {
       memoryLines.push("Briefing del revisor para esta misi\xF3n (lo prepara otro agente a partir de tu memoria):", briefing.text, "");
       markBriefingSeen(missionId);
     }
-    const mem = recall(missionId, 6);
-    const clip2 = (t, n3 = 300) => t.length > n3 ? t.slice(0, n3) + "\u2026" : t;
+    const { currentMission: _m, note: _n, ...mem } = recallSummary(missionId);
     memoryLines.push(
-      mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length ? "Tu memoria, resumida y ordenada por parecido con esta misi\xF3n (recall_memory tiene el detalle completo):\n" + toText({
-        missionHistory: mem.missionHistory.map(({ distance: _d, ...h }) => h),
-        howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
-        beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: clip2(b.statement), appliesTo: b.appliesTo, evidence: b.evidence.verdict })),
-        totalBeliefs: mem.totalBeliefs
-      }) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
+      mem.missionHistory.length || mem.totalBeliefs || mem.howtos.length ? "Tu memoria, resumida y ordenada por parecido con esta misi\xF3n. Es lo mismo que recall_memory sin par\xE1metros: no hace falta pedirla otra vez. Con recall_memory y howto_ids lees el texto de los howtos que te sirvan:\n" + toText(mem) : "Es tu primera misi\xF3n: todav\xEDa no tienes memoria.",
       ""
     );
   }
@@ -43892,7 +44021,10 @@ for (const tool2 of SIM_TOOLS) {
     }
   });
 }
-await server.connect(new StdioServerTransport());
+var transport = new StdioServerTransport();
+var send2 = transport.send.bind(transport);
+transport.send = (message) => send2(slimToolList(message));
+await server.connect(transport);
 setInterval(async () => {
   if (supersededBy()) return;
   await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));

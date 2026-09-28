@@ -54,35 +54,21 @@ const TOKEN_ALIASES = "en Solana: SOL y USDC; en Base: ETH, WETH y USDC; en BNB 
 const thesis = z
   .object({
     why: z.string().min(1).describe("Por qué esta operación y por qué ahora"),
-    evidence: z.string().min(1).describe("Qué has comprobado que la respalda: datos concretos, no solo que el precio se mueve"),
-    sources: z.array(z.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
-    exit_plan: z
-      .string()
-      .min(1)
-      .describe("Cuándo cerrarías con beneficio y cuándo la darías por fallida (si es una venta: qué harás después)"),
-    beliefs_applied: z
-      .array(z.number().int())
-      .describe("Ids de las creencias de tu memoria que aplicas en esta operación (vacío si ninguna). El simulador medirá cómo le va a cada una"),
-    memory_note: z
-      .string()
-      .min(1)
-      .describe("Cómo aplicas tu memoria aquí (creencias, howtos, el briefing del revisor) o por qué nada de ella aplica a esta situación"),
+    evidence: z.string().min(1).describe("Datos concretos comprobados que la respaldan (no solo que el precio se mueve)"),
+    sources: z.array(z.string().min(1)).min(1).describe("URLs o APIs consultadas"),
+    exit_plan: z.string().min(1).describe("Cuándo cerrarías con beneficio y cuándo la darías por fallida (en una venta: qué harás después)"),
+    beliefs_applied: z.array(z.number().int()).describe("Ids de las creencias que aplicas (vacío si ninguna); el simulador mide cómo le va a cada una"),
+    memory_note: z.string().min(1).describe("Cómo aplicas tu memoria (creencias, howtos, briefing) o por qué no aplica"),
     risks_checked: z
       .string()
       .optional()
-      .describe(
-        "Obligatorio al comprar un token: qué has comprobado en contra de la compra (creencias negativas de tu memoria que podrían aplicar y " +
-          "las alarmas de riskCheck en token_report) y por qué no la descartan. Pensar en lo que puede salir mal antes de entrar.",
-      ),
+      .describe("Obligatorio al comprar un token: qué has comprobado en contra (creencias negativas, flags de riskCheck) y por qué no la descartan"),
     overrides: z
       .array(z.object({ id: z.number().int(), reason: z.string().min(10) }))
       .optional()
-      .describe(
-        "Solo si el simulador rechazó la compra porque tu memoria la desaconseja: las creencias que decides ignorar a sabiendas, " +
-          "cada una con el motivo concreto por el que esta vez es distinto. La operación cuenta igual como evidencia de esas creencias.",
-      ),
+      .describe("Solo si el simulador rechazó la compra por tu memoria: creencias que ignoras a sabiendas, con el motivo concreto; cuentan igual como evidencia"),
   })
-  .describe("Tesis de la operación. Queda en el diario y el usuario la ve en el panel.");
+  .describe("Tesis de la operación (queda en el diario y en el panel)");
 
 const formatThesis = (t: z.infer<typeof thesis>) =>
   `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}\nMemoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` +
@@ -120,7 +106,6 @@ function riskCheck(chain: ChainId, token: string, f: Features) {
     insidersDetected: f.insidersDetected,
     lpLockedPct: f.lpLockedPct,
     launchpad: f.launchpad,
-    ageMinutes: f.ageMinutes,
     flags: flags.length ? flags : ["ninguna señal de alarma en los datos disponibles"],
     ...(prev
       ? {
@@ -136,6 +121,77 @@ function riskCheck(chain: ChainId, token: string, f: Features) {
   };
 }
 
+// ─── Respuestas de investigación compactas ─────────────────────────────────
+// scan_market y token_report son lo que más contexto llena en una misión: se quitan repeticiones.
+
+const SOURCE_CODE: Record<string, string> = {
+  jupiter_trending_5m: "jup5m",
+  jupiter_trending_1h: "jup1h",
+  pumpfun_live: "pump",
+  dexscreener_boosted: "dexBoost",
+  geckoterminal_trending: "gecko",
+  geckoterminal_trending_pools: "gecko",
+  geckoterminal_new_pools: "geckoNew",
+};
+
+/** Fuentes abreviadas y nombre solo si aporta algo distinto del símbolo. */
+export function compactScan(scan: unknown) {
+  if (!scan || typeof scan !== "object" || !Array.isArray((scan as { candidates?: unknown }).candidates)) return scan;
+  const s = scan as { candidates: Array<Record<string, unknown>> };
+  return {
+    ...s,
+    sourcesStatus: undefined,
+    sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h · pump: en directo en pump.fun · dexBoost: promocionado en DexScreener · gecko/geckoNew: GeckoTerminal tendencia/nuevos",
+    candidates: s.candidates.map(({ sources, name, symbol, ...c }) => {
+      const same = typeof name === "string" && typeof symbol === "string" && name.trim().toLowerCase() === symbol.trim().toLowerCase();
+      return {
+        ...Object.fromEntries(Object.entries(c).slice(0, 1)),
+        symbol,
+        ...(same || !name ? {} : { name: String(name).slice(0, 24) }),
+        sources: Array.isArray(sources) ? sources.map((x) => SOURCE_CODE[x] ?? x).join(",") : sources,
+        ...Object.fromEntries(Object.entries(c).slice(1)),
+      };
+    }),
+  };
+}
+
+/** token_report sin lo que ya sabe el agente (la dirección que ha pedido) ni lo que no sirve para decidir. */
+export function compactReport(report: unknown): Record<string, unknown> {
+  const r = { ...(report as Record<string, unknown>) };
+  delete r.mint;
+  if (r.token && typeof r.token === "object") {
+    const { address: _a, ...token } = r.token as Record<string, unknown>;
+    r.token = token;
+  }
+  const pump = r.pumpfun as Record<string, unknown> | undefined;
+  if (pump && typeof pump === "object") {
+    const verdict = (pump.securityVerdict as { verdict?: string } | undefined)?.verdict;
+    const { securityVerdict: _v, url: _u, ...rest } = pump;
+    r.pumpfun = { ...rest, ...(verdict ? { securityVerdict: verdict } : {}) };
+  }
+  return r;
+}
+
+/**
+ * La guía del terreno por partes: sin secciones, la introducción y el índice (con la primera línea de
+ * cada sección); con secciones, solo esas. Leerla entera eran ~4.400 tokens que se arrastraban toda la misión.
+ */
+export function fieldGuide(text: string, sections?: number[]): string {
+  const parts = text.split(/^(?=## \d+\.)/m);
+  const intro = parts[0]!.trim();
+  const byNumber = new Map(parts.slice(1).map((p) => [Number(p.match(/^## (\d+)\./)![1]), p.trim()]));
+  if (sections?.length) {
+    const found = sections.map((n) => byNumber.get(n) ?? `## ${n}. (no existe esta sección)`);
+    return found.join("\n\n");
+  }
+  const index = [...byNumber.entries()].map(([n, p]) => {
+    const [title, ...body] = p.split("\n");
+    const first = body.find((l) => l.trim() && !l.startsWith("#"))?.trim() ?? "";
+    return `${title!.replace(/^## /, "")}: ${first.length > 160 ? first.slice(0, 160) + "…" : first}`;
+  });
+  return `${intro}\n\nÍndice (pide el texto con field_guide y sections, p. ej. sections: [1, 5]):\n${index.join("\n")}`;
+}
+
 // Herramientas del simulador: las comparten el runner por API y el servidor MCP.
 export const SIM_TOOLS = [
   tool({
@@ -146,8 +202,8 @@ export const SIM_TOOLS = [
       "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalización, liquidez, " +
       "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero. En Solana combina los tokens en " +
       "tendencia de Jupiter (5 min y 1 h), los que están en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
-    schema: z.object({ chain: chainParam, limit: z.number().int().min(5).max(60).default(25) }),
-    run: async ({ chain, limit }) => toText(await getChain(chain).research.scan(limit)),
+    schema: z.object({ chain: chainParam, limit: z.number().int().min(5).max(60).default(15) }),
+    run: async ({ chain, limit }) => toText(compactScan(await getChain(chain).research.scan(limit))),
   }),
   tool({
     name: "token_report",
@@ -165,7 +221,7 @@ export const SIM_TOOLS = [
     run: async ({ chain, token }) => {
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
-      return json({ ...(report as Record<string, unknown>), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}) });
+      return json({ ...compactReport(report), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}) });
     },
   }),
   tool({
@@ -189,9 +245,10 @@ export const SIM_TOOLS = [
     role: "both",
     description:
       "Guía del terreno: qué mercados puede ejecutar el simulador y cómo los simula, cómo funciona pump.fun " +
-      "(curva, comisiones, graduación) y qué APIs públicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones.",
-    schema: z.object({}),
-    run: async () => readFileSync(FIELD_GUIDE, "utf8"),
+      "(curva, comisiones, graduación) y qué APIs públicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones. " +
+      "Sin sections, el índice; con sections, el texto de esas secciones.",
+    schema: z.object({ sections: z.array(z.number().int().min(1).max(20)).optional().describe("Números de sección que quieres leer") }),
+    run: async ({ sections }) => fieldGuide(readFileSync(FIELD_GUIDE, "utf8"), sections),
   }),
   tool({
     name: "log_progress",
@@ -704,10 +761,28 @@ export const SIM_TOOLS = [
     role: "trader",
     researchTarget: () => undefined,
     description:
-      "Tus posiciones (de la misión indicada o de todas): coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al " +
-      "entrar (antigüedad, liquidez, variación, holders, riesgos), cuánto habías investigado antes, tu tesis y las creencias que aplicaste.",
-    schema: z.object({ mission_id: z.number().int().optional(), limit: z.number().int().min(1).max(200).default(50) }),
-    run: async ({ mission_id, limit }) => toText(positions.listPositions(mission_id).slice(0, limit)),
+      "Tus posiciones: coste, resultado real, tiempo mantenida, motivo de cierre, datos del token al entrar (antigüedad, liquidez, " +
+      "variación, holders, riesgos), cuánto habías investigado antes, tu tesis y las creencias que aplicaste. Por defecto, las de la " +
+      "misión actual; con mission_id, las de otra; con all_missions: true, las últimas de todas (largo).",
+    schema: z.object({
+      mission_id: z.number().int().optional(),
+      all_missions: z.boolean().default(false),
+      limit: z.number().int().min(1).max(200).default(30),
+    }),
+    run: async ({ mission_id, all_missions, limit }, ctx) => {
+      const target = all_missions ? undefined : (mission_id ?? ctx.missionId ?? undefined);
+      // La nota de memoria ya va dentro de la tesis ("Memoria: …"); con una sola misión, su id sobra.
+      return toText(
+        positions
+          .listPositions(target)
+          .slice(0, limit)
+          .map(({ lessonsApplied, missionId, ...p }) => ({
+            ...(target === undefined ? { missionId } : {}),
+            ...p,
+            ...(lessonsApplied && !(p.thesis ?? "").includes(lessonsApplied) ? { lessonsApplied } : {}),
+          })),
+      );
+    },
   }),
   tool({
     name: "report_observation",

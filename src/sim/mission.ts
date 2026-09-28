@@ -237,7 +237,17 @@ export async function missionStatus(missionId?: number) {
     return {
       active: false,
       message: `La misión #${mission.id} ha terminado (${mission.status}). No se puede operar hasta que el usuario cree una nueva.`,
-      mission,
+      mission: {
+        id: mission.id,
+        status: mission.status,
+        mode: mission.mode,
+        initialUsd: mission.initial_usd,
+        targetUsd: mission.target_usd,
+        finalUsd: mission.final_usd,
+        deadline: mission.deadline,
+        endedAt: mission.ended_at,
+        instructions: mission.instructions,
+      },
     };
   }
   const v = await valuation(mission.id);

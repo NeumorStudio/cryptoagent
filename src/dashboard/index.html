@@ -45,9 +45,12 @@
   .banner.show { display: block; }
 
   /* ── Cabecera ─────────────────────────────────────────── */
+  /* Dos columnas: la carrera a la izquierda y la radio del equipo a la derecha. */
+  .page { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 27vw, 460px); gap: 8px; max-width: 1840px; margin: 0 auto; }
+  .stage { min-width: 0; }
   .top {
     display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 24px;
-    padding: 28px 40px 0; max-width: 1360px; margin: 0 auto;
+    padding: 28px 40px 0; max-width: 1360px;
   }
   .mission { display: grid; gap: 4px; }
   .mission h1 { font-size: 15px; font-weight: 600; font-stretch: 110%; }
@@ -63,7 +66,7 @@
   .clock-value.urgent { color: var(--down); }
   .clock-value.ended { font-size: clamp(24px, 3vw, 32px); font-stretch: 120%; }
 
-  main { max-width: 1360px; margin: 0 auto; padding: 8px 40px 64px; display: grid; gap: 44px; }
+  main { max-width: 1360px; padding: 8px 40px 64px; display: grid; gap: 44px; }
 
   /* ── La carrera ───────────────────────────────────────── */
   .hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; }
@@ -136,9 +139,9 @@
   details.data table { margin-top: 8px; border-collapse: collapse; font-size: 13px; }
   details.data td, details.data th { padding: 2px 16px 2px 0; text-align: left; }
 
-  /* ── Tres bloques ────────────────────────────────────── */
-  .trio { display: grid; grid-template-columns: 1.1fr 1.2fr 1fr; gap: 40px; }
-  .trio > section { border-top: 1px solid var(--rule); padding-top: 18px; min-width: 0; }
+  /* ── Dos bloques ─────────────────────────────────────── */
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
+  .duo > section { border-top: 1px solid var(--rule); padding-top: 18px; min-width: 0; }
 
   .stack { display: flex; gap: 2px; height: 24px; }
   .seg { height: 100%; min-width: 3px; transition: flex-grow 600ms var(--ease); }
@@ -166,16 +169,6 @@
   .rw-sub a { color: var(--ink); }
   .quiet { color: var(--muted); font-size: 15px; }
 
-  .note { font-size: clamp(19px, 1.8vw, 23px); line-height: 1.4; font-weight: 500; }
-  .note-when { font-size: 13px; color: var(--muted); margin-top: 6px; }
-  .recent { margin-top: 20px; display: grid; gap: 8px; }
-  .recent li { display: grid; grid-template-columns: 44px 12px 1fr; gap: 10px; align-items: baseline; font-size: 14px; }
-  .recent time { color: var(--muted); }
-  .recent .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); align-self: center; }
-  .recent li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .more { margin-top: 18px; background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 10px 16px; min-height: 44px; cursor: pointer; }
-  .more:hover { border-color: var(--muted); }
-
   .review { font-size: 16px; }
   .review-when { font-size: 13px; color: var(--muted); margin-top: 4px; }
   .runs { display: flex; align-items: center; gap: clamp(2px, 0.6vw, 6px); height: 96px; margin-top: 8px; position: relative; }
@@ -195,34 +188,74 @@
   .ask { margin-top: 18px; padding: 12px 14px; border-radius: 6px; background: var(--surface); font-size: 14px; }
   .ask b { font-weight: 700; }
 
-  /* ── Cajón: todo lo que hace ─────────────────────────── */
-  /* Capa fija que recorta el cajón cerrado: así no ensancha la página. */
-  .layer { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 10; }
-  .drawer { pointer-events: auto; position: absolute; inset: 0 0 0 auto; width: min(640px, 100vw); background: var(--surface); border-left: 1px solid var(--rule);
-    transform: translateX(100%); visibility: hidden; transition: transform 320ms var(--ease), visibility 0s 320ms; display: grid; grid-template-rows: auto auto 1fr; z-index: 10; }
-  .drawer.open { transform: none; visibility: visible; transition: transform 320ms var(--ease); }
-  .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px 8px; }
-  .drawer-head h2 { margin: 0; color: var(--ink); font-size: 16px; }
-  .close { background: none; border: 1px solid var(--rule); border-radius: 6px; min-width: 44px; min-height: 44px; cursor: pointer; }
-  .filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 22px 12px; align-items: center; }
-  .chip { background: var(--bg); border: 1px solid var(--rule); border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; min-height: 36px; }
-  .chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-  .follow { font-size: 13px; color: var(--muted); margin-left: auto; display: flex; gap: 6px; align-items: center; }
-  .log { overflow-y: auto; padding: 0 22px 40px; }
-  .row { display: grid; grid-template-columns: 44px 84px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
-  .row .ts { color: var(--muted); } .row .who { font-size: 11px; font-weight: 700; font-stretch: 120%; color: var(--muted); padding-top: 2px; }
-  .row.fresh { animation: fresh 1.2s var(--ease); }
-  @keyframes fresh { from { opacity: 0; } to { opacity: 1; } }
-  .row details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .row pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 4px; max-height: 280px; overflow: auto; }
+  /* ── Radio del equipo: lo que piensan, operan y aprenden (solo lectura) ── */
+  .chat { position: sticky; top: 16px; height: calc(100dvh - 32px); margin: 16px 16px 16px 0; background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 14px; display: grid; grid-template-rows: auto auto 1fr; overflow: hidden; }
+  .is-live .chat { top: 54px; height: calc(100dvh - 70px); }
+  .chat-head { padding: 18px 20px 12px; display: grid; gap: 2px; }
+  .chat-head h2 { margin: 0; color: var(--ink); font-size: 16px; }
+  .chat-head p { font-size: 13px; color: var(--muted); }
+  .tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: none; }
+  .tabs button { background: none; border: 0; padding: 10px 9px 9px; min-height: 40px; font-size: 13px; font-weight: 600; color: var(--muted);
+    cursor: pointer; white-space: nowrap; box-shadow: inset 0 -2px 0 transparent; transition: color 150ms, box-shadow 150ms; }
+  .tabs button:hover { color: var(--ink); }
+  .tabs button[aria-pressed="true"] { color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+  .feed { overflow-y: auto; overscroll-behavior: contain; padding: 10px 16px 56px; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
+  .feed[data-tab="mind"] > :not([data-g="mind"], .empty),
+  .feed[data-tab="research"] > :not([data-g="research"], .empty),
+  .feed[data-tab="trades"] > :not([data-g="trades"], .empty),
+  .feed[data-tab="learn"] > :not([data-g="learn"], .empty) { display: none; }
+  .feed .empty { color: var(--muted); font-size: 14px; padding: 24px 4px; }
+  .fresh { animation: fresh 320ms var(--ease) both; }
+  @keyframes fresh { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* Mensajes: el agente a la izquierda, el revisor a la derecha. */
+  .msg { max-width: 90%; align-self: flex-start; display: grid; justify-items: start; }
+  .msg .meta { font-size: 12px; color: var(--muted); margin: 12px 4px 4px; }
+  .msg .meta b { color: var(--ink); font-weight: 700; font-stretch: 115%; margin-right: 6px; }
+  .msg .bubble { background: var(--surface-2); border-radius: 4px 14px 14px 14px; padding: 9px 13px; font-size: 14px; line-height: 1.5;
+    white-space: pre-line; overflow-wrap: anywhere; }
+  .msg.cont .meta { display: none; }
+  .msg.cont { margin-top: 0; }
+  .msg.rev { align-self: flex-end; justify-items: end; }
+  .msg.rev .bubble { background: #262A36; border-radius: 14px 4px 14px 14px; }
+  .msg.quiet-msg .bubble { background: none; border-left: 2px solid var(--rule); border-radius: 0; padding: 2px 0 2px 12px; color: var(--muted); }
+  .msg .bubble strong { display: block; font-weight: 700; margin-bottom: 2px; }
+  .msg.clamped .txt { display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+  .msg .expand { background: none; border: 0; padding: 4px; min-height: 28px; font-size: 12px; color: var(--muted); cursor: pointer; text-decoration: underline; }
+
+  /* Investigación y sistema: líneas discretas, sin burbuja. */
+  .line { font-size: 13px; color: var(--muted); }
+  .line > summary, .line > div { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 3px 4px; list-style: none; }
+  .line > summary::-webkit-details-marker { display: none; }
+  .line > summary { cursor: pointer; border-radius: 4px; }
+  .line > summary:hover { color: var(--ink); background: var(--surface-2); }
+  .line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .line.err { color: var(--down); }
+  .line pre, .op pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 4px; max-height: 280px; overflow: auto; margin: 4px 0 6px; color: var(--ink); }
+  .sys { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); margin: 14px 0 6px; text-align: center; }
+  .sys::before, .sys::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+
+  /* Operaciones: un ticket con el color de su cadena. */
+  .op { margin: 8px 0; background: var(--bg); border-radius: 4px 10px 10px 4px; border-left: 3px solid var(--c, var(--muted)); padding: 9px 12px; font-size: 14px; }
+  .op .meta { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .op .meta b { color: var(--ink); font-weight: 700; font-stretch: 115%; margin-right: 6px; }
+  .op .t { font-weight: 600; overflow-wrap: anywhere; }
+  .op.hyp { border-left-style: dashed; background: none; outline: 1px solid var(--rule); outline-offset: -1px; }
+  .op details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 4px; width: max-content; }
   .thesis { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; color: var(--muted); font-size: 13px; }
   .thesis dt { font-weight: 600; } .thesis dd { margin: 0; }
   .thesis a { color: var(--ink); }
-  .scrim { position: fixed; inset: 0; background: #0009; opacity: 0; pointer-events: none; transition: opacity 320ms; z-index: 9; }
-  .scrim.show { opacity: 1; pointer-events: auto; }
+  p.thesis { display: block; }
+  .jump { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); border: 0; border-radius: 999px;
+    padding: 6px 16px; min-height: 36px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px #0008; }
 
-  @media (max-width: 980px) {
-    .trio { grid-template-columns: 1fr; gap: 32px; }
+  @media (max-width: 1180px) {
+    .page { grid-template-columns: 1fr; }
+    .chat, .is-live .chat { position: relative; top: auto; height: min(680px, 82dvh); margin: 0 40px 56px; }
+  }
+  @media (max-width: 760px) {
+    .duo { grid-template-columns: 1fr; gap: 32px; }
   }
   @media (max-width: 640px) {
     .top { padding: 18px 16px 0; grid-template-columns: 1fr; gap: 12px; }
@@ -231,7 +264,8 @@
     .sec-head { flex-direction: column; gap: 2px; margin-bottom: 8px; }
     main { padding: 4px 16px 48px; gap: 32px; }
     .chart { height: 200px; }
-    .row { grid-template-columns: 40px 1fr; } .row .who { display: none; }
+    .chat, .is-live .chat { margin: 0 16px 40px; }
+    .feed { padding: 10px 12px 56px; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -242,6 +276,8 @@
 <div class="banner" id="banner" role="alert">Se ha perdido la conexión con el panel. Comprueba que el panel sigue abierto (npm run dashboard o Claude Code).</div>
 <div class="real-band" id="realBand" hidden><b>DINERO REAL</b> <span id="realBandText"></span></div>
 
+<div class="page">
+<div class="stage">
 <header class="top">
   <div class="mission">
     <span class="live" id="live"><i></i><span id="liveText">conectando</span></span>
@@ -288,7 +324,7 @@
     <details class="data"><summary>Ver los datos</summary><table><thead><tr><th>Hora</th><th>Valor</th></tr></thead><tbody id="chartTable"></tbody></table></details>
   </section>
 
-  <div class="trio">
+  <div class="duo">
     <section aria-labelledby="h-money">
       <h2 id="h-money">Dónde está el dinero</h2>
       <div class="stack" id="stack" role="img" aria-label="Reparto de la cartera por cadena"></div>
@@ -302,14 +338,6 @@
       </div>
     </section>
 
-    <section aria-labelledby="h-now">
-      <h2 id="h-now">Ahora mismo</h2>
-      <p class="note" id="note"></p>
-      <p class="note-when" id="noteWhen"></p>
-      <ol class="recent" id="recent"></ol>
-      <button class="more" id="openLog" aria-controls="drawer" aria-expanded="false">Ver todo lo que hace</button>
-    </section>
-
     <section aria-labelledby="h-learn">
       <h2 id="h-learn">Qué aprende</h2>
       <p class="review" id="review"></p>
@@ -317,28 +345,25 @@
       <p class="sub">Misiones anteriores</p>
       <div class="runs" id="runs" role="img" aria-label="Resultado de las misiones anteriores"></div>
       <p class="runs-legend" id="runsLegend"></p>
-      <p class="sub">Lo último que ha aprendido</p>
-      <ul class="beliefs" id="latest"></ul>
       <p class="sub">Lo que tiene más claro</p>
       <ul class="beliefs" id="beliefs"></ul>
       <div id="ask"></div>
     </section>
   </div>
 </main>
+</div>
 
-<div class="scrim" id="scrim"></div>
-<div class="layer">
-<aside class="drawer" id="drawer" aria-labelledby="h-log" aria-hidden="true">
-  <div class="drawer-head"><h2 id="h-log">Todo lo que hace el agente</h2><button class="close" id="closeLog" aria-label="Cerrar">✕</button></div>
-  <div class="filters" role="group" aria-label="Filtrar">
-    <button class="chip" data-filter="all" aria-pressed="true">Todo</button>
-    <button class="chip" data-filter="mind" aria-pressed="false">Notas y revisor</button>
-    <button class="chip" data-filter="research" aria-pressed="false">Investiga</button>
-    <button class="chip" data-filter="trades" aria-pressed="false">Opera</button>
-    <button class="chip" data-filter="system" aria-pressed="false">Misión y errores</button>
-    <label class="follow"><input type="checkbox" id="follow" checked> seguir</label>
+<aside class="chat" aria-labelledby="h-chat">
+  <div class="chat-head"><h2 id="h-chat">Radio del equipo</h2><p>El agente y el revisor, en directo. Solo se escucha.</p></div>
+  <div class="tabs" role="group" aria-label="Qué escuchar">
+    <button data-tab="all" aria-pressed="true">Todo</button>
+    <button data-tab="mind" aria-pressed="false">Piensa</button>
+    <button data-tab="research" aria-pressed="false">Investiga</button>
+    <button data-tab="trades" aria-pressed="false">Opera</button>
+    <button data-tab="learn" aria-pressed="false">Aprende</button>
   </div>
-  <div class="log" id="log" aria-live="polite"></div>
+  <div class="feed" id="feed" data-tab="all" role="log" aria-live="polite" tabindex="0"></div>
+  <button class="jump" id="jump" hidden></button>
 </aside>
 </div>
 
@@ -458,7 +483,6 @@ function render() {
   renderChart();
   renderMoney(v);
   renderRealWallet();
-  renderNow();
   renderLearn();
 }
 
@@ -627,6 +651,7 @@ function renderRealWallet() {
   const m = state.mission;
   const live = m && m.mode === "live" && m.status === "active";
   $("realBand").hidden = !live;
+  document.body.classList.toggle("is-live", !!live);
   if (live) {
     const limits = JSON.parse(m.limits || "{}");
     const pending = w && w.pendingApprovals ? w.pendingApprovals : 0;
@@ -713,20 +738,6 @@ function renderMoney(v) {
   }
 }
 
-// ── Ahora mismo ──────────────────────────────────────────────
-const RECENT_KINDS = { trade: "var(--accent)", order: "var(--muted)", error: "var(--down)", review: "var(--ink)", request: "var(--ink)", hypothetical: "var(--muted)", thought: "var(--muted)" };
-function renderNow() {
-  const n = state.lastNote;
-  $("note").textContent = n ? `«${n.title}»` : state.mission.status === "active" ? "Todavía no ha anotado nada." : "Sin notas en esta misión.";
-  $("noteWhen").textContent = n ? `Su última nota, ${ago(n.ts)}` : "";
-  const list = $("recent");
-  list.replaceChildren();
-  const recent = events.filter((e) => e.kind in RECENT_KINDS && e.kind !== "thought").slice(-5).reverse();
-  for (const e of recent) {
-    list.append(el("li", {}, el("time", { class: "tab" }, hm(e.ts)), el("span", { class: "dot", style: `background:${RECENT_KINDS[e.kind]}` }), el("span", { title: e.title }, e.title)));
-  }
-}
-
 // ── Qué aprende ──────────────────────────────────────────────
 function renderLearn() {
   const r = state.lastReview;
@@ -753,14 +764,6 @@ function renderLearn() {
       ? `${past.length} misiones, ${wins(past)} con la meta alcanzada (en amarillo).${bustNote}`
       : `Las últimas ${past.length} de ${finished.length} misiones: ${wins(past)} con la meta alcanzada (en amarillo); ${wins(finished)} en total.${bustNote}`;
 
-  const latest = $("latest");
-  latest.replaceChildren();
-  if (!state.memory.latest.length) latest.append(el("li", { class: "quiet" }, "Todavía no ha cambiado nada en su memoria."));
-  for (const l of state.memory.latest) {
-    const text = l.title.length > 170 ? l.title.slice(0, 170).replace(/\s\S*$/, "") + "…" : l.title;
-    latest.append(el("li", {}, text, el("span", { class: "verdict" }, ago(l.ts))));
-  }
-
   const beliefs = $("beliefs");
   beliefs.replaceChildren();
   const mem = state.memory;
@@ -780,22 +783,31 @@ function renderLearn() {
   }
 }
 
-// ── Cajón con todo lo que hace ───────────────────────────────
-const WHO = {
-  thought: "ANOTA", thinking: "RAZONA", text: "DICE", note: "APUNTA", lesson: "APRENDE", review: "REVISOR", request: "PIDE",
-  search: "BUSCA", browse: "NAVEGA", fetch: "CONSULTA", tool: "HERRAMIENTA", result: "RESULTADO",
-  trade: "OPERA", order: "ORDEN", hypothetical: "HIPÓTESIS", mission: "MISIÓN", session: "SESIÓN", error: "ERROR",
+// ── Radio del equipo: el agente a la izquierda, el revisor a la derecha ──
+const TAG = {
+  thought: "anota", thinking: "razona", text: "dice", note: "apunta", request: "pide", lesson: "aprende", review: "revisa",
+  trade: "opera", order: "orden", hypothetical: "hipótesis",
 };
-const GROUPS = {
-  mind: ["thought", "thinking", "text", "note", "lesson", "review", "request"],
-  research: ["search", "browse", "fetch", "tool", "result"],
-  trades: ["trade", "order", "hypothetical"],
-  system: ["mission", "session", "error"],
+const GROUP = {
+  thought: "mind", thinking: "mind", text: "mind", note: "mind", request: "mind",
+  lesson: "learn", review: "learn",
+  search: "research", browse: "research", fetch: "research", tool: "research", result: "research",
+  trade: "trades", order: "trades", hypothetical: "trades",
+  mission: "system", session: "system", error: "system",
 };
-let filter = "all";
+const EMPTY = {
+  mind: "Todavía no ha dicho nada.",
+  research: "Todavía no ha investigado nada.",
+  trades: "Todavía no ha operado.",
+  learn: "El revisor todavía no ha pasado por esta misión.",
+};
+let tab = "all";
 const seen = new Map();
-let firstLog = true;
-const visible = (kind) => filter === "all" || GROUPS[filter].includes(kind);
+let firstFeed = true;
+let lastSpeaker = null;
+let unread = 0;
+const chainOf = (e) => e.body?.match(/"(?:chain|venue)":\s*"(\w+)"/)?.[1];
+const needsUpdate = (e) => !seen.has(e.id) || (e.body && seen.get(e.id).dataset.body !== "1");
 
 function renderThesis(note) {
   const parts = note.split("\n").map((line) => line.match(/^(Por qué|Pruebas|Fuentes|Plan|Memoria|Lecciones): ([\s\S]*)$/));
@@ -814,56 +826,110 @@ function renderThesis(note) {
   return dl;
 }
 
-function makeRow(e) {
-  const what = el("div", {}, el("p", {}, e.title));
-  if (e.note) what.append(renderThesis(e.note));
-  if (e.body) what.append(el("details", {}, el("summary", {}, "detalle"), el("pre", {}, e.body)));
-  const row = el("div", { class: `row k-${e.kind}`, "data-kind": e.kind },
-    el("time", { class: "ts tab" }, hm(e.ts)), el("span", { class: "who" }, WHO[e.kind] ?? e.kind.toUpperCase()), what);
-  row.hidden = !visible(e.kind);
-  return row;
+function makeItem(e) {
+  const g = GROUP[e.kind] ?? "research";
+  const time = el("time", { class: "tab" }, hm(e.ts));
+  let item;
+  if (g === "mind" || g === "learn") {
+    // Mensajes seguidos del mismo tipo y de hace poco van sin cabecera, como en un chat.
+    const who = g === "learn" ? "revisor" : "agente";
+    const t = new Date(e.ts).getTime();
+    const cont = lastSpeaker && lastSpeaker.who === who && lastSpeaker.kind === e.kind && t - lastSpeaker.t < 180_000;
+    lastSpeaker = { who, kind: e.kind, t };
+    const text = e.body ?? e.title;
+    item = el("div", { class: `msg${who === "revisor" ? " rev" : ""}${e.kind === "thinking" ? " quiet-msg" : ""}${cont ? " cont" : ""}` },
+      el("div", { class: "meta" }, el("b", {}, who), `${TAG[e.kind]} · `, time),
+      el("div", { class: "bubble" }, e.body ? el("strong", {}, e.title) : null, el("div", { class: "txt" }, text)));
+    if (text.length > 420 || text.split("\n").length > 7) {
+      item.classList.add("clamped");
+      const more = el("button", { class: "expand", type: "button" }, "ver más");
+      more.addEventListener("click", () => { more.textContent = item.classList.toggle("clamped") ? "ver más" : "ver menos"; });
+      item.append(more);
+    }
+  } else if (g === "trades") {
+    lastSpeaker = null;
+    const chain = chainOf(e);
+    item = el("div", { class: `op${e.kind === "hypothetical" ? " hyp" : ""}`, style: COLOR[chain] ? `--c:${COLOR[chain]}` : "" },
+      el("div", { class: "meta" }, el("b", {}, TAG[e.kind]), LABEL[chain] ? `${LABEL[chain]} · ` : "", time), el("div", { class: "t" }, e.title));
+    if (e.note || e.body) {
+      item.append(el("details", {}, el("summary", {}, e.note ? "por qué" : "detalle"),
+        e.note ? renderThesis(e.note) : null, e.body ? el("pre", {}, e.body) : null));
+    }
+  } else if (e.kind === "mission") {
+    lastSpeaker = null;
+    item = el("div", { class: "sys" }, `${e.title} · ${hm(e.ts)}`);
+  } else {
+    // Investigación, sesiones y errores: una línea discreta; si trae resultado, se despliega.
+    const cls = `line${e.kind === "error" ? " err" : ""}`;
+    const row = [el("span", { title: e.title }, e.title), time];
+    item = e.body ? el("details", { class: cls }, el("summary", {}, ...row), el("pre", {}, e.body)) : el("div", { class: cls }, el("div", {}, ...row));
+  }
+  item.dataset.g = g;
+  item.dataset.body = e.body ? "1" : "";
+  return item;
 }
 
-function renderLog(list) {
-  const log = $("log");
-  if (!list.length && !seen.size) {
-    log.replaceChildren(el("p", { class: "quiet" }, state?.mission?.status === "active" ? "El agente todavía no ha hecho nada en esta misión." : "No hay actividad."));
-    return;
-  }
-  log.querySelector(".quiet")?.remove();
+function updateEmpty() {
+  const feed = $("feed");
+  const any = [...seen.values()].some((n) => tab === "all" || n.dataset.g === tab);
+  let empty = feed.querySelector(".empty");
+  if (any) { empty?.remove(); return; }
+  if (!empty) { empty = el("p", { class: "empty" }); feed.prepend(empty); }
+  empty.textContent = EMPTY[tab] ?? (state?.mission?.status === "active" ? "El agente todavía no ha dicho nada en esta misión." : "No hay actividad.");
+}
+
+function showJump() {
+  const jump = $("jump");
+  jump.hidden = !unread;
+  jump.textContent = unread === 1 ? "1 mensaje nuevo" : `${unread} mensajes nuevos`;
+}
+
+function renderFeed(list) {
+  const feed = $("feed");
+  const first = firstFeed;
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+  let added = 0;
   for (const e of list) {
     const existing = seen.get(e.id);
     if (existing) {
-      if (e.body && !existing.querySelector("details")) existing.replaceWith(seen.set(e.id, makeRow(e)).get(e.id));
+      // Llega el resultado de algo que ya estaba: se rehace sin tocar la agrupación.
+      const saved = lastSpeaker;
+      const item = makeItem(e);
+      lastSpeaker = saved;
+      item.classList.toggle("cont", existing.classList.contains("cont"));
+      existing.replaceWith(item);
+      seen.set(e.id, item);
       continue;
     }
-    const row = makeRow(e);
-    if (!firstLog) row.classList.add("fresh");
-    seen.set(e.id, row);
-    log.append(row);
+    const item = makeItem(e);
+    if (!first) {
+      item.classList.add("fresh");
+      if (tab === "all" || item.dataset.g === tab) added++;
+    }
+    seen.set(e.id, item);
+    feed.append(item);
   }
-  firstLog = false;
-  if ($("follow").checked && list.length) log.scrollTop = log.scrollHeight;
+  firstFeed = false;
+  updateEmpty();
+  if (first || atBottom) feed.scrollTop = feed.scrollHeight;
+  else if (added) { unread += added; showJump(); }
 }
 
-for (const chip of document.querySelectorAll(".chip")) {
-  chip.addEventListener("click", () => {
-    filter = chip.dataset.filter;
-    for (const c of document.querySelectorAll(".chip")) c.setAttribute("aria-pressed", String(c === chip));
-    for (const row of seen.values()) row.hidden = !visible(row.dataset.kind);
+for (const button of document.querySelectorAll(".tabs button")) {
+  button.addEventListener("click", () => {
+    tab = button.dataset.tab;
+    $("feed").dataset.tab = tab;
+    for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-pressed", String(b === button));
+    unread = 0; showJump();
+    updateEmpty();
+    $("feed").scrollTop = $("feed").scrollHeight;
   });
 }
-function openLog(open) {
-  $("drawer").classList.toggle("open", open);
-  $("drawer").setAttribute("aria-hidden", String(!open));
-  $("scrim").classList.toggle("show", open);
-  $("openLog").setAttribute("aria-expanded", String(open));
-  if (open) { $("closeLog").focus(); $("log").scrollTop = $("log").scrollHeight; } else $("openLog").focus();
-}
-$("openLog").addEventListener("click", () => openLog(true));
-$("closeLog").addEventListener("click", () => openLog(false));
-$("scrim").addEventListener("click", () => openLog(false));
-addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawer").classList.contains("open")) openLog(false); });
+$("jump").addEventListener("click", () => $("feed").scrollTo({ top: $("feed").scrollHeight, behavior: reduced ? "auto" : "smooth" }));
+$("feed").addEventListener("scroll", () => {
+  const f = $("feed");
+  if (unread && f.scrollHeight - f.scrollTop - f.clientHeight < 80) { unread = 0; showJump(); }
+}, { passive: true });
 
 // ── Sondeo ───────────────────────────────────────────────────
 let lastOk = 0;
@@ -873,12 +939,12 @@ async function poll() {
     const [s, ev] = await Promise.all([fetch("/api/state").then((r) => r.json()), fetch("/api/events").then((r) => r.json())]);
     const key = s.mission?.id ?? "none";
     if (key !== missionKey) {
-      missionKey = key; seen.clear(); seenFlags.clear(); $("log").replaceChildren(); firstLog = true; firstChart = true; shown = null;
+      missionKey = key; seen.clear(); seenFlags.clear(); $("feed").replaceChildren(); firstFeed = true; lastSpeaker = null; unread = 0; showJump(); firstChart = true; shown = null;
     }
     state = s;
     events = ev;
     render();
-    renderLog(ev.filter((e) => !seen.has(e.id) || (e.body && !seen.get(e.id).querySelector("details"))));
+    renderFeed(ev.filter(needsUpdate));
     lastOk = Date.now();
     $("banner").classList.remove("show");
   } catch {

@@ -7772,7 +7772,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.21.0";
+    CODE_VERSION = "0.22.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8227,6 +8227,22 @@ var init_binance2 = __esm({
   }
 });
 
+// src/sim/launchpads.ts
+function bscLaunchpad(address) {
+  const a = address.toLowerCase();
+  if (a.endsWith("7777")) return "flap.sh";
+  if (a.endsWith("4444") || a.endsWith("ffff")) return "four.meme";
+  return void 0;
+}
+function launchpadOf(venue, address, reported) {
+  return (venue === "bsc" ? bscLaunchpad(address) : void 0) ?? reported;
+}
+var init_launchpads = __esm({
+  "src/sim/launchpads.ts"() {
+    "use strict";
+  }
+});
+
 // src/sim/venues/evm.ts
 function settleEvmSwap(q, w) {
   const x = q.extra;
@@ -8398,7 +8414,15 @@ function evmAdapter(cfg) {
       const [pairs, sec] = await Promise.all([dexPairs(cfg.id, [asset]).catch(() => /* @__PURE__ */ new Map()), security(asset.toLowerCase())]);
       const top = pairs.get(asset.toLowerCase())?.[0];
       const m5 = top?.txns?.m5;
+      const raw = sec.raw ?? {};
+      const lp = raw.lp_holders ?? [];
+      const lpLocked = lp.length ? lp.filter((h) => h.is_locked === 1 || /^0x0{40}$|dead$/i.test(h.address)).reduce((s, h) => s + Number(h.percent), 0) * 100 : void 0;
       return {
+        creator: typeof raw.creator_address === "string" && raw.creator_address ? raw.creator_address.toLowerCase() : void 0,
+        devHoldingPct: raw.creator_percent !== void 0 && raw.creator_percent !== "" ? n(Number(raw.creator_percent) * 100, 1) : void 0,
+        creatorHoneypots: raw.honeypot_with_same_creator === "1" ? true : raw.honeypot_with_same_creator === "0" ? false : void 0,
+        // Con pools v4 / Infinity no hay tokens LP: el dato no significa nada.
+        lpLockedPct: lpLocked !== void 0 && Number(raw.lp_total_supply ?? 0) > 1e-6 ? n(Math.min(100, lpLocked), 1) : void 0,
         venue: cfg.id,
         ageMinutes: ageMinutes(top?.pairCreatedAt),
         liquidityUsd: n(top?.liquidity?.usd, 0),
@@ -8409,7 +8433,7 @@ function evmAdapter(cfg) {
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : void 0,
-        launchpad: top?.dexId,
+        launchpad: launchpadOf(cfg.id, asset, top?.dexId),
         buyTaxPct: sec.buyTaxPct,
         sellTaxPct: sec.sellTaxPct,
         honeypot: sec.honeypot,
@@ -8455,7 +8479,10 @@ function evmAdapter(cfg) {
           [() => gecko("trending_pools"), () => gecko("new_pools"), boosts].map((fn, i) => fn().then((c) => `${sources[i]}: ${c}`, (e) => `${sources[i]}: ${e.message.slice(0, 120)}`))
         );
         const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
-        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
+          const lp = launchpadOf(cfg.id, c.token);
+          return lp === "flap.sh" ? { ...c, launchpad: lp, warning: "token de Flap.sh (\u20267777): impuestos de venta din\xE1micos que pueden llegar al 100 %" } : lp ? { ...c, launchpad: lp } : c;
+        }).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
         return {
           chain: cfg.id,
           note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
@@ -8521,6 +8548,7 @@ var init_evm2 = __esm({
     init_evm();
     init_http();
     init_jupiter();
+    init_launchpads();
     DUST = 1e-12;
     APPROVE_GAS = 46000n;
     ageMinutes = (ms) => ms ? Math.round((Date.now() - ms) / 6e4) : void 0;
@@ -8588,7 +8616,10 @@ async function scanMarket(limit = 25) {
         priceChange1hPct: n2(t.stats1h?.priceChange),
         netBuyers5m: t.stats5m?.numNetBuyers,
         traders5m: t.stats5m?.numTraders,
-        ageMinutes: ageMinutes2(t.createdAt)
+        ageMinutes: ageMinutes2(t.createdAt),
+        // Historial del creador (Jupiter): cuántos tokens ha lanzado y cuántos se graduaron.
+        creatorTokens: t.audit?.devMints,
+        creatorGraduated: t.audit?.devMigrations
       });
     }
     return list.length;
@@ -8635,7 +8666,9 @@ async function scanMarket(limit = 25) {
     attempt("dexscreener_boosted", boosts),
     attempt("geckoterminal_trending", gecko)
   ]);
-  const candidates = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+  const candidates = [...merged.values()].map(
+    (c) => c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05 ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` } : c
+  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
   return {
     note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con chain: solana y su mint.",
     sourcesStatus: status.map(
@@ -8782,12 +8815,23 @@ async function priceUsd(mints) {
 async function entryFeatures(mint) {
   const [jup, rug] = await Promise.allSettled([
     fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8e3),
-    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, 8e3)
+    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8e3, ttlMs: 6e4 })
   ]);
   const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : void 0;
-  const risks = rug.status === "fulfilled" ? rug.value.risks ?? [] : void 0;
+  const rc = rug.status === "fulfilled" ? rug.value : void 0;
+  const risks = rc ? rc.risks ?? [] : void 0;
   const round = (v, d = 2) => typeof v === "number" ? Number(v.toFixed(d)) : void 0;
+  const mints = typeof t?.audit?.devMints === "number" ? t.audit.devMints : void 0;
+  const migrations = typeof t?.audit?.devMigrations === "number" ? t.audit.devMigrations : void 0;
+  const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
+    creator: t?.dev ?? rc?.creator ?? void 0,
+    creatorTokens: mints,
+    creatorGraduated: migrations,
+    creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0,
+    devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
+    insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : void 0,
+    lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),
     venue: "solana",
     ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 6e4) : void 0,
     liquidityUsd: round(t?.liquidity, 0),

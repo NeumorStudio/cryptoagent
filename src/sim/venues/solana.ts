@@ -64,16 +64,31 @@ async function priceUsd(mints: string[]): Promise<Record<string, number>> {
   return prices;
 }
 
-/** Datos del token en el momento de entrar (fuente: Jupiter y RugCheck). */
+/**
+ * Datos del token en el momento de entrar. Fuentes: Jupiter (mercado, auditoría y el historial del creador:
+ * cuántos tokens ha lanzado y cuántos se graduaron) y el informe completo de RugCheck (riesgos, redes de
+ * insiders y liquidez bloqueada).
+ */
 async function entryFeatures(mint: string): Promise<Features> {
   const [jup, rug] = await Promise.allSettled([
     fetchJson<any[]>(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8000),
-    fetchJson<any>(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, 8000),
+    fetchJson<any>(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8000, ttlMs: 60_000 }),
   ]);
   const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : undefined;
-  const risks = rug.status === "fulfilled" ? (rug.value.risks ?? []) : undefined;
+  const rc = rug.status === "fulfilled" ? rug.value : undefined;
+  const risks = rc ? (rc.risks ?? []) : undefined;
   const round = (v: unknown, d = 2) => (typeof v === "number" ? Number(v.toFixed(d)) : undefined);
+  const mints = typeof t?.audit?.devMints === "number" ? t.audit.devMints : undefined;
+  const migrations = typeof t?.audit?.devMigrations === "number" ? t.audit.devMigrations : undefined;
+  const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m: any) => Number(m.lp?.lpLockedPct ?? 0))) : undefined;
   return {
+    creator: t?.dev ?? rc?.creator ?? undefined,
+    creatorTokens: mints,
+    creatorGraduated: migrations,
+    creatorGraduationPct: mints ? round(((migrations ?? 0) / mints) * 100, 1) : undefined,
+    devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
+    insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : undefined,
+    lpLockedPct: lpLocked === undefined ? undefined : round(lpLocked, 1),
     venue: "solana",
     ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 60_000) : undefined,
     liquidityUsd: round(t?.liquidity, 0),

@@ -29,6 +29,9 @@ interface Candidate {
   pumpfunGraduated?: boolean;
   pumpfunReplies?: number;
   dexscreenerBoost?: number;
+  creatorTokens?: number;
+  creatorGraduated?: number;
+  warning?: string;
 }
 
 /** Candidatos de Solana de varias fuentes, combinados por mint. */
@@ -55,6 +58,9 @@ export async function scanMarket(limit = 25) {
         netBuyers5m: t.stats5m?.numNetBuyers,
         traders5m: t.stats5m?.numTraders,
         ageMinutes: ageMinutes(t.createdAt),
+        // Historial del creador (Jupiter): cuántos tokens ha lanzado y cuántos se graduaron.
+        creatorTokens: t.audit?.devMints,
+        creatorGraduated: t.audit?.devMigrations,
       });
     }
     return list.length;
@@ -104,6 +110,11 @@ export async function scanMarket(limit = 25) {
   ]);
 
   const candidates = [...merged.values()]
+    .map((c: any) =>
+      c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05
+        ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` }
+        : c,
+    )
     .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
     .slice(0, limit);
   return {

@@ -10,6 +10,7 @@ import { db, logActivity, now } from "../db.js";
 import { getActiveMission, getLastMission, getMission, type Mission } from "./mission.js";
 import { listPositions } from "./positions.js";
 import { DUPLICATE_THRESHOLD, fingerprint, similarity } from "./text.js";
+import { launchpadOf } from "./launchpads.js";
 
 // ─── Parecido entre misiones ────────────────────────────────────────────────
 
@@ -63,6 +64,13 @@ export const CONDITION_FIELDS = [
   "sellTaxPct",
   "honeypot",
   "mintable",
+  "creatorTokens",
+  "creatorGraduated",
+  "creatorGraduationPct",
+  "devHoldingPct",
+  "creatorHoneypots",
+  "insidersDetected",
+  "lpLockedPct",
   "tokenReportBeforeBuying",
   "researchCallsSinceLastTrade",
   "minutesIntoMission",
@@ -82,6 +90,8 @@ const RESEARCH_FIELDS = new Set(["tokenReportBeforeBuying", "researchCallsSinceL
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {
   if (f === "venue") return p.entry.venue ?? p.venue;
+  // En BNB Chain el launchpad se deduce de la dirección (también en posiciones antiguas, que guardaban el DEX).
+  if (f === "launchpad") return launchpadOf(String(p.entry.venue ?? p.venue), String(p.asset ?? ""), p.entry.launchpad as string | undefined);
   return RESEARCH_FIELDS.has(f) ? p.research[f] : p.entry[f];
 }
 
@@ -238,10 +248,26 @@ export interface BlockingBelief {
   verdict: string;
 }
 
+/**
+ * Lista negra de creadores: tokens del mismo creador que ya le costaron al agente un 80 % o más (rug,
+ * honeypot…). Los "sindicatos" de rugs lanzan decenas de tokens: el historial del creador es el mejor filtro.
+ */
+export function creatorRugs(creator: string | undefined): Array<{ symbol: string; missionId: number | null; pnlPct: number }> {
+  if (!creator) return [];
+  return db
+    .prepare(
+      `SELECT symbol, mission_id, (realized_proceeds_usd - realized_cost_usd) * 100.0 / realized_cost_usd AS pnl FROM positions
+       WHERE status = 'closed' AND realized_cost_usd > 0 AND lower(json_extract(entry_features, '$.creator')) = lower(?)
+         AND (realized_proceeds_usd - realized_cost_usd) / realized_cost_usd <= -0.8`,
+    )
+    .all(creator)
+    .map((r: any) => ({ symbol: r.symbol, missionId: r.mission_id, pnlPct: Math.round(r.pnl) }));
+}
+
 /** Creencias negativas fuertes que cumple una compra con estos datos de entrada. */
-export function blockingBeliefs(venue: string, entry: Record<string, unknown>): BlockingBelief[] {
+export function blockingBeliefs(venue: string, entry: Record<string, unknown>, asset = ""): BlockingBelief[] {
   const closed = closedPositions();
-  const pos = { venue, entry: { ...entry, venue }, research: {} } as unknown as Pos;
+  const pos = { venue, asset, entry: { ...entry, venue }, research: {} } as unknown as Pos;
   return (db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all() as unknown as BeliefRow[])
     .filter((b) => matches(JSON.parse(b.condition!) as Condition, pos))
     .map((b) => ({ b, ev: beliefEvidence(b, closed) }))

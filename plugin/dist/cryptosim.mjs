@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.21.0";
+    CODE_VERSION = "0.22.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8731,6 +8731,22 @@ var init_evm = __esm({
   }
 });
 
+// src/sim/launchpads.ts
+function bscLaunchpad(address) {
+  const a = address.toLowerCase();
+  if (a.endsWith("7777")) return "flap.sh";
+  if (a.endsWith("4444") || a.endsWith("ffff")) return "four.meme";
+  return void 0;
+}
+function launchpadOf(venue, address, reported) {
+  return (venue === "bsc" ? bscLaunchpad(address) : void 0) ?? reported;
+}
+var init_launchpads = __esm({
+  "src/sim/launchpads.ts"() {
+    "use strict";
+  }
+});
+
 // src/sim/venues/evm.ts
 function settleEvmSwap(q, w) {
   const x = q.extra;
@@ -8902,7 +8918,15 @@ function evmAdapter(cfg) {
       const [pairs, sec] = await Promise.all([dexPairs(cfg.id, [asset2]).catch(() => /* @__PURE__ */ new Map()), security(asset2.toLowerCase())]);
       const top = pairs.get(asset2.toLowerCase())?.[0];
       const m5 = top?.txns?.m5;
+      const raw = sec.raw ?? {};
+      const lp = raw.lp_holders ?? [];
+      const lpLocked = lp.length ? lp.filter((h) => h.is_locked === 1 || /^0x0{40}$|dead$/i.test(h.address)).reduce((s, h) => s + Number(h.percent), 0) * 100 : void 0;
       return {
+        creator: typeof raw.creator_address === "string" && raw.creator_address ? raw.creator_address.toLowerCase() : void 0,
+        devHoldingPct: raw.creator_percent !== void 0 && raw.creator_percent !== "" ? n(Number(raw.creator_percent) * 100, 1) : void 0,
+        creatorHoneypots: raw.honeypot_with_same_creator === "1" ? true : raw.honeypot_with_same_creator === "0" ? false : void 0,
+        // Con pools v4 / Infinity no hay tokens LP: el dato no significa nada.
+        lpLockedPct: lpLocked !== void 0 && Number(raw.lp_total_supply ?? 0) > 1e-6 ? n(Math.min(100, lpLocked), 1) : void 0,
         venue: cfg.id,
         ageMinutes: ageMinutes(top?.pairCreatedAt),
         liquidityUsd: n(top?.liquidity?.usd, 0),
@@ -8913,7 +8937,7 @@ function evmAdapter(cfg) {
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : void 0,
-        launchpad: top?.dexId,
+        launchpad: launchpadOf(cfg.id, asset2, top?.dexId),
         buyTaxPct: sec.buyTaxPct,
         sellTaxPct: sec.sellTaxPct,
         honeypot: sec.honeypot,
@@ -8959,7 +8983,10 @@ function evmAdapter(cfg) {
           [() => gecko("trending_pools"), () => gecko("new_pools"), boosts].map((fn, i) => fn().then((c) => `${sources[i]}: ${c}`, (e) => `${sources[i]}: ${e.message.slice(0, 120)}`))
         );
         const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
-        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
+          const lp = launchpadOf(cfg.id, c.token);
+          return lp === "flap.sh" ? { ...c, launchpad: lp, warning: "token de Flap.sh (\u20267777): impuestos de venta din\xE1micos que pueden llegar al 100 %" } : lp ? { ...c, launchpad: lp } : c;
+        }).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
         return {
           chain: cfg.id,
           note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
@@ -9025,6 +9052,7 @@ var init_evm2 = __esm({
     init_evm();
     init_http();
     init_jupiter();
+    init_launchpads();
     DUST2 = 1e-12;
     APPROVE_GAS = 46000n;
     ageMinutes = (ms) => ms ? Math.round((Date.now() - ms) / 6e4) : void 0;
@@ -9092,7 +9120,10 @@ async function scanMarket(limit = 25) {
         priceChange1hPct: n2(t.stats1h?.priceChange),
         netBuyers5m: t.stats5m?.numNetBuyers,
         traders5m: t.stats5m?.numTraders,
-        ageMinutes: ageMinutes2(t.createdAt)
+        ageMinutes: ageMinutes2(t.createdAt),
+        // Historial del creador (Jupiter): cuántos tokens ha lanzado y cuántos se graduaron.
+        creatorTokens: t.audit?.devMints,
+        creatorGraduated: t.audit?.devMigrations
       });
     }
     return list.length;
@@ -9139,7 +9170,9 @@ async function scanMarket(limit = 25) {
     attempt("dexscreener_boosted", boosts),
     attempt("geckoterminal_trending", gecko)
   ]);
-  const candidates = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+  const candidates = [...merged.values()].map(
+    (c) => c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05 ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` } : c
+  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
   return {
     note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con chain: solana y su mint.",
     sourcesStatus: status.map(
@@ -9286,12 +9319,23 @@ async function priceUsd(mints) {
 async function entryFeatures(mint) {
   const [jup, rug] = await Promise.allSettled([
     fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8e3),
-    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, 8e3)
+    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8e3, ttlMs: 6e4 })
   ]);
   const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : void 0;
-  const risks = rug.status === "fulfilled" ? rug.value.risks ?? [] : void 0;
+  const rc = rug.status === "fulfilled" ? rug.value : void 0;
+  const risks = rc ? rc.risks ?? [] : void 0;
   const round = (v, d = 2) => typeof v === "number" ? Number(v.toFixed(d)) : void 0;
+  const mints = typeof t?.audit?.devMints === "number" ? t.audit.devMints : void 0;
+  const migrations = typeof t?.audit?.devMigrations === "number" ? t.audit.devMigrations : void 0;
+  const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
+    creator: t?.dev ?? rc?.creator ?? void 0,
+    creatorTokens: mints,
+    creatorGraduated: migrations,
+    creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0,
+    devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
+    insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : void 0,
+    lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),
     venue: "solana",
     ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 6e4) : void 0,
     liquidityUsd: round(t?.liquidity, 0),
@@ -40855,6 +40899,7 @@ init_db();
 init_mission();
 init_positions();
 init_text();
+init_launchpads();
 function profile(m) {
   return {
     durationMinutes: Math.max(1, Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4)),
@@ -40889,6 +40934,13 @@ var CONDITION_FIELDS = [
   "sellTaxPct",
   "honeypot",
   "mintable",
+  "creatorTokens",
+  "creatorGraduated",
+  "creatorGraduationPct",
+  "devHoldingPct",
+  "creatorHoneypots",
+  "insidersDetected",
+  "lpLockedPct",
   "tokenReportBeforeBuying",
   "researchCallsSinceLastTrade",
   "minutesIntoMission"
@@ -40897,6 +40949,7 @@ var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
 var RESEARCH_FIELDS = /* @__PURE__ */ new Set(["tokenReportBeforeBuying", "researchCallsSinceLastTrade", "minutesIntoMission"]);
 function fieldValue(p, f) {
   if (f === "venue") return p.entry.venue ?? p.venue;
+  if (f === "launchpad") return launchpadOf(String(p.entry.venue ?? p.venue), String(p.asset ?? ""), p.entry.launchpad);
   return RESEARCH_FIELDS.has(f) ? p.research[f] : p.entry[f];
 }
 function matches(cond, p) {
@@ -40990,9 +41043,17 @@ function tradeStats(ps) {
 }
 var closedPositions = () => listPositions().filter((p) => p.status === "closed");
 var STRONG_NEGATIVE = { minDecided: 4, minSupportPct: 75, maxAvgPnlPct: -15 };
-function blockingBeliefs(venue, entry) {
+function creatorRugs(creator) {
+  if (!creator) return [];
+  return db.prepare(
+    `SELECT symbol, mission_id, (realized_proceeds_usd - realized_cost_usd) * 100.0 / realized_cost_usd AS pnl FROM positions
+       WHERE status = 'closed' AND realized_cost_usd > 0 AND lower(json_extract(entry_features, '$.creator')) = lower(?)
+         AND (realized_proceeds_usd - realized_cost_usd) / realized_cost_usd <= -0.8`
+  ).all(creator).map((r) => ({ symbol: r.symbol, missionId: r.mission_id, pnlPct: Math.round(r.pnl) }));
+}
+function blockingBeliefs(venue, entry, asset2 = "") {
   const closed = closedPositions();
-  const pos = { venue, entry: { ...entry, venue }, research: {} };
+  const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: {} };
   return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => {
     const t = ev.matchingTrades;
     return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.supportPct ?? 0) >= STRONG_NEGATIVE.minSupportPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
@@ -41606,23 +41667,35 @@ async function estimateTokenLaunch(a) {
 
 // src/sim/guard.ts
 init_venues();
+var CREATOR_BLACKLIST_ID = 0;
 async function checkBuyAgainstMemory(a) {
   const chain = getChain(a.chain);
   const out = await chain.resolveToken(a.output);
   if (chain.isCash(out.address) || out.address === chain.native.address) return [];
   const features = await chain.entryFeatures(out.address).catch(() => null);
   if (!features) return [];
-  const blocking = blockingBeliefs(chain.id, features);
+  if (features.honeypot === true) {
+    throw new Error(`${out.symbol} es un honeypot seg\xFAn GoPlus: se puede comprar pero no vender. No se compra.`);
+  }
   const overridden = new Map((a.overrides ?? []).map((o) => [o.id, o]));
-  const missing = blocking.filter((b) => !overridden.has(b.id));
-  if (missing.length) {
-    throw new Error(
-      `Tu memoria desaconseja esta compra de ${out.symbol}:
-` + missing.map((b) => `- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`).join("\n") + `
-Si aun as\xED quieres comprarlo, repite la operaci\xF3n con thesis.overrides = [${missing.map((b) => `{ id: ${b.id}, reason: "por qu\xE9 esta vez es distinto" }`).join(", ")}].`
+  const reasons = [];
+  const rugs = creatorRugs(features.creator);
+  if (rugs.length && !overridden.has(CREATOR_BLACKLIST_ID)) {
+    reasons.push(
+      `- Lista negra: su creador (${features.creator}) ya lanz\xF3 ${rugs.map((r) => `${r.symbol} (${r.pnlPct} %${r.missionId ? `, misi\xF3n ${r.missionId}` : ""})`).join(", ")}. [id ${CREATOR_BLACKLIST_ID}]`
     );
   }
-  return blocking.map((b) => overridden.get(b.id));
+  const blocking = blockingBeliefs(chain.id, features, out.address);
+  for (const b of blocking.filter((x) => !overridden.has(x.id))) reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`);
+  if (reasons.length) {
+    const ids = [...rugs.length && !overridden.has(CREATOR_BLACKLIST_ID) ? [CREATOR_BLACKLIST_ID] : [], ...blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id)];
+    throw new Error(
+      `Tu memoria desaconseja esta compra de ${out.symbol}:
+${reasons.join("\n")}
+Si aun as\xED quieres comprarlo, repite la operaci\xF3n con thesis.overrides = [${ids.map((id) => `{ id: ${id}, reason: "por qu\xE9 esta vez es distinto" }`).join(", ")}].`
+    );
+  }
+  return [...overridden.values()];
 }
 
 // src/tools/index.ts
@@ -41696,6 +41769,43 @@ Plan: ${t.exit_plan}
 Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` + (t.overrides?.length ? `
 Ignora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
+var lastReads = /* @__PURE__ */ new Map();
+function riskCheck(chain, token2, f) {
+  const key = `${chain}:${token2.toLowerCase()}`;
+  const prev = lastReads.get(key);
+  lastReads.set(key, { at: Date.now(), f });
+  const rugs = creatorRugs(f.creator);
+  const change = (a, b) => a !== void 0 && b !== void 0 && a !== 0 ? Number(((b - a) / Math.abs(a) * 100).toFixed(1)) : void 0;
+  const flags = [];
+  if (rugs.length) flags.push(`creador en tu lista negra (${rugs.map((r) => `${r.symbol} ${r.pnlPct} %`).join(", ")})`);
+  if (f.creatorTokens !== void 0 && f.creatorTokens >= 5 && (f.creatorGraduationPct ?? 0) < 5) flags.push(`creador en serie: ${f.creatorTokens} tokens lanzados, ${f.creatorGraduated ?? 0} graduados`);
+  if ((f.devHoldingPct ?? 0) > 5) flags.push(`el creador conserva el ${f.devHoldingPct} %`);
+  if ((f.insidersDetected ?? 0) > 0) flags.push(`${f.insidersDetected} redes de insiders detectadas`);
+  if (f.creatorHoneypots) flags.push("el creador ha desplegado otros honeypots");
+  if (f.launchpad === "flap.sh") flags.push("token de Flap.sh (\u20267777): impuestos de venta din\xE1micos que pueden llegar al 100 %");
+  if (f.honeypot) flags.push("honeypot: no se puede vender");
+  if (f.mcapUsd !== void 0 && f.liquidityUsd !== void 0 && f.mcapUsd <= f.liquidityUsd) flags.push("mcap \u2264 liquidez: casi todo el supply est\xE1 en el pool (perfil t\xEDpico de rug)");
+  return {
+    creator: f.creator,
+    creatorTokens: f.creatorTokens,
+    creatorGraduated: f.creatorGraduated,
+    devHoldingPct: f.devHoldingPct,
+    insidersDetected: f.insidersDetected,
+    lpLockedPct: f.lpLockedPct,
+    launchpad: f.launchpad,
+    ageMinutes: f.ageMinutes,
+    flags: flags.length ? flags : ["ninguna se\xF1al de alarma en los datos disponibles"],
+    ...prev ? {
+      sinceLastRead: {
+        minutesAgo: Number(((Date.now() - prev.at) / 6e4).toFixed(1)),
+        liquidityChangePct: change(prev.f.liquidityUsd, f.liquidityUsd),
+        mcapChangePct: change(prev.f.mcapUsd, f.mcapUsd),
+        holders: prev.f.holders !== void 0 && f.holders !== void 0 ? `${prev.f.holders} \u2192 ${f.holders}` : void 0,
+        netBuyers5m: prev.f.netBuyers5m !== void 0 && f.netBuyers5m !== void 0 ? `${prev.f.netBuyers5m} \u2192 ${f.netBuyers5m}` : void 0
+      }
+    } : { sinceLastRead: "primera lectura: vuelve a leerlo en 2-3 minutos para ver si aguanta" }
+  };
+}
 var SIM_TOOLS = [
   tool({
     name: "scan_market",
@@ -41709,9 +41819,13 @@ var SIM_TOOLS = [
     name: "token_report",
     kind: "research",
     researchTarget: (i) => i.token,
-    description: "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico.",
+    description: "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`: el historial del creador (tokens lanzados y graduados, si est\xE1 en tu lista negra), lo que conserva, insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores): la mayor\xEDa de los rugs ocurre en los primeros ~15 minutos, as\xED que comprobar que aguanta entre dos lecturas es la mejor defensa.",
     schema: external_exports.object({ chain: chainParam, token: external_exports.string().describe("Direcci\xF3n del token (en Solana, su mint)") }),
-    run: async ({ chain, token: token2 }) => json2(await getChain(chain).research.report(token2.trim()))
+    run: async ({ chain, token: token2 }) => {
+      const c = getChain(chain);
+      const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
+      return json2({ ...report, ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {} });
+    }
   }),
   tool({
     name: "field_guide",

@@ -2,7 +2,7 @@
 
 Información factual sobre el entorno: qué puedes ejecutar, cómo se simula, cómo funcionan las
 plataformas y qué fuentes de datos públicas responden. No son recomendaciones de estrategia.
-Datos verificados el 27 de septiembre de 2026; las plataformas cambian, así que contrasta lo que dependa de cifras concretas.
+Datos verificados el 27 y el 28 de septiembre de 2026; las plataformas cambian, así que contrasta lo que dependa de cifras concretas.
 
 ## 1. Qué puede ejecutar el simulador
 
@@ -152,3 +152,12 @@ de GoPlus). Para cualquier otra consulta, usa estas APIs con `http_get`. Todas d
 - Índice Fear & Greed: `https://api.alternative.me/fng/?limit=1`
 
 Webs como DexScreener pueden mostrar controles anti-bot en el navegador; sus APIs sí responden.
+
+## 5. Señales de riesgo de un token nuevo (datos de 2026)
+
+- **Cuándo pasan los rugs.** Un estudio de 2026 sobre Solana da una vida mediana de unos 14 minutos para un token que acaba en rug (el 75 % dura menos de 86). Los primeros 5 minutos de trading ya predicen bastante bien el rug de la primera hora: dinámica de la liquidez, cociente compras/ventas, número de operaciones y caída máxima. Leer un token dos veces separadas por 2-3 minutos y comprobar que la liquidez y los compradores aguantan es la defensa más barata. `token_report` lo hace (`riskCheck.sinceLastRead`).
+- **El creador.** Hay grupos que lanzan decenas de tokens cada uno. Jupiter da, para cada token, cuántos ha lanzado su creador (`creatorTokens`) y cuántos llegaron a graduarse (`creatorGraduated`). RugCheck da las redes de insiders y la liquidez bloqueada. GoPlus (EVM) da el creador, lo que conserva y si tiene otros honeypots. Con todo eso, `token_report` añade `riskCheck.flags`.
+- **Lista negra.** Si un token de un creador ya te costó un 80 % o más, el simulador frena la compra de otros tokens suyos. Puedes saltártelo a sabiendas con `thesis.overrides` e `id: 0`.
+- **BNB Chain por la dirección.** …7777 = Flap.sh, con impuestos de venta dinámicos que pueden llegar al 100 %. …4444 o …ffff = four.meme. El simulador lo pone en `launchpad`, también en tus operaciones antiguas.
+- **Graduación en pump.fun.** Se gradúa entre el 1 y el 3 % de los tokens. Tras migrar suele haber un pico y luego un volcado: comprar justo en la migración suele salir mal.
+- **Condiciones para tus creencias.** Todos estos datos se pueden usar en las condiciones: `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.

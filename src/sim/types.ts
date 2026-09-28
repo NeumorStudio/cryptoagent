@@ -62,4 +62,19 @@ export interface Features {
   sellTaxPct?: number;
   honeypot?: boolean;
   mintable?: boolean;
+  /** Quién creó el token (dirección). Sirve para la lista negra de creadores. */
+  creator?: string;
+  /** Cuántos tokens ha lanzado el creador y cuántos llegaron a graduarse (Solana, Jupiter). */
+  creatorTokens?: number;
+  creatorGraduated?: number;
+  /** % de éxito del creador: graduados / lanzados. */
+  creatorGraduationPct?: number;
+  /** % del supply que conserva el creador. */
+  devHoldingPct?: number;
+  /** Otros contratos del mismo creador marcados como honeypot (EVM, GoPlus). */
+  creatorHoneypots?: boolean;
+  /** Redes de insiders detectadas (Solana, RugCheck). */
+  insidersDetected?: number;
+  /** % de la liquidez bloqueada o quemada. */
+  lpLockedPct?: number;
 }

@@ -9,6 +9,7 @@ import * as evm from "../../market/evm.js";
 import { fetchJson, isNoRouteError } from "../../market/http.js";
 import { fromBaseUnits, toBaseUnits } from "../../market/jupiter.js";
 import type { Features } from "../types.js";
+import { launchpadOf } from "../launchpads.js";
 import type { ChainAdapter, CostLine, Delta, Settlement, SwapQuote, TokenRef, WalletView } from "./types.js";
 
 const DUST = 1e-12;
@@ -240,7 +241,18 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
       const [pairs, sec] = await Promise.all([evm.dexPairs(cfg.id, [asset]).catch(() => new Map<string, evm.DexPair[]>()), security(asset.toLowerCase())]);
       const top = pairs.get(asset.toLowerCase())?.[0];
       const m5 = top?.txns?.m5;
+      const raw = sec.raw ?? {};
+      // Liquidez bloqueada o quemada: % de los tokens LP en lockers o en direcciones muertas (GoPlus).
+      const lp = (raw.lp_holders ?? []) as Array<{ address: string; percent: string; is_locked: number; tag?: string }>;
+      const lpLocked = lp.length
+        ? lp.filter((h) => h.is_locked === 1 || /^0x0{40}$|dead$/i.test(h.address)).reduce((s, h) => s + Number(h.percent), 0) * 100
+        : undefined;
       return {
+        creator: typeof raw.creator_address === "string" && raw.creator_address ? raw.creator_address.toLowerCase() : undefined,
+        devHoldingPct: raw.creator_percent !== undefined && raw.creator_percent !== "" ? n(Number(raw.creator_percent) * 100, 1) : undefined,
+        creatorHoneypots: raw.honeypot_with_same_creator === "1" ? true : raw.honeypot_with_same_creator === "0" ? false : undefined,
+        // Con pools v4 / Infinity no hay tokens LP: el dato no significa nada.
+        lpLockedPct: lpLocked !== undefined && Number(raw.lp_total_supply ?? 0) > 1e-6 ? n(Math.min(100, lpLocked), 1) : undefined,
         venue: cfg.id,
         ageMinutes: ageMinutes(top?.pairCreatedAt),
         liquidityUsd: n(top?.liquidity?.usd, 0),
@@ -251,7 +263,7 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : undefined,
-        launchpad: top?.dexId,
+        launchpad: launchpadOf(cfg.id, asset, top?.dexId),
         buyTaxPct: sec.buyTaxPct,
         sellTaxPct: sec.sellTaxPct,
         honeypot: sec.honeypot,
@@ -301,6 +313,10 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         const skip = new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
         const candidates = [...merged.values()]
           .filter((c) => !skip.has(c.token))
+          .map((c) => {
+            const lp = launchpadOf(cfg.id, c.token);
+            return lp === "flap.sh" ? { ...c, launchpad: lp, warning: "token de Flap.sh (…7777): impuestos de venta dinámicos que pueden llegar al 100 %" } : lp ? { ...c, launchpad: lp } : c;
+          })
           .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
           .slice(0, limit);
         return {

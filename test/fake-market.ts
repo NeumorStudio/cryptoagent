@@ -3,6 +3,7 @@ import { SOL_MINT, USDC_MINT } from "../src/market/jupiter.js";
 import { setFetchImpl } from "../src/market/http.js";
 
 export const MEME = "MeMe1111111111111111111111111111111111111pump";
+export const MEME_DEV = "DevRug11111111111111111111111111111111111111";
 
 interface Token {
   symbol: string;
@@ -62,7 +63,10 @@ function handle(url: URL, body?: unknown): Response {
   if (url.host === "lite-api.jup.ag") {
     if (url.pathname === "/tokens/v2/search") {
       const t = tokens[url.searchParams.get("query")!];
-      return json(t ? [{ id: url.searchParams.get("query"), symbol: t.symbol, name: t.symbol, decimals: t.decimals, usdPrice: t.price }] : []);
+      const id = url.searchParams.get("query");
+      // MEME lo lanzó un creador "en serie" (40 tokens, ninguno graduado).
+      const creator = id === MEME ? { dev: MEME_DEV, audit: { devMints: 40, devMigrations: 0, devBalancePercentage: 8 } } : {};
+      return json(t ? [{ id, symbol: t.symbol, name: t.symbol, decimals: t.decimals, usdPrice: t.price, ...creator }] : []);
     }
     if (url.pathname === "/price/v3") {
       const ids = url.searchParams.get("ids")!.split(",");

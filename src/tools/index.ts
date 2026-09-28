@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { db, logActivity, logJournal, now } from "../db.js";
 import { fetchText } from "../market/http.js";
-import { CHAINS, VENUES, type ChainId } from "../sim/types.js";
+import { CHAINS, VENUES, type ChainId, type Features } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
 import * as mission from "../sim/mission.js";
 import * as memory from "../sim/memory.js";
@@ -84,6 +84,50 @@ const formatThesis = (t: z.infer<typeof thesis>) =>
 const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 
 
+// ─── Chequeo de riesgo de token_report ──────────────────────────────────────
+
+/** Última lectura de cada token (en este proceso), para decir qué ha cambiado en la siguiente. */
+const lastReads = new Map<string, { at: number; f: Features }>();
+
+function riskCheck(chain: ChainId, token: string, f: Features) {
+  const key = `${chain}:${token.toLowerCase()}`;
+  const prev = lastReads.get(key);
+  lastReads.set(key, { at: Date.now(), f });
+  const rugs = memory.creatorRugs(f.creator);
+  const change = (a?: number, b?: number) => (a !== undefined && b !== undefined && a !== 0 ? Number((((b - a) / Math.abs(a)) * 100).toFixed(1)) : undefined);
+  const flags: string[] = [];
+  if (rugs.length) flags.push(`creador en tu lista negra (${rugs.map((r) => `${r.symbol} ${r.pnlPct} %`).join(", ")})`);
+  if (f.creatorTokens !== undefined && f.creatorTokens >= 5 && (f.creatorGraduationPct ?? 0) < 5) flags.push(`creador en serie: ${f.creatorTokens} tokens lanzados, ${f.creatorGraduated ?? 0} graduados`);
+  if ((f.devHoldingPct ?? 0) > 5) flags.push(`el creador conserva el ${f.devHoldingPct} %`);
+  if ((f.insidersDetected ?? 0) > 0) flags.push(`${f.insidersDetected} redes de insiders detectadas`);
+  if (f.creatorHoneypots) flags.push("el creador ha desplegado otros honeypots");
+  if (f.launchpad === "flap.sh") flags.push("token de Flap.sh (…7777): impuestos de venta dinámicos que pueden llegar al 100 %");
+  if (f.honeypot) flags.push("honeypot: no se puede vender");
+  if (f.mcapUsd !== undefined && f.liquidityUsd !== undefined && f.mcapUsd <= f.liquidityUsd) flags.push("mcap ≤ liquidez: casi todo el supply está en el pool (perfil típico de rug)");
+  return {
+    creator: f.creator,
+    creatorTokens: f.creatorTokens,
+    creatorGraduated: f.creatorGraduated,
+    devHoldingPct: f.devHoldingPct,
+    insidersDetected: f.insidersDetected,
+    lpLockedPct: f.lpLockedPct,
+    launchpad: f.launchpad,
+    ageMinutes: f.ageMinutes,
+    flags: flags.length ? flags : ["ninguna señal de alarma en los datos disponibles"],
+    ...(prev
+      ? {
+          sinceLastRead: {
+            minutesAgo: Number(((Date.now() - prev.at) / 60_000).toFixed(1)),
+            liquidityChangePct: change(prev.f.liquidityUsd, f.liquidityUsd),
+            mcapChangePct: change(prev.f.mcapUsd, f.mcapUsd),
+            holders: prev.f.holders !== undefined && f.holders !== undefined ? `${prev.f.holders} → ${f.holders}` : undefined,
+            netBuyers5m: prev.f.netBuyers5m !== undefined && f.netBuyers5m !== undefined ? `${prev.f.netBuyers5m} → ${f.netBuyers5m}` : undefined,
+          },
+        }
+      : { sinceLastRead: "primera lectura: vuelve a leerlo en 2-3 minutos para ver si aguanta" }),
+  };
+}
+
 // Herramientas del simulador: las comparten el runner por API y el servidor MCP.
 export const SIM_TOOLS = [
   tool({
@@ -104,9 +148,17 @@ export const SIM_TOOLS = [
     description:
       "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
       "auditoría y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de " +
-      "los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripción, comentarios y máximo histórico.",
+      "los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripción, comentarios y máximo histórico. " +
+      "Siempre añade `riskCheck`: el historial del creador (tokens lanzados y graduados, si está en tu lista negra), lo que conserva, " +
+      "insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qué ha cambiado " +
+      "desde la lectura anterior (liquidez, precio, compradores): la mayoría de los rugs ocurre en los primeros ~15 minutos, así que " +
+      "comprobar que aguanta entre dos lecturas es la mejor defensa.",
     schema: z.object({ chain: chainParam, token: z.string().describe("Dirección del token (en Solana, su mint)") }),
-    run: async ({ chain, token }) => json(await getChain(chain).research.report(token.trim())),
+    run: async ({ chain, token }) => {
+      const c = getChain(chain);
+      const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
+      return json({ ...(report as Record<string, unknown>), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}) });
+    },
   }),
   tool({
     name: "field_guide",

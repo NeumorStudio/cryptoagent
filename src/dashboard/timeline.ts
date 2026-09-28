@@ -276,13 +276,7 @@ function dbEvents(missionId: number | null): TimelineEvent[] {
       body: j.details ? JSON.stringify(JSON.parse(j.details), null, 2) : undefined,
     });
   }
-  // Lo que el revisor ha guardado en la memoria a partir de esta misión.
-  for (const b of db.prepare("SELECT id, created_at, statement FROM beliefs WHERE source_mission_id = ? AND origin = 'reviewer'").all(missionId) as any[]) {
-    events.push({ id: `b${b.id}`, ts: b.created_at, kind: "lesson", title: b.statement, body: `Creencia #${b.id} (la escribe el revisor)` });
-  }
-  for (const h of db.prepare("SELECT id, created_at, title, steps FROM howtos WHERE source_mission_id = ?").all(missionId) as any[]) {
-    events.push({ id: `h${h.id}`, ts: h.created_at, kind: "lesson", title: h.title, body: `Howto #${h.id}: ${h.steps}` });
-  }
+  // Lo que el revisor guarda o corrige en la memoria llega por la tabla `activity` (kind "lesson").
   for (const n of db.prepare("SELECT id, ts, text FROM notes WHERE mission_id = ?").all(missionId) as any[]) {
     events.push({ id: `n${n.id}`, ts: n.ts, kind: "note", title: n.text });
   }

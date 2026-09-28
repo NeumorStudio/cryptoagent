@@ -163,6 +163,13 @@ test("las peticiones de capacidades parecidas se agrupan", () => {
   assert.equal(memory.listCapabilityRequests().length, 0);
 });
 
+test("cada cambio en la memoria queda visible en el panel (también las correcciones)", () => {
+  const titles = memory.recentLearning(20).map((l) => l.title);
+  assert.ok(titles.some((t) => t.startsWith("Nueva creencia")));
+  assert.ok(titles.some((t) => t.startsWith("Retira la creencia")));
+  assert.ok(titles.some((t) => t.startsWith("Nuevo howto")));
+});
+
 test("cola del revisor y retrospectiva", () => {
   const q = memory.reviewQueue();
   assert.equal((q.activeMission as { missionId: number }).missionId, mission.id);
@@ -172,4 +179,9 @@ test("cola del revisor y retrospectiva", () => {
   const stats = memory.writeMissionReview({ missionId: mission.id, whatWasTried: "a", whatHappened: "b", nextTime: "c" });
   assert.equal(stats.result.pct, -10);
   assert.deepEqual(memory.pendingReviews(), []);
+  // El revisor ve cómo jugó el trader en sus últimas misiones, para detectar si está estancado.
+  const approach = memory.recentApproach()!;
+  assert.equal(approach.summary.missions, 1);
+  assert.equal(approach.perMission[0]!.resultPct, -10);
+  assert.equal(approach.perMission[0]!.venues, "solana");
 });

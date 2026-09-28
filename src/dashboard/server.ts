@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import { asset } from "../paths.js";
 import { db } from "../db.js";
-import { listCapabilityRequests, recall } from "../sim/memory.js";
+import { listCapabilityRequests, recall, recentLearning } from "../sim/memory.js";
 import { getActiveMission, getLastMission, missionHistory, type Mission } from "../sim/mission.js";
 import { listOrders } from "../sim/orders.js";
 import { valuation } from "../sim/portfolio.js";
@@ -43,6 +43,7 @@ function buildMemory(missionId: number | null) {
   return {
     howtos: mem.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title })),
     beliefs: mem.beliefs.map((b) => ({ id: b.id, statement: b.statement, verdict: b.evidence.verdict })),
+    latest: recentLearning(5),
     requests: listCapabilityRequests("open").map((r) => ({ id: r.id, capability: r.capability, why: r.why, times_requested: r.times_requested })),
   };
 }

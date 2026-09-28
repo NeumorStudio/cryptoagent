@@ -328,6 +328,22 @@ function duplicateOf(table: "howtos" | "beliefs", fp: string, exceptId?: number)
   return rows.find((r) => similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD)?.id;
 }
 
+/**
+ * Cada cambio en la memoria queda en la actividad de la misión de la que sale (o de la activa o la última),
+ * para que el panel lo muestre: con la memoria ya formada, el revisor sobre todo corrige y amplía lo que hay.
+ */
+function logLearning(_sourceMission: number | null | undefined, title: string, body?: string) {
+  // Va a la misión que se está viendo (la activa o la última), no a la de origen: el revisor escribe al
+  // terminar una misión y el panel pasa enseguida a la siguiente.
+  const target = (getActiveMission() ?? getLastMission())?.id ?? null;
+  logActivity({ missionId: target, sessionId: null, kind: "lesson", title, body });
+}
+
+/** Lo último que ha cambiado en la memoria, de cualquier misión (para el panel). */
+export function recentLearning(limit = 5) {
+  return db.prepare("SELECT ts, title FROM activity WHERE kind = 'lesson' ORDER BY id DESC LIMIT ?").all(limit) as Array<{ ts: string; title: string }>;
+}
+
 export function writeHowto(a: { scope: string; topic: string; title: string; steps: string; missionId: number | null; fixesErrorIds?: number[] }) {
   const fp = fingerprint(`${a.title} ${a.steps}`);
   const dup = duplicateOf("howtos", fp);
@@ -340,6 +356,7 @@ export function writeHowto(a: { scope: string; topic: string; title: string; ste
       .run(now(), now(), a.scope, a.topic, a.title, a.steps, a.missionId, fp).lastInsertRowid,
   );
   if (a.fixesErrorIds?.length) linkErrors(id, a.fixesErrorIds);
+  logLearning(a.missionId, `Nuevo howto #${id}: ${a.title}`, a.steps);
   return id;
 }
 
@@ -364,6 +381,7 @@ export function updateHowto(a: { id: number; title?: string; steps?: string; sta
     a.id,
   );
   if (a.fixesErrorIds?.length) linkErrors(a.id, a.fixesErrorIds);
+  logLearning(null, a.status === "obsolete" ? `Da por obsoleto el howto #${a.id}: ${title}` : `Amplía el howto #${a.id}: ${title}`, a.steps);
 }
 
 function validateCondition(cond: Condition | undefined, expectation: string | undefined) {
@@ -386,7 +404,9 @@ export function writeBelief(a: { statement: string; appliesTo: string; expectati
       )
       .run(now(), now(), a.missionId, a.statement, a.appliesTo, a.expectation ?? null, a.condition ? JSON.stringify(a.condition) : null, fp).lastInsertRowid,
   );
-  return beliefView(getBelief(id), closedPositions());
+  const view = beliefView(getBelief(id), closedPositions());
+  logLearning(a.missionId, `Nueva creencia #${id}: ${a.statement}`, view.evidence.verdict);
+  return view;
 }
 
 function getBelief(id: number) {
@@ -417,7 +437,9 @@ export function reviseBelief(a: {
   db.prepare(
     `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ? WHERE id = ?`,
   ).run(statement, a.appliesTo ?? b.applies_to, expectation, condition, fingerprint(statement), a.retire ? "retired" : b.status, a.reason, now(), a.id);
-  return beliefView(getBelief(a.id), closedPositions());
+  const view = beliefView(getBelief(a.id), closedPositions());
+  logLearning(null, `${a.retire ? "Retira" : "Corrige"} la creencia #${a.id}: ${statement}`, `${a.reason} · ${view.evidence.verdict}`);
+  return view;
 }
 
 export function convertBeliefToHowto(a: { id: number; scope: string; topic: string; title: string; steps: string }) {
@@ -516,6 +538,45 @@ export function reviewCheckpoint(missionId: number, summary: string) {
   logActivity({ missionId, sessionId: null, kind: "review", title: "El revisor repasa la misión", body: summary });
 }
 
+/**
+ * Cómo ha jugado el trader en sus últimas misiones terminadas, para que el revisor vea si repite siempre
+ * el mismo enfoque (y con qué resultado) y, si está estancado, proponga uno distinto de verdad.
+ */
+export function recentApproach(count = 8) {
+  const missions = db
+    .prepare("SELECT * FROM missions WHERE status IN ('succeeded', 'expired', 'cancelled') AND final_usd IS NOT NULL ORDER BY id DESC LIMIT ?")
+    .all(count) as unknown as Mission[];
+  if (!missions.length) return null;
+  const perMission = missions.reverse().map((m) => {
+    const ps = listPositions(m.id).filter((p) => p.status !== "moved");
+    const ages = ps.map((p) => p.entry.ageMinutes).filter((a): a is number => typeof a === "number").sort((a, b) => a - b);
+    const orders = (db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id) as { n: number }).n;
+    return {
+      missionId: m.id,
+      resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
+      positions: ps.length,
+      venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
+      tokenAgeMinutes: ages.length ? ages[Math.floor(ages.length / 2)] : null,
+      closedByDeadline: ps.filter((p) => String(p.exitReason ?? "").startsWith("Cierre automático")).length,
+      orders,
+    };
+  });
+  const n = perMission.length;
+  const share = (f: (x: (typeof perMission)[number]) => boolean) => `${perMission.filter(f).length} de ${n}`;
+  return {
+    summary: {
+      missions: n,
+      avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n).toFixed(1)),
+      bestPct: Math.max(...perMission.map((x) => x.resultPct)),
+      withOneEntry: share((x) => x.positions === 1),
+      endedByDeadline: share((x) => x.closedByDeadline > 0),
+      withYoungTokens: share((x) => x.tokenAgeMinutes !== null && x.tokenAgeMinutes < 60),
+      venuesUsed: [...new Set(perMission.map((x) => x.venues))].join(", "),
+    },
+    perMission,
+  };
+}
+
 /** Lo que tiene pendiente el revisor. */
 export function reviewQueue() {
   const active = getActiveMission();
@@ -540,6 +601,7 @@ export function reviewQueue() {
   return {
     pendingFinalReviews: pendingReviews(),
     activeMission,
+    recentApproach: recentApproach(),
     pendingObservations: db.prepare("SELECT id, ts, mission_id, kind, text FROM observations WHERE status = 'pending' ORDER BY id").all(),
     errorsWithoutHowto: recurringErrors().filter((e: any) => !e.howtoId),
     beliefsWithoutCondition,

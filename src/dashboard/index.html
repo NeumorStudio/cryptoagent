@@ -295,6 +295,8 @@
       <p class="sub">Misiones anteriores</p>
       <div class="runs" id="runs" role="img" aria-label="Resultado de las misiones anteriores"></div>
       <p class="runs-legend" id="runsLegend"></p>
+      <p class="sub">Lo último que ha aprendido</p>
+      <ul class="beliefs" id="latest"></ul>
       <p class="sub">Lo que tiene más claro</p>
       <ul class="beliefs" id="beliefs"></ul>
       <div id="ask"></div>
@@ -675,6 +677,14 @@ function renderLearn() {
   $("runsLegend").textContent = past.length
     ? `${past.length} misiones, ${wins} con la meta alcanzada (en amarillo).`
     : "Es su primera misión.";
+
+  const latest = $("latest");
+  latest.replaceChildren();
+  if (!state.memory.latest.length) latest.append(el("li", { class: "quiet" }, "Todavía no ha cambiado nada en su memoria."));
+  for (const l of state.memory.latest) {
+    const text = l.title.length > 170 ? l.title.slice(0, 170).replace(/sS*$/, "") + "…" : l.title;
+    latest.append(el("li", {}, text, el("span", { class: "verdict" }, ago(l.ts))));
+  }
 
   const beliefs = $("beliefs");
   beliefs.replaceChildren();

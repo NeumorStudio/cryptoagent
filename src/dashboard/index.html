@@ -165,7 +165,7 @@
 
   .review { font-size: 16px; }
   .review-when { font-size: 13px; color: var(--muted); margin-top: 4px; }
-  .runs { display: flex; align-items: center; gap: 6px; height: 96px; margin-top: 8px; position: relative; }
+  .runs { display: flex; align-items: center; gap: clamp(2px, 0.6vw, 6px); height: 96px; margin-top: 8px; position: relative; }
   .runs::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--rule); }
   .run { flex: 0 1 18px; height: 100%; position: relative; z-index: 1; }
   .run i { position: absolute; left: 0; right: 0; }
@@ -356,7 +356,7 @@ function renderClock() {
   if (!m) { clock.textContent = "sin misión"; clock.className = "clock-value ended"; $("clockLabel").textContent = ""; return; }
   const t0 = new Date(m.created_at).getTime(), t1 = new Date(m.deadline).getTime();
   const left = Math.max(0, t1 - Date.now());
-  const frac = Math.min(1, (Date.now() - t0) / (t1 - t0));
+  const frac = Math.max(0, Math.min(1, (Date.now() - t0) / (t1 - t0)));
   $("timeStart").textContent = `salida ${hm(m.created_at)}`;
   $("timeEnd").textContent = `fin ${hm(m.deadline)}`;
   if (m.status !== "active") {
@@ -454,6 +454,12 @@ function renderTrack(m, value, v) {
   const fl = $("finishLabel");
   fl.style.left = `${Math.min(100, finish + 1)}%`;
   fl.replaceChildren("meta ", el("b", {}, usd(m.target_usd)));
+  // En pantallas estrechas salida y meta quedan cerca: la de salida se alinea a la izquierda de su
+  // marca y, si aun así se pisan, se quedan solo las cifras.
+  sl.classList.remove("right");
+  const overlap = () => sl.getBoundingClientRect().right + 8 > fl.getBoundingClientRect().left;
+  if (overlap()) sl.classList.add("right");
+  if (overlap()) { sl.replaceChildren(el("b", {}, usd(m.initial_usd))); fl.replaceChildren(el("b", {}, usd(m.target_usd))); }
 
   const ahead = $("fillAhead"), behind = $("fillBehind");
   ahead.style.left = `${start}%`; ahead.style.width = `${100 - start}%`;
@@ -461,6 +467,9 @@ function renderTrack(m, value, v) {
   behind.style.left = "0"; behind.style.width = `${start}%`;
   behind.style.transform = `scaleX(${value < m.initial_usd ? (start - runner) / start : 0})`;
   $("runnerRail").style.transform = `translateX(${runner}%)`;
+  // La etiqueta se centra sobre el corredor, salvo en los bordes de la pista, donde se recortaría.
+  const tag = $("runnerRail").querySelector(".runner-tag");
+  tag.style.transform = runner < 6 ? "translateX(-14px)" : runner > 94 ? "translateX(calc(-100% + 14px))" : "translateX(-50%)";
 
   // El fantasma: lo que valdría la cartera si el agente no hubiera hecho nada.
   const g = $("ghostRail");
@@ -491,7 +500,12 @@ function renderChart() {
   const svg = $("chart"), wrap = $("chartWrap");
   svg.replaceChildren();
   wrap.querySelector(".chart-empty")?.remove();
-  const points = state.snapshots.map((s) => ({ t: new Date(s.ts).getTime(), y: s.total_usd }));
+  const t0 = new Date(m.created_at).getTime();
+  // El reloj arranca cuando el agente empieza a trabajar: lo medido antes (mientras el revisor
+  // preparaba la misión) queda fuera de la carrera, y la curva empieza en la salida.
+  const all = state.snapshots.map((s) => ({ t: new Date(s.ts).getTime(), y: s.total_usd }));
+  const points = all.filter((p) => p.t >= t0);
+  if (all.length > points.length) points.unshift({ t: t0, y: all[all.length - points.length - 1].y });
   if (m.status === "active" && v?.totalUsd != null) points.push({ t: Date.now(), y: v.totalUsd });
   $("chartTable").replaceChildren(...points.slice(-60).map((p) => el("tr", {}, el("td", {}, hm(new Date(p.t).toISOString())), el("td", {}, usd(p.y)))));
   if (points.length < 2) {
@@ -501,7 +515,6 @@ function renderChart() {
 
   const W = wrap.clientWidth, H = svg.clientHeight || 260, pad = { l: 4, r: 64, t: 28, b: 24 };
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const t0 = new Date(m.created_at).getTime();
   const t1 = Math.max(new Date(m.deadline).getTime(), points.at(-1).t);
   const ys = points.map((p) => p.y).concat([m.initial_usd, m.target_usd]);
   const range = Math.max(...ys) - Math.min(...ys) || 1;
@@ -666,17 +679,20 @@ function renderLearn() {
 
   const runs = $("runs");
   runs.replaceChildren();
-  const past = state.history.filter((h) => h.resultPct != null).slice(-12);
+  const finished = state.history.filter((h) => h.resultPct != null);
+  const past = finished.slice(-40);
   const maxAbs = Math.max(10, ...past.map((h) => Math.abs(h.resultPct)));
   for (const h of past) {
     const up = h.resultPct >= 0;
     const bar = el("i", { style: `height:${Math.max(4, (Math.abs(h.resultPct) / maxAbs) * 50)}%` });
     runs.append(el("div", { class: `run ${up ? "up" : "down"}${h.outcome === "objetivo conseguido" ? " win" : ""}`, title: `Misión #${h.missionId}: ${signed(h.resultPct, " %")} · ${h.outcome}` }, bar));
   }
-  const wins = past.filter((h) => h.outcome === "objetivo conseguido").length;
-  $("runsLegend").textContent = past.length
-    ? `${past.length} misiones, ${wins} con la meta alcanzada (en amarillo).`
-    : "Es su primera misión.";
+  const wins = (list) => list.filter((h) => h.outcome === "objetivo conseguido").length;
+  $("runsLegend").textContent = !past.length
+    ? "Es su primera misión."
+    : past.length === finished.length
+      ? `${past.length} misiones, ${wins(past)} con la meta alcanzada (en amarillo).`
+      : `Las últimas ${past.length} de ${finished.length} misiones: ${wins(past)} con la meta alcanzada (en amarillo); ${wins(finished)} en total.`;
 
   const latest = $("latest");
   latest.replaceChildren();

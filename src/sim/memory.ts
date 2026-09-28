@@ -312,6 +312,24 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
 }
 
 /**
+ * Qué dice la memoria de un token antes de comprarlo: creencias negativas fuertes que frenarían la compra
+ * (block), otras negativas cuya condición cumple (caution) y positivas que cumple (favor). Solo ids: el
+ * texto lo tiene el agente en su resumen de memoria.
+ */
+export function beliefsFor(venue: string, entry: Record<string, unknown>, asset = "") {
+  const pos = { venue, asset, entry: { ...entry, venue }, research: {} } as unknown as Pos;
+  const block = new Set(blockingBeliefs(venue, entry, asset).map((b) => b.id));
+  const rows = (db.prepare("SELECT id, expectation, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all() as unknown as BeliefRow[]).filter((b) =>
+    matches(JSON.parse(b.condition!) as Condition, pos),
+  );
+  return {
+    block: [...block],
+    caution: rows.filter((b) => b.expectation === "negative" && !block.has(b.id)).map((b) => b.id),
+    favor: rows.filter((b) => b.expectation === "positive").map((b) => b.id),
+  };
+}
+
+/**
  * La memoria completa, ordenada por relevancia para la misión actual (o la última).
  * `limit` recorta las listas largas (para el resumen de inicio de sesión).
  */

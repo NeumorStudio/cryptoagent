@@ -143,7 +143,9 @@ export function compactScan(scan: unknown) {
     sourcesStatus: undefined,
     sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h · pump: en directo en pump.fun · dexBoost: promocionado en DexScreener · gecko/geckoNew: GeckoTerminal tendencia/nuevos",
     candidates: s.candidates.map(({ sources, name, symbol, ...c }) => {
-      const same = typeof name === "string" && typeof symbol === "string" && name.trim().toLowerCase() === symbol.trim().toLowerCase();
+      // GeckoTerminal da el nombre del par ("CATE / SOL"): tampoco aporta nada.
+      const n = typeof name === "string" ? name.trim().toLowerCase().replace(/ \/ \S+$/, "") : "";
+      const same = typeof symbol === "string" && n === symbol.trim().toLowerCase();
       return {
         ...Object.fromEntries(Object.entries(c).slice(0, 1)),
         symbol,
@@ -153,6 +155,129 @@ export function compactScan(scan: unknown) {
       };
     }),
   };
+}
+
+// ─── Espera con novedades ──────────────────────────────────────────────────
+
+type Valuation = Awaited<ReturnType<typeof sim.valuation>>;
+
+/** Valor de cada posición con riesgo (tokens que no son estables y futuros), por clave estable. */
+export function positionValues(v: Valuation | null): Map<string, { position: string; usd: number }> | null {
+  if (!v) return null;
+  const out = new Map<string, { position: string; usd: number }>();
+  for (const h of v.holdings as Array<{ venue: string; asset: string; symbol: string; usd?: number; valuedBy?: string }>) {
+    if (h.valuedBy === "stable" || (h.usd ?? 0) < 0.5) continue;
+    out.set(`${h.venue}:${h.asset}`, { position: `${h.symbol} (${h.venue})`, usd: h.usd ?? 0 });
+  }
+  for (const p of v.perps ?? []) out.set(`perp:${p.perpId}`, { position: p.position, usd: p.valueIfClosedUsd });
+  return out;
+}
+
+/** Cómo se ha movido cada posición entre dos momentos (las nuevas y las cerradas también salen). */
+export function movesSince(base: Map<string, { position: string; usd: number }> | null, now: Map<string, { position: string; usd: number }> | null) {
+  const a = base ?? new Map(), b = now ?? new Map();
+  return [...new Set([...a.keys(), ...b.keys()])].map((k) => {
+    const from = a.get(k)?.usd ?? 0, to = b.get(k)?.usd ?? 0;
+    return {
+      position: (b.get(k) ?? a.get(k))!.position,
+      startUsd: from,
+      nowUsd: to,
+      changePct: from > 0 ? Number((((to - from) / from) * 100).toFixed(1)) : 0,
+      ...(from === 0 ? { note: "nueva" } : to === 0 ? { note: "cerrada o sin valor" } : {}),
+    };
+  });
+}
+
+/** Ejecuta fn sobre la lista con como mucho `limit` llamadas a la vez (las APIs de riesgo limitan ráfagas). */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return out;
+}
+
+/** Lo que dice la memoria de un token, en una celda: "frena #10 · avisa #23 · apoya #16". */
+function memoryCell(chain: ChainId, f: Features, address: string): string {
+  const m = memory.beliefsFor(chain, f as unknown as Record<string, unknown>, address);
+  const rugs = memory.creatorRugs(f.creator).length ? ["frena: creador en lista negra"] : [];
+  return [
+    ...rugs,
+    ...(m.block.length ? [`frena #${m.block.join(", #")}`] : []),
+    ...(m.caution.length ? [`avisa #${m.caution.join(", #")}`] : []),
+    ...(m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []),
+  ].join(" · ");
+}
+
+/**
+ * Chequeo previo de los primeros candidatos de un escaneo, dentro de la misma llamada: sus alarmas de
+ * riesgo y qué dice la memoria. Ahorra una ronda de token_report por candidato solo para descartarlo.
+ * Cuenta como primera lectura: el siguiente token_report de ese token trae sinceLastRead.
+ */
+export async function screenCandidates(chain: ChainId, candidates: Array<Record<string, unknown>>, n: number): Promise<Array<Record<string, unknown>>> {
+  const c = getChain(chain);
+  const checked = await mapLimit(candidates.slice(0, n), 3, async (cand) => {
+    const address = String(cand.mint ?? cand.token ?? "");
+    const f = address ? await c.entryFeatures(address).catch(() => null) : null;
+    if (!f) return { ...cand, alarms: "sin datos de riesgo" };
+    const rc = riskCheck(chain, address, f);
+    const flags = rc.flags.filter((x) => !x.startsWith("ninguna señal"));
+    // El aviso del escaneo (creador en serie, Flap.sh) ya sale entre las alarmas.
+    const { warning: _w, ...rest } = cand;
+    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address) };
+  });
+  return [...checked, ...candidates.slice(n)];
+}
+
+/** Fichas breves de varios tokens en una tabla, con los mismos datos en todas las cadenas (los de entrada). */
+export async function briefReports(chain: ChainId, tokens: string[]): Promise<string> {
+  const c = getChain(chain);
+  const rows = await mapLimit([...new Set(tokens.map((t) => t.trim()))], 3, async (token) => {
+    const t = await c.resolveToken(token).catch(() => null);
+    const f = t ? await c.entryFeatures(t.address).catch(() => null) : null;
+    if (!t || !f) return { token, symbol: t?.symbol, error: "sin datos (dirección desconocida o APIs caídas)" };
+    const rc = riskCheck(chain, token, f);
+    const flags = rc.flags.filter((x) => !x.startsWith("ninguna señal"));
+    const since = rc.sinceLastRead;
+    return {
+      token,
+      symbol: t.symbol,
+      ageMinutes: f.ageMinutes,
+      liquidityUsd: f.liquidityUsd,
+      mcapUsd: f.mcapUsd,
+      priceChange5mPct: f.priceChange5mPct,
+      priceChange1hPct: f.priceChange1hPct,
+      netBuyers5m: f.netBuyers5m,
+      buySellRatio5m: f.buySellRatio5m,
+      holders: f.holders,
+      topHoldersPct: f.topHoldersPct,
+      taxes: f.buyTaxPct !== undefined || f.sellTaxPct !== undefined ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : undefined,
+      launchpad: f.launchpad,
+      alarms: flags.length ? flags.join("; ") : "ninguna",
+      memory: memoryCell(chain, f, t.address),
+      sinceLastRead:
+        typeof since === "string"
+          ? "primera lectura"
+          : [
+              `hace ${since.minutesAgo} min`,
+              since.liquidityChangePct !== undefined ? `liq ${since.liquidityChangePct > 0 ? "+" : ""}${since.liquidityChangePct} %` : "",
+              since.mcapChangePct !== undefined ? `mcap ${since.mcapChangePct > 0 ? "+" : ""}${since.mcapChangePct} %` : "",
+              since.netBuyers5m ? `compradores ${since.netBuyers5m}` : "",
+            ]
+              .filter(Boolean)
+              .join(", "),
+    };
+  });
+  return toText({
+    note: "Fichas breves. La completa de uno (actividad por tramos, webs y redes, auditoría detallada): token_report con token. memory = ids de creencias de tu resumen.",
+    tokens: rows,
+  });
 }
 
 /** token_report sin lo que ya sabe el agente (la dirección que ha pedido) ni lo que no sirve para decidir. */
@@ -202,23 +327,45 @@ export const SIM_TOOLS = [
       "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalización, liquidez, " +
       "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero. En Solana combina los tokens en " +
       "tendencia de Jupiter (5 min y 1 h), los que están en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
-    schema: z.object({ chain: chainParam, limit: z.number().int().min(5).max(60).default(15) }),
-    run: async ({ chain, limit }) => toText(compactScan(await getChain(chain).research.scan(limit))),
+    schema: z.object({
+      chain: chainParam,
+      limit: z.number().int().min(5).max(60).default(15),
+      check_top: z
+        .number()
+        .int()
+        .min(0)
+        .max(8)
+        .default(5)
+        .describe("A los N primeros les pasa ya el chequeo de riesgo (alarmas de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no"),
+    }),
+    run: async ({ chain, limit, check_top }) => {
+      const scan = compactScan(await getChain(chain).research.scan(limit)) as { candidates?: Array<Record<string, unknown>> };
+      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top);
+      return toText(scan);
+    },
   }),
   tool({
     name: "token_report",
     kind: "research",
-    researchTarget: (i) => i.token,
+    researchTarget: (i) => (i.tokens?.length ? i.tokens : i.token),
     description:
-      "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
+      "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, " +
+      "variación, compradores, holders, impuestos, alarmas de riesgo, qué dice tu memoria y qué ha cambiado desde la última lectura. " +
+      "Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
       "auditoría y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de " +
       "los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripción, comentarios y máximo histórico. " +
       "Siempre añade `riskCheck`: el historial del creador (tokens lanzados y graduados, si está en tu lista negra), lo que conserva, " +
       "insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qué ha cambiado " +
       "desde la lectura anterior (liquidez, precio, compradores): la mayoría de los rugs ocurre en los primeros ~15 minutos, así que " +
       "comprobar que aguanta entre dos lecturas es la mejor defensa.",
-    schema: z.object({ chain: chainParam, token: z.string().describe("Dirección del token (en Solana, su mint)") }),
-    run: async ({ chain, token }) => {
+    schema: z.object({
+      chain: chainParam,
+      token: z.string().optional().describe("Dirección del token (en Solana, su mint): ficha completa"),
+      tokens: z.array(z.string()).min(1).max(5).optional().describe("Varias direcciones: ficha breve de cada una"),
+    }),
+    run: async ({ chain, token, tokens }) => {
+      if (tokens?.length) return briefReports(chain, tokens);
+      if (!token) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
       return json({ ...compactReport(report), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}) });
@@ -278,25 +425,51 @@ export const SIM_TOOLS = [
     kind: "misc",
     deliversNews: true,
     description:
-      `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus órdenes condicionales se siguen vigilando. ` +
-      "Vuelve antes si la misión termina. El tiempo también pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.",
-    schema: z.object({ minutes: z.number().min(1).max(MAX_WAIT_MINUTES) }),
-    run: async ({ minutes }, ctx) => {
+      `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) vigilando tu cartera. Vuelve antes si la misión termina, si pasa algo ` +
+      "(se dispara una orden, llega una transferencia, un futuro se cierra) o si una posición se mueve wake_on_move_pct o más. " +
+      "Devuelve solo lo que ha cambiado: las novedades, cómo se han movido tus posiciones y el estado de la misión (no hace falta " +
+      "pedir portfolio ni mission_status después). El tiempo también pasa mientras investigas u operas.",
+    schema: z.object({
+      minutes: z.number().min(1).max(MAX_WAIT_MINUTES),
+      wake_on_move_pct: z.number().min(3).max(100).default(15).describe("Vuelve antes si una posición sube o baja este % desde que empezaste a esperar"),
+    }),
+    run: async ({ minutes, wake_on_move_pct }, ctx) => {
       const m = mid(ctx);
       // Parado en efectivo y lejos del objetivo: no se deja pasar más de un minuto seguido.
       const before = await mission.missionStatus(m);
       const idle = "warning" in before && before.warning;
       if (idle) minutes = Math.min(minutes, 1);
-      const until = Date.now() + minutes * 60_000;
-      while (Date.now() < until) {
+      const started = Date.now();
+      const startIso = now();
+      const until = started + minutes * 60_000;
+      const base = positionValues(await sim.valuation(m));
+      let current = base;
+      let wake = "";
+      while (Date.now() < until && !wake) {
         await new Promise((r) => setTimeout(r, Math.min(20_000, until - Date.now())));
         await orders.checkOrders().catch(() => []);
         await mission.checkMission(m).catch(() => []);
-        if (mission.getMission(m)?.status !== "active") {
-          return `La misión ha terminado mientras esperabas. Hora: ${now()}\n${json(await mission.missionStatus(m))}`;
+        if (mission.getMission(m)?.status !== "active") wake = "la misión ha terminado";
+        else if ((db.prepare("SELECT COUNT(*) AS n FROM journal WHERE mission_id = ? AND ts > ?").get(m, startIso) as { n: number }).n) wake = "hay novedades";
+        else {
+          current = positionValues(await sim.valuation(m).catch(() => null)) ?? current;
+          const moved = movesSince(base, current).find((x) => Math.abs(x.changePct) >= wake_on_move_pct);
+          if (moved) wake = `${moved.position} se ha movido un ${moved.changePct > 0 ? "+" : ""}${moved.changePct} %`;
         }
       }
-      return `${idle ? "Espera acortada a 1 minuto: estás parado en efectivo y lejos del objetivo.\n" : ""}Han pasado ${minutes} minutos. Hora actual: ${now()}\n${json(await mission.missionStatus(m))}`;
+      if (mission.getMission(m)?.status === "active") current = positionValues(await sim.valuation(m).catch(() => null)) ?? current;
+      const elapsed = Number(((Date.now() - started) / 60_000).toFixed(1));
+      const news = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id").all(m, startIso) as Array<{ ts: string; kind: string; summary: string }>;
+      const moves = movesSince(base, current);
+      return [
+        idle ? "Espera acortada a 1 minuto: estás parado en efectivo y lejos del objetivo." : "",
+        `Han pasado ${elapsed} min${wake ? ` (vuelvo antes: ${wake})` : ""}. Hora: ${now()}`,
+        news.length ? `Novedades:\n${news.map((n) => `- ${n.ts.slice(11, 19)} [${n.kind}] ${n.summary}`).join("\n")}` : "Sin novedades en tus órdenes ni transferencias.",
+        moves.length ? `Tus posiciones durante la espera:\n${toText(moves)}` : "",
+        `Misión:\n${toText(await mission.missionStatus(m))}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
     },
   }),
   tool({
@@ -1129,7 +1302,8 @@ export async function runTool(
   // Antes de operar o de mirar la cartera, lo que ya ha llegado de una transferencia está disponible.
   if (trading || def.deliversNews) await transfers.settleTransfers({ missionId: ctx.missionId ?? undefined }).catch(() => []);
   if (def.researchTarget) {
-    positions.logResearch(ctx.missionId, name, (def.researchTarget as (i: unknown) => string | undefined)(parsed.data)?.trim() || undefined);
+    const target = (def.researchTarget as (i: unknown) => string | string[] | undefined)(parsed.data);
+    for (const t of Array.isArray(target) ? target : [target]) positions.logResearch(ctx.missionId, name, t?.trim() || undefined);
   }
   try {
     let content = await (def.run as (i: unknown, c: typeof ctx) => Promise<ToolOutput>)(parsed.data, ctx);

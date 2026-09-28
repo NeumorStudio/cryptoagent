@@ -8211,7 +8211,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.26.0";
+    CODE_VERSION = "0.27.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -41583,6 +41583,18 @@ function blockingBeliefs(venue, entry, asset2 = "") {
     return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
   }).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
 }
+function beliefsFor(venue, entry, asset2 = "") {
+  const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: {} };
+  const block = new Set(blockingBeliefs(venue, entry, asset2).map((b) => b.id));
+  const rows = db.prepare("SELECT id, expectation, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all().filter(
+    (b) => matches(JSON.parse(b.condition), pos)
+  );
+  return {
+    block: [...block],
+    caution: rows.filter((b) => b.expectation === "negative" && !block.has(b.id)).map((b) => b.id),
+    favor: rows.filter((b) => b.expectation === "positive").map((b) => b.id)
+  };
+}
 function recall(missionId, limit) {
   const current = (missionId ? getMission(missionId) : void 0) ?? getActiveMission() ?? getLastMission();
   const curProfile = current ? profile(current) : null;
@@ -42387,7 +42399,8 @@ function compactScan(scan) {
     sourcesStatus: void 0,
     sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h \xB7 pump: en directo en pump.fun \xB7 dexBoost: promocionado en DexScreener \xB7 gecko/geckoNew: GeckoTerminal tendencia/nuevos",
     candidates: s.candidates.map(({ sources, name, symbol: symbol2, ...c }) => {
-      const same = typeof name === "string" && typeof symbol2 === "string" && name.trim().toLowerCase() === symbol2.trim().toLowerCase();
+      const n3 = typeof name === "string" ? name.trim().toLowerCase().replace(/ \/ \S+$/, "") : "";
+      const same = typeof symbol2 === "string" && n3 === symbol2.trim().toLowerCase();
       return {
         ...Object.fromEntries(Object.entries(c).slice(0, 1)),
         symbol: symbol2,
@@ -42397,6 +42410,103 @@ function compactScan(scan) {
       };
     })
   };
+}
+function positionValues(v) {
+  if (!v) return null;
+  const out = /* @__PURE__ */ new Map();
+  for (const h of v.holdings) {
+    if (h.valuedBy === "stable" || (h.usd ?? 0) < 0.5) continue;
+    out.set(`${h.venue}:${h.asset}`, { position: `${h.symbol} (${h.venue})`, usd: h.usd ?? 0 });
+  }
+  for (const p of v.perps ?? []) out.set(`perp:${p.perpId}`, { position: p.position, usd: p.valueIfClosedUsd });
+  return out;
+}
+function movesSince(base2, now2) {
+  const a = base2 ?? /* @__PURE__ */ new Map(), b = now2 ?? /* @__PURE__ */ new Map();
+  return [.../* @__PURE__ */ new Set([...a.keys(), ...b.keys()])].map((k) => {
+    const from = a.get(k)?.usd ?? 0, to = b.get(k)?.usd ?? 0;
+    return {
+      position: (b.get(k) ?? a.get(k)).position,
+      startUsd: from,
+      nowUsd: to,
+      changePct: from > 0 ? Number(((to - from) / from * 100).toFixed(1)) : 0,
+      ...from === 0 ? { note: "nueva" } : to === 0 ? { note: "cerrada o sin valor" } : {}
+    };
+  });
+}
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    })
+  );
+  return out;
+}
+function memoryCell(chain, f, address) {
+  const m = beliefsFor(chain, f, address);
+  const rugs = creatorRugs(f.creator).length ? ["frena: creador en lista negra"] : [];
+  return [
+    ...rugs,
+    ...m.block.length ? [`frena #${m.block.join(", #")}`] : [],
+    ...m.caution.length ? [`avisa #${m.caution.join(", #")}`] : [],
+    ...m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []
+  ].join(" \xB7 ");
+}
+async function screenCandidates(chain, candidates, n3) {
+  const c = getChain(chain);
+  const checked = await mapLimit(candidates.slice(0, n3), 3, async (cand) => {
+    const address = String(cand.mint ?? cand.token ?? "");
+    const f = address ? await c.entryFeatures(address).catch(() => null) : null;
+    if (!f) return { ...cand, alarms: "sin datos de riesgo" };
+    const rc = riskCheck(chain, address, f);
+    const flags = rc.flags.filter((x) => !x.startsWith("ninguna se\xF1al"));
+    const { warning: _w, ...rest } = cand;
+    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address) };
+  });
+  return [...checked, ...candidates.slice(n3)];
+}
+async function briefReports(chain, tokens) {
+  const c = getChain(chain);
+  const rows = await mapLimit([...new Set(tokens.map((t) => t.trim()))], 3, async (token2) => {
+    const t = await c.resolveToken(token2).catch(() => null);
+    const f = t ? await c.entryFeatures(t.address).catch(() => null) : null;
+    if (!t || !f) return { token: token2, symbol: t?.symbol, error: "sin datos (direcci\xF3n desconocida o APIs ca\xEDdas)" };
+    const rc = riskCheck(chain, token2, f);
+    const flags = rc.flags.filter((x) => !x.startsWith("ninguna se\xF1al"));
+    const since = rc.sinceLastRead;
+    return {
+      token: token2,
+      symbol: t.symbol,
+      ageMinutes: f.ageMinutes,
+      liquidityUsd: f.liquidityUsd,
+      mcapUsd: f.mcapUsd,
+      priceChange5mPct: f.priceChange5mPct,
+      priceChange1hPct: f.priceChange1hPct,
+      netBuyers5m: f.netBuyers5m,
+      buySellRatio5m: f.buySellRatio5m,
+      holders: f.holders,
+      topHoldersPct: f.topHoldersPct,
+      taxes: f.buyTaxPct !== void 0 || f.sellTaxPct !== void 0 ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : void 0,
+      launchpad: f.launchpad,
+      alarms: flags.length ? flags.join("; ") : "ninguna",
+      memory: memoryCell(chain, f, t.address),
+      sinceLastRead: typeof since === "string" ? "primera lectura" : [
+        `hace ${since.minutesAgo} min`,
+        since.liquidityChangePct !== void 0 ? `liq ${since.liquidityChangePct > 0 ? "+" : ""}${since.liquidityChangePct} %` : "",
+        since.mcapChangePct !== void 0 ? `mcap ${since.mcapChangePct > 0 ? "+" : ""}${since.mcapChangePct} %` : "",
+        since.netBuyers5m ? `compradores ${since.netBuyers5m}` : ""
+      ].filter(Boolean).join(", ")
+    };
+  });
+  return toText({
+    note: "Fichas breves. La completa de uno (actividad por tramos, webs y redes, auditor\xEDa detallada): token_report con token. memory = ids de creencias de tu resumen.",
+    tokens: rows
+  });
 }
 function compactReport(report) {
   const r = { ...report };
@@ -42437,16 +42547,30 @@ var SIM_TOOLS = [
     kind: "research",
     researchTarget: () => void 0,
     description: "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
-    schema: external_exports.object({ chain: chainParam, limit: external_exports.number().int().min(5).max(60).default(15) }),
-    run: async ({ chain, limit }) => toText(compactScan(await getChain(chain).research.scan(limit)))
+    schema: external_exports.object({
+      chain: chainParam,
+      limit: external_exports.number().int().min(5).max(60).default(15),
+      check_top: external_exports.number().int().min(0).max(8).default(5).describe("A los N primeros les pasa ya el chequeo de riesgo (alarmas de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no")
+    }),
+    run: async ({ chain, limit, check_top }) => {
+      const scan = compactScan(await getChain(chain).research.scan(limit));
+      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top);
+      return toText(scan);
+    }
   }),
   tool({
     name: "token_report",
     kind: "research",
-    researchTarget: (i) => i.token,
-    description: "Ficha completa de un token en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`: el historial del creador (tokens lanzados y graduados, si est\xE1 en tu lista negra), lo que conserva, insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores): la mayor\xEDa de los rugs ocurre en los primeros ~15 minutos, as\xED que comprobar que aguanta entre dos lecturas es la mejor defensa.",
-    schema: external_exports.object({ chain: chainParam, token: external_exports.string().describe("Direcci\xF3n del token (en Solana, su mint)") }),
-    run: async ({ chain, token: token2 }) => {
+    researchTarget: (i) => i.tokens?.length ? i.tokens : i.token,
+    description: "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, variaci\xF3n, compradores, holders, impuestos, alarmas de riesgo, qu\xE9 dice tu memoria y qu\xE9 ha cambiado desde la \xFAltima lectura. Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`: el historial del creador (tokens lanzados y graduados, si est\xE1 en tu lista negra), lo que conserva, insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores): la mayor\xEDa de los rugs ocurre en los primeros ~15 minutos, as\xED que comprobar que aguanta entre dos lecturas es la mejor defensa.",
+    schema: external_exports.object({
+      chain: chainParam,
+      token: external_exports.string().optional().describe("Direcci\xF3n del token (en Solana, su mint): ficha completa"),
+      tokens: external_exports.array(external_exports.string()).min(1).max(5).optional().describe("Varias direcciones: ficha breve de cada una")
+    }),
+    run: async ({ chain, token: token2, tokens }) => {
+      if (tokens?.length) return briefReports(chain, tokens);
+      if (!token2) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
       return json2({ ...compactReport(report), ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {} });
@@ -42495,25 +42619,48 @@ var SIM_TOOLS = [
     name: "wait",
     kind: "misc",
     deliversNews: true,
-    description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) sin hacer nada. Mientras esperas, tus \xF3rdenes condicionales se siguen vigilando. Vuelve antes si la misi\xF3n termina. El tiempo tambi\xE9n pasa mientras investigas u operas: no hace falta esperar para que el mercado se mueva.`,
-    schema: external_exports.object({ minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES) }),
-    run: async ({ minutes }, ctx) => {
+    description: `Deja pasar tiempo real (1-${MAX_WAIT_MINUTES} minutos) vigilando tu cartera. Vuelve antes si la misi\xF3n termina, si pasa algo (se dispara una orden, llega una transferencia, un futuro se cierra) o si una posici\xF3n se mueve wake_on_move_pct o m\xE1s. Devuelve solo lo que ha cambiado: las novedades, c\xF3mo se han movido tus posiciones y el estado de la misi\xF3n (no hace falta pedir portfolio ni mission_status despu\xE9s). El tiempo tambi\xE9n pasa mientras investigas u operas.`,
+    schema: external_exports.object({
+      minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES),
+      wake_on_move_pct: external_exports.number().min(3).max(100).default(15).describe("Vuelve antes si una posici\xF3n sube o baja este % desde que empezaste a esperar")
+    }),
+    run: async ({ minutes, wake_on_move_pct }, ctx) => {
       const m = mid(ctx);
       const before = await missionStatus(m);
       const idle = "warning" in before && before.warning;
       if (idle) minutes = Math.min(minutes, 1);
-      const until = Date.now() + minutes * 6e4;
-      while (Date.now() < until) {
+      const started = Date.now();
+      const startIso = now();
+      const until = started + minutes * 6e4;
+      const base2 = positionValues(await valuation(m));
+      let current = base2;
+      let wake = "";
+      while (Date.now() < until && !wake) {
         await new Promise((r) => setTimeout(r, Math.min(2e4, until - Date.now())));
         await checkOrders().catch(() => []);
         await checkMission(m).catch(() => []);
-        if (getMission(m)?.status !== "active") {
-          return `La misi\xF3n ha terminado mientras esperabas. Hora: ${now()}
-${json2(await missionStatus(m))}`;
+        if (getMission(m)?.status !== "active") wake = "la misi\xF3n ha terminado";
+        else if (db.prepare("SELECT COUNT(*) AS n FROM journal WHERE mission_id = ? AND ts > ?").get(m, startIso).n) wake = "hay novedades";
+        else {
+          current = positionValues(await valuation(m).catch(() => null)) ?? current;
+          const moved = movesSince(base2, current).find((x) => Math.abs(x.changePct) >= wake_on_move_pct);
+          if (moved) wake = `${moved.position} se ha movido un ${moved.changePct > 0 ? "+" : ""}${moved.changePct} %`;
         }
       }
-      return `${idle ? "Espera acortada a 1 minuto: est\xE1s parado en efectivo y lejos del objetivo.\n" : ""}Han pasado ${minutes} minutos. Hora actual: ${now()}
-${json2(await missionStatus(m))}`;
+      if (getMission(m)?.status === "active") current = positionValues(await valuation(m).catch(() => null)) ?? current;
+      const elapsed = Number(((Date.now() - started) / 6e4).toFixed(1));
+      const news = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id").all(m, startIso);
+      const moves = movesSince(base2, current);
+      return [
+        idle ? "Espera acortada a 1 minuto: est\xE1s parado en efectivo y lejos del objetivo." : "",
+        `Han pasado ${elapsed} min${wake ? ` (vuelvo antes: ${wake})` : ""}. Hora: ${now()}`,
+        news.length ? `Novedades:
+${news.map((n3) => `- ${n3.ts.slice(11, 19)} [${n3.kind}] ${n3.summary}`).join("\n")}` : "Sin novedades en tus \xF3rdenes ni transferencias.",
+        moves.length ? `Tus posiciones durante la espera:
+${toText(moves)}` : "",
+        `Misi\xF3n:
+${toText(await missionStatus(m))}`
+      ].filter(Boolean).join("\n");
     }
   }),
   tool({
@@ -43225,7 +43372,8 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   }
   if (trading || def.deliversNews) await settleTransfers({ missionId: ctx.missionId ?? void 0 }).catch(() => []);
   if (def.researchTarget) {
-    logResearch(ctx.missionId, name, def.researchTarget(parsed.data)?.trim() || void 0);
+    const target = def.researchTarget(parsed.data);
+    for (const t of Array.isArray(target) ? target : [target]) logResearch(ctx.missionId, name, t?.trim() || void 0);
   }
   try {
     let content = await def.run(parsed.data, ctx);

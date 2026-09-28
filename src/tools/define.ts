@@ -39,7 +39,7 @@ export interface ToolDef<S extends z.ZodObject> {
    * Si la llamada cuenta como investigación previa a una operación (registro de posiciones),
    * devuelve lo investigado (token, URL…) o undefined si no hay un objetivo concreto.
    */
-  researchTarget?: (input: z.infer<S>) => string | undefined;
+  researchTarget?: (input: z.infer<S>) => string | string[] | undefined;
   /** Su efecto ya queda en el diario, la bitácora o la memoria: el panel no la repite como llamada. */
   journaled?: boolean;
 }

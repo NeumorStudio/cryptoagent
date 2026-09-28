@@ -186,4 +186,6 @@ test("cola del revisor y retrospectiva", () => {
   assert.equal(approach.summary.missions, 1);
   assert.equal(approach.perMission[0]!.resultPct, -10);
   assert.equal(approach.perMission[0]!.venues, "solana");
+  assert.equal(approach.summary.succeeded, "0 de 1");
+  assert.equal(approach.summary.successStreak, 0);
 });

@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.14.0";
+var CODE_VERSION = "0.14.1";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -40059,6 +40059,7 @@ function recentApproach(count = 8) {
     const orders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id).n;
     return {
       missionId: m.id,
+      succeeded: m.status === "succeeded",
       resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
@@ -40069,9 +40070,13 @@ function recentApproach(count = 8) {
   });
   const n3 = perMission.length;
   const share = (f) => `${perMission.filter(f).length} de ${n3}`;
+  let successStreak = 0;
+  for (let i = n3 - 1; i >= 0 && perMission[i].succeeded; i--) successStreak++;
   return {
     summary: {
       missions: n3,
+      succeeded: share((x) => x.succeeded),
+      successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n3).toFixed(1)),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
       withOneEntry: share((x) => x.positions === 1),

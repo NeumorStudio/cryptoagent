@@ -570,6 +570,7 @@ export function recentApproach(count = 8) {
     const orders = (db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id) as { n: number }).n;
     return {
       missionId: m.id,
+      succeeded: m.status === "succeeded",
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
@@ -580,9 +581,14 @@ export function recentApproach(count = 8) {
   });
   const n = perMission.length;
   const share = (f: (x: (typeof perMission)[number]) => boolean) => `${perMission.filter(f).length} de ${n}`;
+  // Éxitos seguidos al final de la serie: si el enfoque actual gana, no es estancamiento.
+  let successStreak = 0;
+  for (let i = n - 1; i >= 0 && perMission[i]!.succeeded; i--) successStreak++;
   return {
     summary: {
       missions: n,
+      succeeded: share((x) => x.succeeded),
+      successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n).toFixed(1)),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
       withOneEntry: share((x) => x.positions === 1),

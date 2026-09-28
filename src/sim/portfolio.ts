@@ -127,7 +127,9 @@ export function resetPortfolio(missionId: number, holdings: Holding[]) {
  * Devuelve lo que no se pudo vender.
  */
 export async function liquidateAll(missionId: number, sessionId: number | null, reasoning: string): Promise<string[]> {
-  const problems: string[] = [];
+  // Primero los futuros: su margen vuelve como efectivo a su cadena.
+  const { closeAllPerps } = await import("./perps.js");
+  const problems: string[] = await closeAllPerps(missionId, reasoning);
   const holdings = getHoldings(missionId);
   const meta = { exitReason: reasoning };
 
@@ -417,7 +419,7 @@ export async function valuation(missionId: number, recordSnapshot = false) {
       ...(await getVenue(t.to_venue).liquidationValue({ venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in })),
     })),
   );
-  const totalUsd = lines.reduce((s, l) => s + l.usd, 0) + transit.reduce((s, t) => s + t.usd, 0);
+  let totalUsd = lines.reduce((s, l) => s + l.usd, 0) + transit.reduce((s, t) => s + t.usd, 0);
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price, benchmark FROM missions WHERE id = ?").get(missionId) as
     | { created_at: string; initial_usd: number; benchmark_sol_price: number | null; benchmark: string | null }
     | undefined;
@@ -439,6 +441,11 @@ export async function valuation(missionId: number, recordSnapshot = false) {
       benchmarkLabel = "mantener SOL";
     }
   }
+
+  // Futuros abiertos: cuentan por lo que volvería a la cartera si se cerraran ahora.
+  const { openPerps } = await import("./perps.js");
+  const perps = await openPerps(missionId).catch(() => []);
+  totalUsd += perps.reduce((s, p) => s + p.valueIfClosedUsd, 0);
 
   if (recordSnapshot) {
     db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
@@ -469,6 +476,7 @@ export async function valuation(missionId: number, recordSnapshot = false) {
       usd: Number(l.usd.toFixed(4)),
       valuedBy: l.method,
     })),
+    ...(perps.length ? { perps } : {}),
     ...(transit.length
       ? {
           inTransit: transit.map((t) => ({

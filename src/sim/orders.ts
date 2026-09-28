@@ -179,6 +179,9 @@ function close(id: number, status: string, result: unknown) {
 export async function checkOrders(): Promise<string[]> {
   // Primero, las transferencias que ya han llegado: una orden puede depender de ese saldo.
   const log: string[] = await settleTransfers().catch((err) => [`Error abonando transferencias: ${(err as Error).message}`]);
+  // Futuros: funding, liquidaciones y take profit / stop loss.
+  const { checkPerps } = await import("./perps.js");
+  log.push(...(await checkPerps().catch((err) => [`Error revisando futuros: ${(err as Error).message}`])));
 
   const expired = db
     .prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?")

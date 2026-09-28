@@ -466,9 +466,9 @@ var require_codegen = __commonJS({
       }
     };
     var Label = class extends Node {
-      constructor(label) {
+      constructor(label2) {
         super();
-        this.label = label;
+        this.label = label2;
         this.names = {};
       }
       render({ _n }) {
@@ -476,14 +476,14 @@ var require_codegen = __commonJS({
       }
     };
     var Break = class extends Node {
-      constructor(label) {
+      constructor(label2) {
         super();
-        this.label = label;
+        this.label = label2;
         this.names = {};
       }
       render({ _n }) {
-        const label = this.label ? ` ${this.label}` : "";
-        return `break${label};` + _n;
+        const label2 = this.label ? ` ${this.label}` : "";
+        return `break${label2};` + _n;
       }
     };
     var Throw = class extends Node {
@@ -895,12 +895,12 @@ var require_codegen = __commonJS({
         return this._endBlockNode(For);
       }
       // `label` statement
-      label(label) {
-        return this._leafNode(new Label(label));
+      label(label2) {
+        return this._leafNode(new Label(label2));
       }
       // `break` statement
-      break(label) {
-        return this._leafNode(new Break(label));
+      break(label2) {
+        return this._leafNode(new Break(label2));
       }
       // `return` statement
       return(value) {
@@ -7623,7 +7623,7 @@ var init_paths = __esm({
     BUNDLED = true;
     here = path.dirname(fileURLToPath(import.meta.url));
     projectRoot = path.resolve(here, "..");
-    usable = (dir) => dir && !dir.includes("${") ? path.resolve(dir) : void 0;
+    usable = (dir2) => dir2 && !dir2.includes("${") ? path.resolve(dir2) : void 0;
   }
 });
 
@@ -7836,13 +7836,13 @@ function hasUserData(db2) {
   return Boolean(db2.prepare("SELECT 1 FROM missions LIMIT 1").get());
 }
 function backup(db2, dataDir, from) {
-  const dir = path3.join(dataDir, "backups");
-  mkdirSync(dir, { recursive: true });
+  const dir2 = path3.join(dataDir, "backups");
+  mkdirSync(dir2, { recursive: true });
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const file2 = path3.join(dir, `sim-v${from}-${stamp}-${process.pid}.db`);
+  const file2 = path3.join(dir2, `sim-v${from}-${stamp}-${process.pid}.db`);
   db2.exec(`VACUUM INTO '${file2.replace(/'/g, "''")}'`);
-  const old = readdirSync(dir).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).sort();
-  for (const f of old.slice(0, Math.max(0, old.length - MAX_BACKUPS))) rmSync(path3.join(dir, f), { force: true });
+  const old = readdirSync(dir2).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).sort();
+  for (const f of old.slice(0, Math.max(0, old.length - MAX_BACKUPS))) rmSync(path3.join(dir2, f), { force: true });
   return file2;
 }
 function runMigrations(db2, dataDir, migrations = MIGRATIONS) {
@@ -7956,6 +7956,36 @@ var init_migrations = __esm({
           error TEXT
         );
         CREATE INDEX live_txs_mission ON live_txs (mission_id, id);
+      `)
+      },
+      {
+        version: 7,
+        description: "Futuros perpetuos simulados (datos de Hyperliquid)",
+        up: (db2) => db2.exec(`
+        CREATE TABLE perp_positions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mission_id INTEGER NOT NULL,
+          position_id INTEGER,              -- fila en positions (para la memoria y las estad\xEDsticas)
+          coin TEXT NOT NULL,
+          side TEXT NOT NULL,               -- 'long' | 'short'
+          leverage REAL NOT NULL,
+          margin_usd REAL NOT NULL,
+          size REAL NOT NULL,               -- en unidades de la moneda
+          entry_price REAL NOT NULL,
+          from_chain TEXT NOT NULL,         -- de qu\xE9 cadena sali\xF3 el margen (y ad\xF3nde vuelve)
+          take_profit REAL,
+          stop_loss REAL,
+          fees_usd REAL NOT NULL DEFAULT 0,
+          funding_usd REAL NOT NULL DEFAULT 0,  -- positivo = pagado
+          last_funding_at TEXT NOT NULL,
+          opened_at TEXT NOT NULL,
+          closed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'closing' | 'closed' | 'liquidated'
+          exit_price REAL,
+          returned_usd REAL,
+          reasoning TEXT
+        );
+        CREATE INDEX perp_open ON perp_positions (status, mission_id);
       `)
       }
     ];
@@ -8181,7 +8211,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.23.0";
+    CODE_VERSION = "0.24.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8379,6 +8409,12 @@ async function getOrderBook(symbol2) {
   );
   const parse3 = (levels) => levels.map(([p, q]) => [Number(p), Number(q)]);
   return { bids: parse3(raw.bids), asks: parse3(raw.asks) };
+}
+async function klines(symbol2, interval = "1m", limit = 240) {
+  const raw = await fetchJson(`${BASE}/klines?symbol=${symbol2.toUpperCase()}&interval=${interval}&limit=${limit}`, {
+    ttlMs: 6e4
+  });
+  return raw.map((k) => [k[0], Number(k[1]), Number(k[2]), Number(k[3]), Number(k[4])]);
 }
 function walkBook(levels, side, amount) {
   let remaining2 = amount;
@@ -9092,11 +9128,11 @@ var init_evm2 = __esm({
 });
 
 // src/market/research.ts
-async function attempt(label, fn) {
+async function attempt(label2, fn) {
   try {
     return await fn();
   } catch (err) {
-    return { error: `${label}: ${err.message.slice(0, 160)}` };
+    return { error: `${label2}: ${err.message.slice(0, 160)}` };
   }
 }
 async function scanMarket(limit = 25) {
@@ -9618,6 +9654,238 @@ var init_positions = __esm({
   }
 });
 
+// src/market/hyperliquid.ts
+async function perpMarkets() {
+  const [meta3, ctxs] = await fetchJson(
+    "https://api.hyperliquid.xyz/info",
+    { method: "POST", body: { type: "metaAndAssetCtxs" }, ttlMs: 5e3 }
+  );
+  const out = /* @__PURE__ */ new Map();
+  meta3.universe.forEach((u, i) => {
+    const c = ctxs[i];
+    if (!c || u.isDelisted) return;
+    out.set(u.name.toUpperCase(), { coin: u.name.toUpperCase(), maxLeverage: u.maxLeverage, markPx: Number(c.markPx), fundingHourly: Number(c.funding) });
+  });
+  return out;
+}
+async function perpMarket(coin) {
+  const m = (await perpMarkets()).get(coin.toUpperCase());
+  if (!m) throw new Error(`Hyperliquid no tiene un perpetuo de ${coin}`);
+  return m;
+}
+var init_hyperliquid = __esm({
+  "src/market/hyperliquid.ts"() {
+    "use strict";
+    init_http();
+  }
+});
+
+// src/sim/perps.ts
+var perps_exports = {};
+__export(perps_exports, {
+  PERP_DEPOSIT_FEE_USD: () => PERP_DEPOSIT_FEE_USD,
+  PERP_MIN_NOTIONAL_USD: () => PERP_MIN_NOTIONAL_USD,
+  PERP_TAKER_FEE: () => PERP_TAKER_FEE,
+  PERP_WITHDRAW_FEE_USD: () => PERP_WITHDRAW_FEE_USD,
+  checkPerps: () => checkPerps,
+  closeAllPerps: () => closeAllPerps,
+  closePerp: () => closePerp,
+  equity: () => equity,
+  liquidationPrice: () => liquidationPrice,
+  openPerp: () => openPerp,
+  openPerps: () => openPerps
+});
+function liquidationPrice(p, maxLeverage) {
+  const mmRate = 1 / (2 * maxLeverage);
+  const d = dir(p);
+  return (p.margin_usd - p.funding_usd - d * p.size * p.entry_price) / (mmRate * p.size - d * p.size);
+}
+function cashByChain(missionId) {
+  return allChains().map((c) => ({ chain: c, cash: balance(missionId, c.id, c.cash.address) }));
+}
+async function openPerp(a) {
+  assertSimulated(a.missionId, "operar con futuros");
+  const m = await perpMarket(a.coin);
+  if (!(a.leverage >= 1) || a.leverage > m.maxLeverage) throw new Error(`Apalancamiento no v\xE1lido para ${m.coin}: entre 1 y ${m.maxLeverage}x`);
+  if (!(a.marginUsd > 0)) throw new Error("El margen debe ser positivo");
+  const notional = a.marginUsd * a.leverage;
+  if (notional < PERP_MIN_NOTIONAL_USD) throw new Error(`Hyperliquid pide al menos ${PERP_MIN_NOTIONAL_USD} $ de nocional (margen \xD7 apalancamiento)`);
+  const source = a.fromChain ? cashByChain(a.missionId).find((x) => x.chain.id === a.fromChain) : cashByChain(a.missionId).sort((x, y) => y.cash - x.cash)[0];
+  if (!source) throw new Error(`No existe la cadena ${a.fromChain}`);
+  const debit = a.marginUsd + PERP_DEPOSIT_FEE_USD;
+  if (source.cash + 1e-9 < debit) {
+    throw new Error(`Efectivo insuficiente en ${source.chain.label}: tienes ${source.cash.toFixed(2)} ${source.chain.cash.symbol} y hacen falta ${debit.toFixed(2)} (margen + dep\xF3sito)`);
+  }
+  if (a.side === "long" && a.stopLoss && a.stopLoss >= m.markPx) throw new Error("En un largo, el stop va por debajo del precio actual");
+  if (a.side === "short" && a.stopLoss && a.stopLoss <= m.markPx) throw new Error("En un corto, el stop va por encima del precio actual");
+  const size = notional / m.markPx;
+  const fee = notional * PERP_TAKER_FEE;
+  applyDeltas(a.missionId, source.chain.id, [{ asset: source.chain.cash.address, symbol: source.chain.cash.symbol, decimals: source.chain.cash.decimals, amount: -debit }]);
+  const margin = a.marginUsd - fee;
+  const label2 = `${m.coin}-PERP ${a.side === "long" ? "largo" : "corto"} ${a.leverage}x`;
+  const positionId = Number(
+    db.prepare(
+      `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
+         VALUES (?, 'hyperliquid', ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)`
+    ).run(
+      a.missionId,
+      `${m.coin}-PERP-${a.side}`,
+      label2,
+      now(),
+      size,
+      a.marginUsd + PERP_DEPOSIT_FEE_USD,
+      JSON.stringify({ venue: "hyperliquid", strategy: "perp", coin: m.coin, side: a.side, leverage: a.leverage, fundingHourlyPct: m.fundingHourly * 100 }),
+      a.meta?.thesis ?? null,
+      a.meta?.lessonsApplied ?? null,
+      a.meta?.beliefsApplied?.length ? JSON.stringify(a.meta.beliefsApplied) : null
+    ).lastInsertRowid
+  );
+  const id = Number(
+    db.prepare(
+      `INSERT INTO perp_positions (mission_id, position_id, coin, side, leverage, margin_usd, size, entry_price, from_chain, take_profit, stop_loss, fees_usd, last_funding_at, opened_at, reasoning)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(a.missionId, positionId, m.coin, a.side, a.leverage, margin, size, m.markPx, source.chain.id, a.takeProfit ?? null, a.stopLoss ?? null, fee, now(), now(), a.reasoning).lastInsertRowid
+  );
+  const row = db.prepare("SELECT * FROM perp_positions WHERE id = ?").get(id);
+  const liq = liquidationPrice(row, m.maxLeverage);
+  const result = {
+    perpId: id,
+    position: label2,
+    entryPrice: m.markPx,
+    size: Number(size.toPrecision(6)),
+    notionalUsd: Number(notional.toFixed(2)),
+    marginUsd: Number(margin.toFixed(2)),
+    liquidationPrice: Number(liq.toPrecision(6)),
+    fundingHourlyPct: Number((m.fundingHourly * 100).toFixed(5)),
+    costs: [`dep\xF3sito: ${PERP_DEPOSIT_FEE_USD} $`, `comisi\xF3n: ${fee.toFixed(4)} $`, `al cerrar: comisi\xF3n similar + retirada ${PERP_WITHDRAW_FEE_USD} $`],
+    ...a.takeProfit ? { takeProfit: a.takeProfit } : {},
+    ...a.stopLoss ? { stopLoss: a.stopLoss } : {}
+  };
+  logJournal({
+    missionId: a.missionId,
+    sessionId: a.sessionId,
+    kind: "perp",
+    summary: `Abre ${label2}: margen ${a.marginUsd} $ (nocional ${notional.toFixed(0)} $) a ${m.markPx}; liquidaci\xF3n \u2248 ${liq.toPrecision(5)}`,
+    reasoning: a.reasoning,
+    details: { chain: "hyperliquid", ...result }
+  });
+  return result;
+}
+function accrueFunding(p, mark, fundingHourly) {
+  const hours = (Date.now() - new Date(p.last_funding_at).getTime()) / 36e5;
+  if (hours <= 0) return p;
+  const paid = dir(p) * p.size * mark * fundingHourly * hours;
+  db.prepare("UPDATE perp_positions SET funding_usd = funding_usd + ?, last_funding_at = ? WHERE id = ?").run(paid, now(), p.id);
+  return { ...p, funding_usd: p.funding_usd + paid, last_funding_at: now() };
+}
+function settle2(p, mark, reason, liquidated, sessionId) {
+  if (!db.prepare("UPDATE perp_positions SET status = 'closing' WHERE id = ? AND status = 'open'").run(p.id).changes) return null;
+  const closeFee = liquidated ? 0 : p.size * mark * PERP_TAKER_FEE;
+  const eq = liquidated ? 0 : Math.max(0, equity(p, mark) - closeFee);
+  const returned = eq > PERP_WITHDRAW_FEE_USD ? eq - PERP_WITHDRAW_FEE_USD : 0;
+  const chain = getChain(p.from_chain);
+  if (returned > 0) applyDeltas(p.mission_id, chain.id, [{ asset: chain.cash.address, symbol: chain.cash.symbol, decimals: chain.cash.decimals, amount: returned }]);
+  db.prepare("UPDATE perp_positions SET status = ?, closed_at = ?, exit_price = ?, returned_usd = ?, fees_usd = fees_usd + ? WHERE id = ?").run(
+    liquidated ? "liquidated" : "closed",
+    now(),
+    mark,
+    returned,
+    closeFee,
+    p.id
+  );
+  if (p.position_id) {
+    db.prepare(
+      `UPDATE positions SET qty_open = 0, realized_cost_usd = realized_cost_usd + cost_open_usd, cost_open_usd = 0, realized_proceeds_usd = ?,
+         status = 'closed', closed_at = ?, exit_reason = ? WHERE id = ?`
+    ).run(returned, now(), reason, p.position_id);
+  }
+  const label2 = `${p.coin}-PERP ${p.side === "long" ? "largo" : "corto"} ${p.leverage}x`;
+  const pnl = returned - (p.margin_usd + p.fees_usd + PERP_DEPOSIT_FEE_USD);
+  const summary = `${liquidated ? "LIQUIDADO" : "Cierra"} ${label2} a ${mark}: vuelven ${returned.toFixed(2)} $ a ${chain.label} (${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)} $, funding ${p.funding_usd.toFixed(4)} $)`;
+  logJournal({ missionId: p.mission_id, sessionId, kind: "perp", summary, reasoning: reason, details: { chain: "hyperliquid", perpId: p.id, exitPrice: mark, returnedUsd: returned, liquidated } });
+  return { perpId: p.id, position: label2, exitPrice: mark, returnedUsd: Number(returned.toFixed(2)), pnlUsd: Number(pnl.toFixed(2)), fundingUsd: Number(p.funding_usd.toFixed(4)), liquidated };
+}
+async function closePerp(a) {
+  const p = db.prepare("SELECT * FROM perp_positions WHERE id = ? AND mission_id = ? AND status = 'open'").get(a.perpId, a.missionId);
+  if (!p) throw new Error(`El futuro #${a.perpId} no existe, no es de tu misi\xF3n o ya est\xE1 cerrado`);
+  const m = await perpMarket(p.coin);
+  const r = settle2(accrueFunding(p, m.markPx, m.fundingHourly), m.markPx, a.reasoning, false, a.sessionId);
+  if (!r) throw new Error(`El futuro #${a.perpId} ya se est\xE1 cerrando`);
+  return r;
+}
+async function openPerps(missionId) {
+  const rows = db.prepare("SELECT * FROM perp_positions WHERE mission_id = ? AND status = 'open' ORDER BY id").all(missionId);
+  if (!rows.length) return [];
+  const markets = await perpMarkets();
+  return rows.map((p) => {
+    const m = markets.get(p.coin);
+    const mark = m?.markPx ?? p.entry_price;
+    const eq = equity(p, mark);
+    return {
+      perpId: p.id,
+      position: `${p.coin}-PERP ${p.side === "long" ? "largo" : "corto"} ${p.leverage}x`,
+      entryPrice: p.entry_price,
+      markPrice: mark,
+      marginUsd: Number(p.margin_usd.toFixed(2)),
+      equityUsd: Number(Math.max(0, eq).toFixed(2)),
+      pnlPct: Number(((eq / p.margin_usd - 1) * 100).toFixed(1)),
+      liquidationPrice: m ? Number(liquidationPrice(p, m.maxLeverage).toPrecision(6)) : null,
+      fundingPaidUsd: Number(p.funding_usd.toFixed(4)),
+      ...p.take_profit ? { takeProfit: p.take_profit } : {},
+      ...p.stop_loss ? { stopLoss: p.stop_loss } : {},
+      /** Lo que volvería a tu cadena si cierras ahora (tras la comisión y la retirada). */
+      valueIfClosedUsd: Number(Math.max(0, eq - p.size * mark * PERP_TAKER_FEE - PERP_WITHDRAW_FEE_USD).toFixed(2))
+    };
+  });
+}
+async function checkPerps() {
+  const rows = db.prepare("SELECT p.* FROM perp_positions p JOIN missions m ON m.id = p.mission_id WHERE p.status = 'open' AND m.status IN ('active', 'closing')").all();
+  if (!rows.length) return [];
+  const markets = await perpMarkets();
+  const log = [];
+  for (const row of rows) {
+    const m = markets.get(row.coin);
+    if (!m) continue;
+    const p = accrueFunding(row, m.markPx, m.fundingHourly);
+    const mm = p.size * m.markPx * (1 / (2 * m.maxLeverage));
+    if (equity(p, m.markPx) <= mm) {
+      const r = settle2(p, m.markPx, `Liquidaci\xF3n: el capital de la posici\xF3n baj\xF3 del mantenimiento`, true, null);
+      if (r) log.push(`Futuro #${p.id} liquidado a ${m.markPx}`);
+      continue;
+    }
+    const hitTp = p.take_profit && (p.side === "long" ? m.markPx >= p.take_profit : m.markPx <= p.take_profit);
+    const hitSl = p.stop_loss && (p.side === "long" ? m.markPx <= p.stop_loss : m.markPx >= p.stop_loss);
+    if (hitTp || hitSl) {
+      const r = settle2(p, m.markPx, hitTp ? `Take profit a ${p.take_profit}` : `Stop loss a ${p.stop_loss}`, false, null);
+      if (r) log.push(`Futuro #${p.id} cerrado por ${hitTp ? "take profit" : "stop loss"} a ${m.markPx}`);
+    }
+  }
+  return log;
+}
+async function closeAllPerps(missionId, reason) {
+  const rows = db.prepare("SELECT id, coin FROM perp_positions WHERE mission_id = ? AND status = 'open'").all(missionId);
+  const problems = [];
+  for (const r of rows) await closePerp({ missionId, sessionId: null, perpId: r.id, reasoning: reason }).catch((e) => problems.push(`${r.coin}-PERP: ${e.message}`));
+  return problems;
+}
+var PERP_TAKER_FEE, PERP_DEPOSIT_FEE_USD, PERP_WITHDRAW_FEE_USD, PERP_MIN_NOTIONAL_USD, dir, upnl, equity;
+var init_perps = __esm({
+  "src/sim/perps.ts"() {
+    "use strict";
+    init_db();
+    init_hyperliquid();
+    init_portfolio();
+    init_venues();
+    PERP_TAKER_FEE = 45e-5;
+    PERP_DEPOSIT_FEE_USD = 0.3;
+    PERP_WITHDRAW_FEE_USD = 1;
+    PERP_MIN_NOTIONAL_USD = 10;
+    dir = (p) => p.side === "long" ? 1 : -1;
+    upnl = (p, mark) => dir(p) * p.size * (mark - p.entry_price);
+    equity = (p, mark) => p.margin_usd + upnl(p, mark) - p.funding_usd;
+  }
+});
+
 // src/market/lifi.ts
 async function bridgeQuote(q) {
   if (!process.env.LIFI_API_KEY && !takeBudget(HOST, BUDGET, WINDOW_MS)) {
@@ -9871,8 +10139,8 @@ var init_chain = __esm({
 // src/live/keystore.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync } from "node:fs";
 import path6 from "node:path";
-function readWalletPublic(dir) {
-  const f = files(dir).pub;
+function readWalletPublic(dir2) {
+  const f = files(dir2).pub;
   return existsSync3(f) ? JSON.parse(readFileSync2(f, "utf8")) : null;
 }
 var SCRYPT, files;
@@ -9880,7 +10148,7 @@ var init_keystore = __esm({
   "src/live/keystore.ts"() {
     "use strict";
     SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
-    files = (dir) => ({ secret: path6.join(dir, "wallet.enc"), pub: path6.join(dir, "wallet.json") });
+    files = (dir2) => ({ secret: path6.join(dir2, "wallet.enc"), pub: path6.join(dir2, "wallet.json") });
   }
 });
 
@@ -11025,10 +11293,10 @@ async function solUsdPrice() {
 }
 function validateAllocation(allocation) {
   const clean = {};
-  for (const [venue, pct3] of Object.entries(allocation)) {
+  for (const [venue, pct4] of Object.entries(allocation)) {
     if (!VENUES.includes(venue)) throw new Error(`Reparto: "${venue}" no existe. Disponibles: ${VENUES.join(", ")}`);
-    if (!(typeof pct3 === "number" && pct3 >= 0)) throw new Error(`Reparto: el porcentaje de ${venue} debe ser un n\xFAmero positivo`);
-    if (pct3 > 0) clean[venue] = pct3;
+    if (!(typeof pct4 === "number" && pct4 >= 0)) throw new Error(`Reparto: el porcentaje de ${venue} debe ser un n\xFAmero positivo`);
+    if (pct4 > 0) clean[venue] = pct4;
   }
   const total = Object.values(clean).reduce((t, x) => t + x, 0);
   if (Math.abs(total - 100) > 0.5) throw new Error(`Reparto: los porcentajes suman ${total} y deben sumar 100`);
@@ -11036,8 +11304,8 @@ function validateAllocation(allocation) {
 }
 function planPortfolio(initialUsd, allocation, nativePrices) {
   const holdings = [];
-  for (const [venue, pct3] of Object.entries(validateAllocation(allocation))) {
-    const shareUsd = initialUsd * pct3 / 100;
+  for (const [venue, pct4] of Object.entries(validateAllocation(allocation))) {
+    const shareUsd = initialUsd * pct4 / 100;
     const v = getVenue(venue);
     if (v.kind === "cex") {
       holdings.push({ venue, asset: "USDT", symbol: "USDT", decimals: 8, amount: shareUsd });
@@ -11059,7 +11327,8 @@ function resetPortfolio(missionId, holdings) {
   });
 }
 async function liquidateAll(missionId, sessionId, reasoning2) {
-  const problems = [];
+  const { closeAllPerps: closeAllPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+  const problems = await closeAllPerps2(missionId, reasoning2);
   const holdings = getHoldings(missionId);
   const meta3 = { exitReason: reasoning2 };
   for (const chain of allChains()) {
@@ -11263,7 +11532,7 @@ async function valuation(missionId, recordSnapshot = false) {
       ...await getVenue(t.to_venue).liquidationValue({ venue: t.to_venue, asset: t.asset_in, symbol: t.symbol_in, decimals: t.decimals_in, amount: t.amount_in })
     }))
   );
-  const totalUsd = lines.reduce((s, l) => s + l.usd, 0) + transit.reduce((s, t) => s + t.usd, 0);
+  let totalUsd = lines.reduce((s, l) => s + l.usd, 0) + transit.reduce((s, t) => s + t.usd, 0);
   const mission = db.prepare("SELECT created_at, initial_usd, benchmark_sol_price, benchmark FROM missions WHERE id = ?").get(missionId);
   const initialUsd = mission?.initial_usd ?? config2.initialUsd;
   let benchmarkUsd = initialUsd;
@@ -11280,6 +11549,9 @@ async function valuation(missionId, recordSnapshot = false) {
       benchmarkLabel = "mantener SOL";
     }
   }
+  const { openPerps: openPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+  const perps = await openPerps2(missionId).catch(() => []);
+  totalUsd += perps.reduce((s, p) => s + p.valueIfClosedUsd, 0);
   if (recordSnapshot) {
     db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, ?)").run(
       now(),
@@ -11309,6 +11581,7 @@ async function valuation(missionId, recordSnapshot = false) {
       usd: Number(l.usd.toFixed(4)),
       valuedBy: l.method
     })),
+    ...perps.length ? { perps } : {},
     ...transit.length ? {
       inTransit: transit.map((t) => ({
         transferId: t.id,
@@ -11340,6 +11613,107 @@ var init_portfolio = __esm({
     QUOTE_TTL_MS = 6e4;
     quoteKey = (missionId, chain, input2, output2) => `${missionId}:${chain}:${input2}:${output2}`;
     evmAddress = (missionId) => `0x${createHash2("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
+  }
+});
+
+// src/sim/fit.ts
+var fit_exports = {};
+__export(fit_exports, {
+  probTouch: () => probTouch,
+  strategyFit: () => strategyFit
+});
+function phi(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - p : p;
+}
+async function volatility(symbol2) {
+  const k = await klines(symbol2, "1m", 240);
+  const r = k.slice(1).map((c, i) => Math.log(c[4] / k[i][4]));
+  const mean = r.reduce((s, x) => s + x, 0) / r.length;
+  const sigma = Math.sqrt(r.reduce((s, x) => s + (x - mean) ** 2, 0) / (r.length - 1));
+  const last = k.at(-1)[4];
+  const hourAgo = k.at(-61)?.[4] ?? k[0][4];
+  return { sigma, change1hPct: Number(((last / hourAgo - 1) * 100).toFixed(2)) };
+}
+async function strategyFit(missionOrId) {
+  const mission = typeof missionOrId === "number" ? getMission(missionOrId) : missionOrId;
+  const v = await valuation(mission.id);
+  const minutesLeft = Math.max(1, (new Date(mission.deadline).getTime() - Date.now()) / 6e4);
+  const need = mission.target_usd / v.totalUsd - 1;
+  const a = Math.log(1 + Math.max(need, 0));
+  const rows = [];
+  const perpMax = await perpMarkets().then(
+    (m) => new Map([...m.values()].map((x) => [x.coin, x.maxLeverage])),
+    () => /* @__PURE__ */ new Map()
+  );
+  for (const sym of MAJORS) {
+    const vol = await volatility(`${sym}USDT`).catch(() => null);
+    if (vol === null) continue;
+    const s = vol.sigma * Math.sqrt(minutesLeft);
+    const spot = probTouch(a, s);
+    rows.push({
+      strategy: `${sym} al contado`,
+      reachTargetPct: pct(spot),
+      fit: label(spot),
+      basis: `movimiento t\xEDpico en ${Math.round(minutesLeft)} min: \xB1${(s * 100).toFixed(2)} %; \xFAltima hora: ${vol.change1hPct > 0 ? "+" : ""}${vol.change1hPct} %`,
+      available: true
+    });
+    const maxLev = perpMax.get(sym) ?? 0;
+    for (const lev of LEVERAGES.filter((l) => l <= maxLev)) {
+      const move = Math.log(1 + need / lev);
+      const liqDistance = 1 / lev - 1 / (2 * maxLev);
+      const liq = -Math.log(1 - liqDistance);
+      const reach = probTouch(move, s);
+      const ruin = probTouch(liq, s);
+      rows.push({
+        strategy: `Futuros ${sym} ${lev}x`,
+        reachTargetPct: pct(reach),
+        ruinPct: pct(ruin),
+        fit: label(reach * (1 - ruin)),
+        basis: `necesita ${(need / lev * 100).toFixed(2)} % a favor; liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
+        available: true
+      });
+    }
+  }
+  const closed = listPositions().filter((p) => p.status === "closed" && (p.entry.ageMinutes ?? Infinity) < 60 && p.pnlPct !== null);
+  if (closed.length >= 5) {
+    const hit = closed.filter((p) => (p.pnlPct ?? 0) >= need * 100).length / closed.length;
+    const ruin = closed.filter((p) => (p.pnlPct ?? 0) <= -50).length / closed.length;
+    rows.push({
+      strategy: "Memecoin joven (< 60 min)",
+      reachTargetPct: pct(hit),
+      ruinPct: pct(ruin),
+      fit: label(hit),
+      basis: `tus ${closed.length} operaciones: ${pct(hit)} % dieron +${(need * 100).toFixed(0)} % o m\xE1s en una sola operaci\xF3n y ${pct(ruin)} % perdieron la mitad o m\xE1s` + (hit < 0.05 && need > 0.3 ? "; con un objetivo as\xED, solo encadenando varias ganadoras" : ""),
+      available: true
+    });
+  } else {
+    rows.push({ strategy: "Memecoin joven (< 60 min)", reachTargetPct: null, fit: "sin datos", basis: "menos de 5 operaciones propias", available: true });
+  }
+  rows.sort((x, y) => (y.reachTargetPct ?? -1) * (1 - (y.ruinPct ?? 0) / 100) - (x.reachTargetPct ?? -1) * (1 - (x.ruinPct ?? 0) / 100));
+  return {
+    needPct: Number((need * 100).toFixed(1)),
+    minutesLeft: Math.round(minutesLeft),
+    note: "Estimaci\xF3n del simulador: probabilidad de tocar el objetivo en el tiempo que queda, con la volatilidad real (cripto grande) o con tu historial (memecoins). No es una predicci\xF3n: sirve para descartar lo que no encaja con la misi\xF3n y comparar riesgos. available: false = a\xFAn no se puede ejecutar en el simulador.",
+    strategies: rows
+  };
+}
+var MAJORS, LEVERAGES, probTouch, pct, label;
+var init_fit = __esm({
+  "src/sim/fit.ts"() {
+    "use strict";
+    init_binance();
+    init_hyperliquid();
+    init_mission();
+    init_portfolio();
+    init_positions();
+    MAJORS = ["SOL", "ETH", "BNB"];
+    LEVERAGES = [5, 10, 20];
+    probTouch = (a, s) => a <= 0 ? 1 : s <= 0 ? 0 : Math.min(1, 2 * (1 - phi(a / s)));
+    pct = (p) => Math.round(p * 100);
+    label = (p) => p >= 0.25 ? "encaja" : p >= 0.05 ? "posible" : "no encaja";
   }
 });
 
@@ -11379,11 +11753,11 @@ async function one(p) {
   const at30 = close2 + 30 * 60 <= now2 ? priceAt(cs, close2 + 30 * 60) : void 0;
   const out = {
     ...base2,
-    marketMovePct: pct(entry, exit),
-    bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[2]))) : void 0,
-    worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[3]))) : void 0,
-    ifHeld15Pct: at15 ? pct(entry, at15) : void 0,
-    ifHeld30Pct: at30 ? pct(entry, at30) : void 0
+    marketMovePct: pct2(entry, exit),
+    bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[2]))) : void 0,
+    worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[3]))) : void 0,
+    ifHeld15Pct: at15 ? pct2(entry, at15) : void 0,
+    ifHeld30Pct: at30 ? pct2(entry, at30) : void 0
   };
   const notes = [];
   if (out.bestWhileHeldPct !== void 0 && out.marketMovePct !== void 0 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
@@ -11414,7 +11788,7 @@ async function missionCounterfactuals(missionId, limit = 8) {
   }
   return out;
 }
-var NETWORK2, cache2, pct, priceAt;
+var NETWORK2, cache2, pct2, priceAt;
 var init_counterfactuals = __esm({
   "src/sim/counterfactuals.ts"() {
     "use strict";
@@ -11422,7 +11796,7 @@ var init_counterfactuals = __esm({
     init_positions();
     NETWORK2 = { solana: "solana", base: "base", bsc: "bsc" };
     cache2 = /* @__PURE__ */ new Map();
-    pct = (a, b) => Number(((b / a - 1) * 100).toFixed(1));
+    pct2 = (a, b) => Number(((b / a - 1) * 100).toFixed(1));
     priceAt = (cs, sec) => {
       let p;
       for (const c of cs) if (c[0] <= sec) p = c[4];
@@ -11507,11 +11881,11 @@ async function exportTaxes(opts = {}) {
       p.status === "partial" ? "cierre parcial" : "cerrada"
     ];
   });
-  const dir = path8.join(config2.dataDir, "exports");
-  mkdirSync4(dir, { recursive: true });
+  const dir2 = path8.join(config2.dataDir, "exports");
+  mkdirSync4(dir2, { recursive: true });
   const stamp = opts.year ? String(opts.year) : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const opsFile = path8.join(dir, `operaciones-reales-${stamp}.csv`);
-  const posFile = path8.join(dir, `resultados-por-posicion-${stamp}.csv`);
+  const opsFile = path8.join(dir2, `operaciones-reales-${stamp}.csv`);
+  const posFile = path8.join(dir2, `resultados-por-posicion-${stamp}.csv`);
   writeFileSync2(
     opsFile,
     csv(
@@ -28363,9 +28737,9 @@ function codePointLengthVar(doc, ctx, accessor, inDoubt) {
   doc.write(`const ${v} = typeof ${accessor} === "string" && ${inDoubt} ? ${cpLen}(${accessor}) : ${accessor}.length;`);
   return v;
 }
-function numericOperand(value, label) {
+function numericOperand(value, label2) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new ZodCompileUnsupportedError(`${label} bound of type ${typeof value}`);
+    throw new ZodCompileUnsupportedError(`${label2} bound of type ${typeof value}`);
   }
   return `${value}`;
 }
@@ -40925,6 +41299,8 @@ function close(id, status, result) {
 }
 async function checkOrders() {
   const log = await settleTransfers().catch((err) => [`Error abonando transferencias: ${err.message}`]);
+  const { checkPerps: checkPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+  log.push(...await checkPerps2().catch((err) => [`Error revisando futuros: ${err.message}`]));
   const expired = db.prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?").all(now());
   for (const { id, mission_id } of expired) {
     if (db.prepare("UPDATE orders SET status = 'expired', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes) {
@@ -41143,9 +41519,9 @@ function tradeStats(ps) {
     ["con riesgos 'danger' en RugCheck", (p) => (p.entry.rugcheckDangerRisks ?? 0) > 0],
     ["cerradas por fin de misi\xF3n", (p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")]
   ];
-  return groups.map(([label, fn]) => {
+  return groups.map(([label2, fn]) => {
     const s = summarizeTrades(ps.filter(fn));
-    return s.trades ? { group: label, trades: s.trades, wins: s.wins, losses: s.losses, avgPnlPct: s.avgPnlPct } : null;
+    return s.trades ? { group: label2, trades: s.trades, wins: s.wins, losses: s.losses, avgPnlPct: s.avgPnlPct } : null;
   }).filter(Boolean);
 }
 var closedPositions = () => listPositions().filter((p) => p.status === "closed");
@@ -41955,6 +42331,18 @@ var SIM_TOOLS = [
     }
   }),
   tool({
+    name: "strategy_fit",
+    kind: "research",
+    role: "both",
+    researchTarget: () => void 0,
+    description: "Encaje de estrategias con la misi\xF3n: con lo que te falta para el objetivo y el tiempo que queda, la probabilidad estimada de llegar con cada estrategia (cripto grande al contado, futuros con apalancamiento, memecoins j\xF3venes) y su riesgo de ruina. Usa la volatilidad real de ahora (Binance) y tu propio historial. Sirve para elegir con l\xF3gica: no todas encajan con cada misi\xF3n.",
+    schema: external_exports.object({}),
+    run: async (_i, ctx) => {
+      const { strategyFit: strategyFit2 } = await Promise.resolve().then(() => (init_fit(), fit_exports));
+      return toText(await strategyFit2(mid(ctx)));
+    }
+  }),
+  tool({
     name: "field_guide",
     kind: "research",
     role: "both",
@@ -42205,6 +42593,51 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
           reasoning: formatThesis(i.thesis)
         })
       );
+    }
+  }),
+  tool({
+    name: "open_perp",
+    kind: "trade",
+    journaled: true,
+    description: "Futuros perpetuos (simulados con datos reales de Hyperliquid): abre una posici\xF3n larga (gana si sube) o corta (gana si baja) con apalancamiento sobre BTC, ETH, SOL, BNB y muchas m\xE1s (cada moneda tiene su apalancamiento m\xE1ximo: strategy_fit y el error te lo dicen). El margen sale del efectivo (USDC/USDT) de una de tus cadenas (from_chain, o la que m\xE1s tenga) y vuelve a ella al cerrar. Costes: dep\xF3sito 0,3 $, comisi\xF3n 0,045 % del nocional al abrir y al cerrar, funding cada hora y retirada 1 $. Si el capital de la posici\xF3n baja del mantenimiento, se liquida y pierdes el margen: la respuesta dice el precio de liquidaci\xF3n. Opcional: take_profit y stop_loss (precios) que se vigilan solos. M\xEDnimo 10 $ de nocional. Solo en misiones simuladas.",
+    schema: external_exports.object({
+      coin: external_exports.string().describe("Moneda del perpetuo: BTC, ETH, SOL, BNB\u2026"),
+      side: external_exports.enum(["long", "short"]),
+      leverage: external_exports.number().min(1).max(50),
+      margin_usd: external_exports.number().positive().describe("Cu\xE1nto de tu efectivo pones como margen"),
+      from_chain: chainParam.optional().describe("De qu\xE9 cadena sale el margen (por defecto, la que m\xE1s efectivo tenga)"),
+      take_profit: external_exports.number().positive().optional(),
+      stop_loss: external_exports.number().positive().optional(),
+      thesis
+    }),
+    run: async (i, ctx) => {
+      const { openPerp: openPerp2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+      return json2(
+        await openPerp2({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          coin: i.coin,
+          side: i.side,
+          leverage: i.leverage,
+          marginUsd: i.margin_usd,
+          fromChain: i.from_chain,
+          takeProfit: i.take_profit,
+          stopLoss: i.stop_loss,
+          reasoning: formatThesis(i.thesis),
+          meta: tradeMeta(i.thesis)
+        })
+      );
+    }
+  }),
+  tool({
+    name: "close_perp",
+    kind: "trade",
+    journaled: true,
+    description: "Cierra un futuro abierto (id en portfolio \u2192 perps) al precio mark del momento; el margen m\xE1s el resultado vuelve a su cadena.",
+    schema: external_exports.object({ perp_id: external_exports.number().int(), reasoning: external_exports.string().min(1) }),
+    run: async (i, ctx) => {
+      const { closePerp: closePerp2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+      return json2(await closePerp2({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, reasoning: i.reasoning }));
     }
   }),
   tool({
@@ -42819,9 +43252,9 @@ function transcriptEvents(since) {
   const sinceMs = new Date(since).getTime();
   const events = [];
   const sessionDirs = readdirSync2(projectsDir).flatMap((project) => {
-    const dir = path7.join(projectsDir, project);
+    const dir2 = path7.join(projectsDir, project);
     try {
-      return readdirSync2(dir).map((s) => path7.join(dir, s, "subagents"));
+      return readdirSync2(dir2).map((s) => path7.join(dir2, s, "subagents"));
     } catch {
       return [];
     }
@@ -42974,7 +43407,7 @@ function state() {
 function missionDetail(missionId) {
   const trades = db.prepare(
     `SELECT id, ts, kind, summary, details FROM journal
-         WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'order_failed') ORDER BY id`
+         WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'order_failed', 'perp') ORDER BY id`
   ).all(missionId).map((j) => {
     const d = j.details ? JSON.parse(j.details) : {};
     const venue = j.kind === "cex_order" ? "binance" : String(d.chain ?? d.from ?? "solana");
@@ -43109,12 +43542,15 @@ async function sessionBriefing(sessionId, missionId) {
       ""
     );
   }
+  const fit = mission.status === "active" ? await Promise.resolve().then(() => (init_fit(), fit_exports)).then(({ strategyFit: strategyFit2 }) => strategyFit2(mission)).then((f) => `Encaje de estrategias (falta +${f.needPct} % en ${f.minutesLeft} min; detalle con strategy_fit):
+` + toText(f.strategies.map(({ basis: _b, ...r }) => r))).catch(() => "") : "";
   return [
     header,
     "",
     "Misi\xF3n:",
     toText(await missionStatus(missionId)),
     "",
+    ...fit ? [fit, ""] : [],
     ...memoryLines,
     "Cartera:",
     toText(portfolio),
@@ -43147,7 +43583,7 @@ init_mission();
 init_portfolio();
 init_positions();
 var usd = (n3) => `${n3.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
-var pct2 = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
+var pct3 = (n3) => `${n3 >= 0 ? "+" : "\u2212"}${Math.abs(n3).toLocaleString("es-ES", { maximumFractionDigits: 1 })} %`;
 var hhmm3 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 function timeLeft(deadline) {
   const min = Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4));
@@ -43163,7 +43599,7 @@ async function statusReport(missionId) {
   const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : m.status === "bust" ? "SIN FONDOS: se qued\xF3 sin dinero para operar" : "detenida por el usuario";
   const lines = [];
   lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
-  lines.push(`Valor: ${usd(current)} (${pct2(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
+  lines.push(`Valor: ${usd(current)} (${pct3(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
   const open2 = listPositions(m.id).filter((p) => p.status === "open");
   if (m.status === "active") {
@@ -43174,7 +43610,7 @@ async function statusReport(missionId) {
       const share = h && h.amount > 0 ? Math.min(1, p.qtyOpen / h.amount) : 0;
       const now2 = (h?.usd ?? 0) * share;
       const cost = p.openCostUsd;
-      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct2(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
+      lines.push(`- ${p.symbol}: ${usd(now2)} (${pct3(cost ? (now2 - cost) / cost * 100 : 0)} sobre ${usd(cost)})`);
     }
     const orders = listOrders(m.id, "open");
     if (orders.length) {
@@ -43185,7 +43621,7 @@ async function statusReport(missionId) {
   if (closed.length) {
     const wins = closed.filter((p) => (p.pnlUsd ?? 0) > 0).length;
     lines.push("", `Operaciones cerradas: ${closed.length} (${wins} con beneficio)`);
-    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct2(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
+    for (const p of closed.slice(0, 4)) lines.push(`- ${p.symbol}: ${pct3(p.pnlPct ?? 0)} en ${p.heldMinutes} min (${p.exitReason ?? "venta"})`);
   }
   const recent = db.prepare("SELECT ts, kind, summary, reasoning FROM journal WHERE mission_id = ? AND kind NOT IN ('rejected') ORDER BY id DESC LIMIT 5").all(m.id);
   if (recent.length) {

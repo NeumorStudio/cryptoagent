@@ -169,6 +169,21 @@ export const SIM_TOOLS = [
     },
   }),
   tool({
+    name: "strategy_fit",
+    kind: "research",
+    role: "both",
+    researchTarget: () => undefined,
+    description:
+      "Encaje de estrategias con la misión: con lo que te falta para el objetivo y el tiempo que queda, la probabilidad estimada de " +
+      "llegar con cada estrategia (cripto grande al contado, futuros con apalancamiento, memecoins jóvenes) y su riesgo de ruina. " +
+      "Usa la volatilidad real de ahora (Binance) y tu propio historial. Sirve para elegir con lógica: no todas encajan con cada misión.",
+    schema: z.object({}),
+    run: async (_i, ctx) => {
+      const { strategyFit } = await import("../sim/fit.js");
+      return toText(await strategyFit(mid(ctx)));
+    },
+  }),
+  tool({
     name: "field_guide",
     kind: "research",
     role: "both",
@@ -460,6 +475,57 @@ export const SIM_TOOLS = [
           reasoning: formatThesis(i.thesis),
         }),
       );
+    },
+  }),
+  tool({
+    name: "open_perp",
+    kind: "trade",
+    journaled: true,
+    description:
+      "Futuros perpetuos (simulados con datos reales de Hyperliquid): abre una posición larga (gana si sube) o corta (gana si baja) " +
+      "con apalancamiento sobre BTC, ETH, SOL, BNB y muchas más (cada moneda tiene su apalancamiento máximo: strategy_fit y el error te lo dicen). " +
+      "El margen sale del efectivo (USDC/USDT) de una de tus cadenas (from_chain, o la que más tenga) y vuelve a ella al cerrar. " +
+      "Costes: depósito 0,3 $, comisión 0,045 % del nocional al abrir y al cerrar, funding cada hora y retirada 1 $. " +
+      "Si el capital de la posición baja del mantenimiento, se liquida y pierdes el margen: la respuesta dice el precio de liquidación. " +
+      "Opcional: take_profit y stop_loss (precios) que se vigilan solos. Mínimo 10 $ de nocional. Solo en misiones simuladas.",
+    schema: z.object({
+      coin: z.string().describe("Moneda del perpetuo: BTC, ETH, SOL, BNB…"),
+      side: z.enum(["long", "short"]),
+      leverage: z.number().min(1).max(50),
+      margin_usd: z.number().positive().describe("Cuánto de tu efectivo pones como margen"),
+      from_chain: chainParam.optional().describe("De qué cadena sale el margen (por defecto, la que más efectivo tenga)"),
+      take_profit: z.number().positive().optional(),
+      stop_loss: z.number().positive().optional(),
+      thesis,
+    }),
+    run: async (i, ctx) => {
+      const { openPerp } = await import("../sim/perps.js");
+      return json(
+        await openPerp({
+          missionId: mid(ctx),
+          sessionId: ctx.sessionId,
+          coin: i.coin,
+          side: i.side,
+          leverage: i.leverage,
+          marginUsd: i.margin_usd,
+          fromChain: i.from_chain,
+          takeProfit: i.take_profit,
+          stopLoss: i.stop_loss,
+          reasoning: formatThesis(i.thesis),
+          meta: tradeMeta(i.thesis),
+        }),
+      );
+    },
+  }),
+  tool({
+    name: "close_perp",
+    kind: "trade",
+    journaled: true,
+    description: "Cierra un futuro abierto (id en portfolio → perps) al precio mark del momento; el margen más el resultado vuelve a su cadena.",
+    schema: z.object({ perp_id: z.number().int(), reasoning: z.string().min(1) }),
+    run: async (i, ctx) => {
+      const { closePerp } = await import("../sim/perps.js");
+      return json(await closePerp({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, reasoning: i.reasoning }));
     },
   }),
   tool({

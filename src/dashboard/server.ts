@@ -113,7 +113,7 @@ function missionDetail(missionId: number) {
     db
       .prepare(
         `SELECT id, ts, kind, summary, details FROM journal
-         WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'order_failed') ORDER BY id`,
+         WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'failed_tx', 'order_failed', 'perp') ORDER BY id`,
       )
       .all(missionId) as Array<{ id: number; ts: string; kind: string; summary: string; details: string | null }>
   ).map((j) => {

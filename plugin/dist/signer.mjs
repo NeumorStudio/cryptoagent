@@ -7576,6 +7576,36 @@ var init_migrations = __esm({
         );
         CREATE INDEX live_txs_mission ON live_txs (mission_id, id);
       `)
+      },
+      {
+        version: 7,
+        description: "Futuros perpetuos simulados (datos de Hyperliquid)",
+        up: (db2) => db2.exec(`
+        CREATE TABLE perp_positions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mission_id INTEGER NOT NULL,
+          position_id INTEGER,              -- fila en positions (para la memoria y las estad\xEDsticas)
+          coin TEXT NOT NULL,
+          side TEXT NOT NULL,               -- 'long' | 'short'
+          leverage REAL NOT NULL,
+          margin_usd REAL NOT NULL,
+          size REAL NOT NULL,               -- en unidades de la moneda
+          entry_price REAL NOT NULL,
+          from_chain TEXT NOT NULL,         -- de qu\xE9 cadena sali\xF3 el margen (y ad\xF3nde vuelve)
+          take_profit REAL,
+          stop_loss REAL,
+          fees_usd REAL NOT NULL DEFAULT 0,
+          funding_usd REAL NOT NULL DEFAULT 0,  -- positivo = pagado
+          last_funding_at TEXT NOT NULL,
+          opened_at TEXT NOT NULL,
+          closed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'closing' | 'closed' | 'liquidated'
+          exit_price REAL,
+          returned_usd REAL,
+          reasoning TEXT
+        );
+        CREATE INDEX perp_open ON perp_positions (status, mission_id);
+      `)
       }
     ];
     MAX_BACKUPS = 10;
@@ -7772,7 +7802,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.23.0";
+    CODE_VERSION = "0.24.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

@@ -154,6 +154,16 @@ function handle(url: URL, body?: unknown): Response {
     });
     return json(pairs);
   }
+  if (url.host === "api.hyperliquid.xyz") {
+    // Perpetuos: SOL (20x) al precio del SOL del mercado falso y BNB (10x).
+    return json([
+      { universe: [{ name: "SOL", maxLeverage: 20 }, { name: "BNB", maxLeverage: 10 }] },
+      [
+        { markPx: String(tokens[SOL_MINT]!.price), funding: "0.0000125" },
+        { markPx: String(evmTokens.bsc[NATIVE]!.price), funding: "0" },
+      ],
+    ]);
+  }
   if (url.host === "api.binance.com") {
     const symbol = url.searchParams.get("symbol") ?? "";
     const base = symbol.replace(/(USDT|USDC)$/, "");

@@ -161,3 +161,14 @@ Webs como DexScreener pueden mostrar controles anti-bot en el navegador; sus API
 - **BNB Chain por la dirección.** …7777 = Flap.sh, con impuestos de venta dinámicos que pueden llegar al 100 %. …4444 o …ffff = four.meme. El simulador lo pone en `launchpad`, también en tus operaciones antiguas.
 - **Graduación en pump.fun.** Se gradúa entre el 1 y el 3 % de los tokens. Tras migrar suele haber un pico y luego un volcado: comprar justo en la migración suele salir mal.
 - **Condiciones para tus creencias.** Todos estos datos se pueden usar en las condiciones: `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
+
+## 6. Futuros perpetuos (simulados con datos de Hyperliquid)
+
+- **Qué son.** `open_perp` abre una posición larga (ganas si sube) o corta (ganas si baja) con apalancamiento sobre BTC, ETH, SOL, BNB y muchas más. Es la única forma de ganar cuando el mercado cae. `close_perp` la cierra. Las abiertas salen en `portfolio`, en `perps`.
+- **Apalancamiento máximo por moneda** (dato de Hyperliquid): BTC 40x, ETH 25x, SOL 20x, BNB 10x…
+- **De dónde sale el margen.** Del efectivo (USDC/USDT) de una de tus cadenas, y al cerrar vuelve a ella.
+- **Costes.** Depósito 0,3 $; comisión del 0,045 % del nocional al abrir y al cerrar; funding cada hora (si es positivo, los largos pagan a los cortos); retirada 1 $.
+- **Liquidación.** Si el capital de la posición (margen + resultado − funding) baja del mantenimiento (la mitad del margen inicial al apalancamiento máximo), pierdes el margen. Con SOL (máximo 20x): a 10x, un ~7,5 % en contra; a 20x, solo un ~2,5 %. La respuesta de `open_perp` da el precio de liquidación.
+- **Take profit y stop loss.** Son opcionales y se vigilan solos.
+- **Lo que no se simula:** el slippage exacto en momentos de mucha volatilidad ni las cascadas de liquidaciones. En misiones reales no están disponibles.
+- **Cuándo encaja.** `strategy_fit` calcula, para tu objetivo y el tiempo que queda, la probabilidad de llegar con cada apalancamiento y el riesgo de liquidación, con la volatilidad real de ahora.

@@ -26,6 +26,7 @@
     --base: #3987E5;
     --bsc: #D95926;
     --binance: #9085E9;
+    --hyperliquid: #D65A9C;
     --font: "Anybody", "Arial Narrow", system-ui, sans-serif;
     --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -354,8 +355,8 @@ const ago = (iso) => {
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const VENUES = ["solana", "base", "bsc", "binance"];
-const LABEL = { solana: "Solana", base: "Base", bsc: "BNB Chain", binance: "Binance" };
-const COLOR = { solana: "var(--solana)", base: "var(--base)", bsc: "var(--bsc)", binance: "var(--binance)" };
+const LABEL = { solana: "Solana", base: "Base", bsc: "BNB Chain", binance: "Binance", hyperliquid: "Futuros (Hyperliquid)" };
+const COLOR = { solana: "var(--solana)", base: "var(--base)", bsc: "var(--bsc)", binance: "var(--binance)", hyperliquid: "var(--hyperliquid)" };
 const CASH = new Set(["USDC", "USDT", "FDUSD", "USDbC"]);
 
 function el(tag, attrs = {}, ...children) {
@@ -660,6 +661,8 @@ function renderMoney(v) {
     else if (GAS.has(h.symbol)) gas.push(h);
     else tokens.push(h);
   }
+  // Futuros abiertos: cuentan por lo que volvería si se cerraran ahora.
+  for (const p of v.perps ?? []) tokens.push({ venue: "hyperliquid", asset: `perp${p.perpId}`, symbol: `${p.position} (${p.pnlPct >= 0 ? "+" : ""}${p.pnlPct} %)`, usd: p.valueIfClosedUsd });
   tokens.sort((a, b) => b.usd - a.usd);
   const sum = (xs) => xs.reduce((t, x) => t + x.usd, 0);
   const transit = (v.inTransit ?? []).reduce((t, x) => t + x.usd, 0);

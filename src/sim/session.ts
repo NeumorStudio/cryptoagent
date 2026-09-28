@@ -45,12 +45,22 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
     );
   }
 
+  // Qué estrategias encajan con esta misión (objetivo y tiempo), con datos reales.
+  const fit =
+    mission.status === "active"
+      ? await import("./fit.js")
+          .then(({ strategyFit }) => strategyFit(mission))
+          .then((f) => `Encaje de estrategias (falta +${f.needPct} % en ${f.minutesLeft} min; detalle con strategy_fit):\n` + toText(f.strategies.map(({ basis: _b, ...r }) => r)))
+          .catch(() => "")
+      : "";
+
   return [
     header,
     "",
     "Misión:",
     toText(await missionStatus(missionId)),
     "",
+    ...(fit ? [fit, ""] : []),
     ...memoryLines,
     "Cartera:",
     toText(portfolio),

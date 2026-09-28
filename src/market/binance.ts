@@ -48,6 +48,14 @@ export async function getOrderBook(symbol: string): Promise<{ bids: Level[]; ask
   return { bids: parse(raw.bids), asks: parse(raw.asks) };
 }
 
+/** Velas de Binance: [apertura (ms), open, high, low, close]. */
+export async function klines(symbol: string, interval: "1m" | "5m" | "1h" = "1m", limit = 240): Promise<Array<[number, number, number, number, number]>> {
+  const raw = await fetchJson<Array<[number, string, string, string, string]>>(`${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`, {
+    ttlMs: 60_000,
+  });
+  return raw.map((k) => [k[0], Number(k[1]), Number(k[2]), Number(k[3]), Number(k[4])]);
+}
+
 export interface MarketFill {
   baseQty: number;
   quoteQty: number;

@@ -930,6 +930,41 @@ export function missionReviewData(missionId: number, since?: string) {
 }
 
 /**
+ * Todo lo que necesita una revisión a mitad de misión, en una sola respuesta: lo nuevo desde la última
+ * revisión, las creencias que tocan las posiciones nuevas (las aplicadas y las que cumplen por sus datos
+ * de entrada) con su evidencia de ahora, los howtos por título y los errores repetidos sin howto.
+ * Así cada relanzamiento del revisor no vuelve a leer la cola entera ni el catálogo de memoria.
+ */
+export function checkpointData(missionId: number) {
+  const m = getMission(missionId);
+  if (!m) throw new Error(`No existe la misión #${missionId}`);
+  const since = lastCheckpoint(missionId) ?? m.created_at;
+  const data = missionReviewData(missionId, since);
+  const touched = new Set<number>();
+  for (const p of data.positions.filter((x) => x.openedAt > since)) {
+    for (const id of p.beliefsApplied ?? []) touched.add(id);
+    const f = beliefsFor(p.venue, (p.entry ?? {}) as Record<string, unknown>, p.asset);
+    for (const id of [...f.block, ...f.caution, ...f.favor]) touched.add(id);
+  }
+  const mem = recall(missionId);
+  return {
+    since,
+    ...data,
+    memory: {
+      howtos: mem.howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title}`),
+      beliefsTouched: mem.beliefs
+        .filter((b) => touched.has(b.id))
+        .map((b) => ({ id: b.id, statement: clip(b.statement, 200), ...(b.condition ? { condition: b.condition, expectation: b.expectation } : {}), evidence: b.evidence.verdict })),
+      otherBeliefs: `${mem.totalBeliefs - touched.size} creencias más, sin relación con las posiciones nuevas (memory_catalog si necesitas alguna)`,
+    },
+    errorsWithoutHowto: (recurringErrors() as Array<Record<string, unknown>>).filter((e) => !e.howtoId).slice(0, 5),
+    note:
+      "Todo lo de esta revisión: no hace falta review_queue, mission_review_data ni memory_catalog. El detalle de una creencia o un " +
+      "howto concreto, con memory_catalog y belief_ids/howto_ids. Al terminar, review_checkpoint.",
+  };
+}
+
+/**
  * Espera (hasta `maxMinutes`) a que haya algo que revisar en la misión activa: que termine, que toque
  * la revisión periódica o que se acumule actividad del agente.
  */

@@ -23,8 +23,9 @@ const mid = (ctx: ToolCtx): number => {
 };
 
 
-// Límite prudente para que una llamada MCP no se alargue demasiado.
-const MAX_WAIT_MINUTES = 10;
+// Las esperas no pasan de 4,5 minutos: la caché de prompts de los subagentes dura 5, y una espera más
+// larga hace que el turno siguiente relea todo el contexto sin caché (a precio completo).
+const MAX_WAIT_MINUTES = 4.5;
 
 const FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 
@@ -1045,10 +1046,18 @@ export const SIM_TOOLS = [
     kind: "memory",
     role: "reviewer",
     description:
-      "Espera (1-10 minutos) a que haya algo que revisar en la misión activa. Vuelve antes si la misión termina (reason: mission_ended), " +
-      "si toca la revisión periódica (interval_due) o si el agente ha acumulado actividad (activity). Si no, reason: timeout.",
-    schema: z.object({ max_minutes: z.number().min(1).max(10).default(10) }),
-    run: async ({ max_minutes }) => json(await memory.waitForActivity(max_minutes)),
+      `Espera (1-${MAX_WAIT_MINUTES} minutos) a que haya algo que revisar en la misión activa. Vuelve antes si la misión termina ` +
+      "(reason: mission_ended), si toca la revisión periódica (interval_due) o si el agente ha acumulado actividad (activity); en " +
+      "esos dos casos trae `checkpoint` con todo lo de la revisión (lo nuevo desde la anterior, las creencias que tocan las posiciones " +
+      "nuevas, los howtos por título y los errores sin howto). Si no, reason: timeout.",
+    schema: z.object({ max_minutes: z.number().min(1).max(MAX_WAIT_MINUTES).default(MAX_WAIT_MINUTES) }),
+    run: async ({ max_minutes }) => {
+      const r = await memory.waitForActivity(max_minutes);
+      if ((r.reason === "interval_due" || r.reason === "activity") && r.missionId !== undefined) {
+        return toText({ ...r, checkpoint: memory.checkpointData(r.missionId) });
+      }
+      return json(r);
+    },
   }),
   tool({
     name: "write_howto",

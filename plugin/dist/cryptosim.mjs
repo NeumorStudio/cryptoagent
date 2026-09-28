@@ -8211,7 +8211,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.27.0";
+    CODE_VERSION = "0.28.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42025,6 +42025,30 @@ function missionReviewData(missionId, since) {
     }))
   };
 }
+function checkpointData(missionId) {
+  const m = getMission(missionId);
+  if (!m) throw new Error(`No existe la misi\xF3n #${missionId}`);
+  const since = lastCheckpoint(missionId) ?? m.created_at;
+  const data = missionReviewData(missionId, since);
+  const touched = /* @__PURE__ */ new Set();
+  for (const p of data.positions.filter((x) => x.openedAt > since)) {
+    for (const id of p.beliefsApplied ?? []) touched.add(id);
+    const f = beliefsFor(p.venue, p.entry ?? {}, p.asset);
+    for (const id of [...f.block, ...f.caution, ...f.favor]) touched.add(id);
+  }
+  const mem = recall(missionId);
+  return {
+    since,
+    ...data,
+    memory: {
+      howtos: mem.howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title}`),
+      beliefsTouched: mem.beliefs.filter((b) => touched.has(b.id)).map((b) => ({ id: b.id, statement: clip(b.statement, 200), ...b.condition ? { condition: b.condition, expectation: b.expectation } : {}, evidence: b.evidence.verdict })),
+      otherBeliefs: `${mem.totalBeliefs - touched.size} creencias m\xE1s, sin relaci\xF3n con las posiciones nuevas (memory_catalog si necesitas alguna)`
+    },
+    errorsWithoutHowto: recurringErrors().filter((e) => !e.howtoId).slice(0, 5),
+    note: "Todo lo de esta revisi\xF3n: no hace falta review_queue, mission_review_data ni memory_catalog. El detalle de una creencia o un howto concreto, con memory_catalog y belief_ids/howto_ids. Al terminar, review_checkpoint."
+  };
+}
 async function waitForActivity(maxMinutes) {
   const until = Date.now() + maxMinutes * 6e4;
   for (; ; ) {
@@ -42314,7 +42338,7 @@ var mid = (ctx) => {
   if (ctx.missionId === null) throw new Error("No hay ninguna misi\xF3n");
   return ctx.missionId;
 };
-var MAX_WAIT_MINUTES = 10;
+var MAX_WAIT_MINUTES = 4.5;
 var FIELD_GUIDE = asset("guia-del-terreno.md", "knowledge/guia-del-terreno.md");
 var reasoning = external_exports.string().describe("Por qu\xE9 haces esto. Queda en el diario.");
 var chainParam = external_exports.enum(CHAINS).describe("Cadena en la que operas o investigas");
@@ -43145,9 +43169,15 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "wait_for_activity",
     kind: "memory",
     role: "reviewer",
-    description: "Espera (1-10 minutos) a que haya algo que revisar en la misi\xF3n activa. Vuelve antes si la misi\xF3n termina (reason: mission_ended), si toca la revisi\xF3n peri\xF3dica (interval_due) o si el agente ha acumulado actividad (activity). Si no, reason: timeout.",
-    schema: external_exports.object({ max_minutes: external_exports.number().min(1).max(10).default(10) }),
-    run: async ({ max_minutes }) => json2(await waitForActivity(max_minutes))
+    description: `Espera (1-${MAX_WAIT_MINUTES} minutos) a que haya algo que revisar en la misi\xF3n activa. Vuelve antes si la misi\xF3n termina (reason: mission_ended), si toca la revisi\xF3n peri\xF3dica (interval_due) o si el agente ha acumulado actividad (activity); en esos dos casos trae \`checkpoint\` con todo lo de la revisi\xF3n (lo nuevo desde la anterior, las creencias que tocan las posiciones nuevas, los howtos por t\xEDtulo y los errores sin howto). Si no, reason: timeout.`,
+    schema: external_exports.object({ max_minutes: external_exports.number().min(1).max(MAX_WAIT_MINUTES).default(MAX_WAIT_MINUTES) }),
+    run: async ({ max_minutes }) => {
+      const r = await waitForActivity(max_minutes);
+      if ((r.reason === "interval_due" || r.reason === "activity") && r.missionId !== void 0) {
+        return toText({ ...r, checkpoint: checkpointData(r.missionId) });
+      }
+      return json2(r);
+    }
   }),
   tool({
     name: "write_howto",

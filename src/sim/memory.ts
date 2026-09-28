@@ -223,6 +223,40 @@ function tradeStats(ps: Pos[]) {
 
 const closedPositions = () => listPositions().filter((p) => p.status === "closed");
 
+// ─── Freno de memoria: lo aprendido que no se puede pasar por alto ──────────
+
+/**
+ * Una creencia negativa con evidencia fuerte bloquea las compras que la cumplen, salvo que el agente
+ * la ignore de forma explícita y diga por qué. Así lo aprendido no se olvida por despiste, pero el
+ * agente sigue siendo libre de explorar (y esas compras siguen contando como evidencia).
+ */
+export const STRONG_NEGATIVE = { minDecided: 4, minSupportPct: 75, maxAvgPnlPct: -15 };
+
+export interface BlockingBelief {
+  id: number;
+  statement: string;
+  verdict: string;
+}
+
+/** Creencias negativas fuertes que cumple una compra con estos datos de entrada. */
+export function blockingBeliefs(venue: string, entry: Record<string, unknown>): BlockingBelief[] {
+  const closed = closedPositions();
+  const pos = { venue, entry: { ...entry, venue }, research: {} } as unknown as Pos;
+  return (db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all() as unknown as BeliefRow[])
+    .filter((b) => matches(JSON.parse(b.condition!) as Condition, pos))
+    .map((b) => ({ b, ev: beliefEvidence(b, closed) }))
+    .filter(({ ev }) => {
+      const t = ev.matchingTrades as { inFavor?: number; against?: number; supportPct?: number | null; avgPnlPct?: number } | undefined;
+      return (
+        t !== undefined &&
+        (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided &&
+        (t.supportPct ?? 0) >= STRONG_NEGATIVE.minSupportPct &&
+        (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct
+      );
+    })
+    .map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+}
+
 /**
  * La memoria completa, ordenada por relevancia para la misión actual (o la última).
  * `limit` recorta las listas largas (para el resumen de inicio de sesión).
@@ -308,20 +342,50 @@ export function recallSummary(missionId?: number | null) {
   const full = recall(missionId);
   return {
     currentMission: full.currentMission,
-    missionHistory: full.missionHistory.slice(0, 8).map((h) => ({ ...h, ...(h.nextTime ? { nextTime: clip(h.nextTime, 300) } : {}) })),
-    howtos: full.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title, steps: clip(h.steps, 600) })),
-    beliefs: full.beliefs.slice(0, 10).map((b) => ({
+    missionHistory: full.missionHistory.slice(0, 5).map(({ distance: _d, ...h }) => ({ ...h, ...(h.nextTime ? { nextTime: clip(h.nextTime, 220) } : {}) })),
+    // Los howtos, solo por título: el texto de los que necesites, con howto_ids.
+    howtos: full.howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title}`),
+    beliefs: full.beliefs.slice(0, 8).map((b) => ({
       id: b.id,
-      statement: clip(b.statement, 300),
-      appliesTo: b.appliesTo,
+      statement: clip(b.statement, 200),
       ...(b.condition ? { condition: b.condition, expectation: b.expectation } : {}),
       evidence: b.evidence.verdict,
     })),
     totalBeliefs: full.totalBeliefs,
-    tradeStats: full.tradeStats,
-    recurringErrors: full.recurringErrors,
-    apis: full.apis.slice(0, 10),
-    note: "Resumen: textos recortados y solo las 10 creencias más relevantes. recall_memory con detail: completo trae todo.",
+    tradeStats: full.tradeStats.allMissions,
+    recurringErrors: (full.recurringErrors as Array<Record<string, unknown>>).slice(0, 5).map((e) => ({ ...e, errorClass: clip(e.errorClass, 140) })),
+    note:
+      "Resumen: howtos por título y las 8 creencias más relevantes. recall_memory con howto_ids trae el texto de esos howtos; " +
+      "con detail: completo, todo (es largo: úsalo solo si lo necesitas).",
+  };
+}
+
+/** El texto completo de unos howtos concretos. */
+export function howtosById(ids: number[]) {
+  if (!ids.length) return [];
+  return db.prepare(`SELECT id, scope, topic, title, steps, status FROM howtos WHERE id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).all(...ids);
+}
+
+/**
+ * Para el revisor: el catálogo compacto (ids, títulos, creencias recortadas con su evidencia). El
+ * detalle de lo que vaya a tocar, con howto_ids y belief_ids.
+ */
+export function memoryCatalog(missionId: number | null, opts: { howtoIds?: number[]; beliefIds?: number[]; full?: boolean } = {}) {
+  const all = recall(missionId);
+  if (opts.full) return all;
+  const pick = new Set(opts.beliefIds ?? []);
+  return {
+    currentMission: all.currentMission,
+    howtos: all.howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title}`),
+    beliefs: all.beliefs.map((b) =>
+      pick.has(b.id)
+        ? b
+        : { id: b.id, statement: clip(b.statement, 160), ...(b.condition ? { expectation: b.expectation } : {}), evidence: b.evidence.verdict },
+    ),
+    ...(opts.howtoIds?.length ? { howtoDetail: howtosById(opts.howtoIds) } : {}),
+    missionHistory: all.missionHistory.slice(0, 8).map(({ distance: _d, ...h }) => ({ ...h, ...(h.nextTime ? { nextTime: clip(h.nextTime, 220) } : {}) })),
+    tradeStats: all.tradeStats.allMissions,
+    note: "Catálogo compacto. Con howto_ids o belief_ids, el detalle de esos; con full: true, todo.",
   };
 }
 
@@ -361,7 +425,84 @@ export function recentLearning(limit = 5) {
   return db.prepare("SELECT ts, title FROM activity WHERE kind = 'lesson' ORDER BY id DESC LIMIT ?").all(limit) as Array<{ ts: string; title: string }>;
 }
 
+// ─── Límites e higiene de la memoria ────────────────────────────────────────
+// La memoria se lee en cada misión: si crece sin podarse, cuesta más y se lee peor. Por encima de estos
+// límites no se escribe nada nuevo hasta fusionar o retirar algo.
+export const HOWTO_LIMIT = 18;
+export const BELIEF_LIMIT = 18;
+
+const activeCount = (table: "howtos" | "beliefs") => (db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE status = 'active'`).get() as { n: number }).n;
+
+/** Parecido entre dos conjuntos de posiciones (Jaccard). */
+const overlap = (a: number[], b: number[]) => {
+  const sa = new Set(a);
+  const inter = b.filter((x) => sa.has(x)).length;
+  return inter / (sa.size + b.length - inter || 1);
+};
+
+/**
+ * Otra creencia activa, con la misma expectativa, que cubre (casi) las mismas operaciones: aunque la
+ * condición o el texto sean distintos, dice lo mismo según los datos.
+ */
+function evidenceTwin(cond: Condition, expectation: string, closed: Pos[], exceptId?: number): number | undefined {
+  const mine = closed.filter((p) => matches(cond, p)).map((p) => p.id);
+  if (mine.length < 3) return undefined;
+  const others = db
+    .prepare("SELECT id, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL AND expectation = ? AND id IS NOT ?")
+    .all(expectation, exceptId ?? null) as Array<{ id: number; condition: string }>;
+  return others.find((o) => overlap(mine, closed.filter((p) => matches(JSON.parse(o.condition) as Condition, p)).map((p) => p.id)) >= 0.8)?.id;
+}
+
+/** Lo que el revisor debería consolidar: duplicados por evidencia, creencias contradichas y exceso de howtos. */
+export function memoryHygiene() {
+  const closed = closedPositions();
+  const beliefs = db.prepare("SELECT * FROM beliefs WHERE status = 'active' ORDER BY id").all() as unknown as BeliefRow[];
+  const withEv = beliefs.map((b) => ({ b, ev: beliefEvidence(b, closed) }));
+  const duplicates: Array<{ ids: number[]; sharedTrades: number }> = [];
+  for (let i = 0; i < withEv.length; i++) {
+    for (let j = i + 1; j < withEv.length; j++) {
+      const [x, y] = [withEv[i]!, withEv[j]!];
+      if (!x.b.condition || !y.b.condition || x.b.expectation !== y.b.expectation) continue;
+      const px = (x.ev.matchingTrades?.positionIds as number[] | undefined) ?? [];
+      const py = (y.ev.matchingTrades?.positionIds as number[] | undefined) ?? [];
+      if (px.length >= 3 && py.length >= 3 && overlap(px, py) >= 0.8) duplicates.push({ ids: [x.b.id, y.b.id], sharedTrades: px.filter((p) => py.includes(p)).length });
+    }
+  }
+  const contradicted = withEv
+    .filter(({ ev }) => {
+      const t = ev.matchingTrades as { inFavor?: number; against?: number; supportPct?: number | null } | undefined;
+      return t && (t.inFavor ?? 0) + (t.against ?? 0) >= 3 && (t.supportPct ?? 100) <= 40;
+    })
+    .map(({ b, ev }) => ({ id: b.id, statement: clip(b.statement, 120), verdict: ev.verdict }));
+  const howtos = db.prepare("SELECT id, scope, topic, title, LENGTH(steps) AS chars FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all() as Array<{
+    id: number;
+    scope: string;
+    topic: string;
+    title: string;
+    chars: number;
+  }>;
+  const fps = new Map(howtos.map((h) => [h.id, fingerprint(`${h.title} ${h.topic}`)]));
+  const similarHowtos: number[][] = [];
+  for (let i = 0; i < howtos.length; i++) {
+    for (let j = i + 1; j < howtos.length; j++) {
+      if (similarity(fps.get(howtos[i]!.id)!, fps.get(howtos[j]!.id)!) >= 0.3) similarHowtos.push([howtos[i]!.id, howtos[j]!.id]);
+    }
+  }
+  const tooMany = howtos.length > HOWTO_LIMIT || beliefs.length > BELIEF_LIMIT;
+  return {
+    counts: { howtos: howtos.length, howtoLimit: HOWTO_LIMIT, beliefs: beliefs.length, beliefLimit: BELIEF_LIMIT },
+    ...(tooMany ? { mustConsolidate: "Hay más memoria de la que admite el límite: fusiona o retira antes de escribir nada nuevo (write_howto y write_belief lo rechazarán)." } : {}),
+    duplicateBeliefs: duplicates,
+    contradictedBeliefs: contradicted,
+    similarHowtos,
+    howtoIndex: howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title} (${h.chars} car.)`),
+  };
+}
+
 export function writeHowto(a: { scope: string; topic: string; title: string; steps: string; missionId: number | null; fixesErrorIds?: number[] }) {
+  if (activeCount("howtos") >= HOWTO_LIMIT) {
+    throw new Error(`Ya hay ${HOWTO_LIMIT} howtos activos o más: amplía uno existente (update_howto) o fusiona y retira alguno antes de escribir otro.`);
+  }
   const fp = fingerprint(`${a.title} ${a.steps}`);
   const dup = duplicateOf("howtos", fp);
   if (dup) throw new Error(`Ya hay un howto casi igual (#${dup}). Actualízalo con update_howto en lugar de crear otro.`);
@@ -410,9 +551,14 @@ const sameCondition = (cond: Condition | undefined) =>
 
 export function writeBelief(a: { statement: string; appliesTo: string; expectation?: "positive" | "negative"; condition?: Condition; missionId: number | null }) {
   validateCondition(a.condition, a.expectation);
+  if (activeCount("beliefs") >= BELIEF_LIMIT) {
+    throw new Error(`Ya hay ${BELIEF_LIMIT} creencias activas o más: corrige una existente (revise_belief) o retira las duplicadas o contradichas antes de escribir otra.`);
+  }
   const fp = fingerprint(a.statement);
   const dup = duplicateOf("beliefs", fp) ?? sameCondition(a.condition);
   if (dup) throw new Error(`Ya hay una creencia casi igual o con la misma condición (#${dup}). Corrígela con revise_belief en lugar de crear otra.`);
+  const twin = a.condition && a.expectation ? evidenceTwin(a.condition, a.expectation, closedPositions()) : undefined;
+  if (twin) throw new Error(`La creencia #${twin} ya cubre casi las mismas operaciones con la misma expectativa: dicen lo mismo según los datos. Corrígela con revise_belief en lugar de crear otra.`);
   const id = Number(
     db
       .prepare(
@@ -625,6 +771,7 @@ export function reviewQueue() {
     pendingFinalReviews: pendingReviews(),
     activeMission,
     recentApproach: recentApproach(),
+    memoryHygiene: memoryHygiene(),
     pendingObservations: db.prepare("SELECT id, ts, mission_id, kind, text FROM observations WHERE status = 'pending' ORDER BY id").all(),
     errorsWithoutHowto: recurringErrors().filter((e: any) => !e.howtoId),
     beliefsWithoutCondition,

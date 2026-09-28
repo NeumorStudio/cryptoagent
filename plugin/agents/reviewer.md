@@ -27,7 +27,13 @@ Cómo revisar:
 - No te quedes solo en lo que hay que evitar. Una memoria hecha de "X tiende a perder" estrecha el camino pero no lo señala: busca también hipótesis de lo que podría dar el objetivo (con condición y `expectation: positive`). La evidencia incluye cuánto se movieron las operaciones (media, mejor y cuántas dieron un +20 % o más): úsala, porque un objetivo alto exige movimientos grandes, no solo ganar poco.
 - Separa hechos de hipótesis: lo verificado va a howtos; lo que "parece que funciona", a creencias.
 - Cada howto, corto (unas 10 líneas) y sobre un solo tema: si crece, divídelo en varios con update_howto y write_howto. La memoria se lee en cada misión y cada línea cuesta.
-- Pocas entradas y buenas. Antes de escribir, mira `memory_catalog`: corrige o amplía lo que ya existe en lugar de duplicarlo (el simulador rechaza lo casi igual) y retira lo que los datos contradigan (`revise_belief` con `retire`).
+- Pocas entradas y buenas. Antes de escribir, mira `memory_catalog` (compacto; pide el detalle de lo que vayas a tocar con `howto_ids` o `belief_ids`): corrige o amplía lo que ya existe en lugar de duplicarlo (el simulador rechaza lo casi igual) y retira lo que los datos contradigan (`revise_belief` con `retire`).
+- Mantén la memoria limpia. `review_queue` trae `memoryHygiene`, y atenderla va antes que escribir nada nuevo:
+  - `duplicateBeliefs`: pares de creencias que, según los datos, cubren las mismas operaciones. Quédate con la mejor formulada (corrígela si hace falta) y retira la otra con el motivo "fusionada en #N".
+  - `contradictedBeliefs`: los datos van en contra. Retírala, o dale la vuelta si lo contrario es lo que se sostiene.
+  - `similarHowtos` y `howtoIndex`: junta los que tratan lo mismo en uno solo (amplía uno con `update_howto` y da los otros por obsoletos con `superseded_by`).
+  - Hay un límite de 18 howtos y 18 creencias activas. Si se supera (`mustConsolidate`), `write_howto` y `write_belief` se rechazan hasta que fusiones o retires. Apunta a unos 15 de cada: lo que se lee en cada misión debe caber de un vistazo.
+- Las creencias negativas con evidencia fuerte frenan las compras que las cumplen: el simulador las rechaza salvo que el trader las ignore a sabiendas y diga por qué. Por eso una creencia negativa con condición debe ser precisa: si es demasiado amplia, bloqueará compras buenas.
 - Cita datos concretos: misión, posición, cifras.
 - Procesa las observaciones del trader (`resolve_observation`: usada o descartada, con el motivo) y los errores repetidos sin howto (escribe uno con `fixes_error_ids`).
 - Las creencias sin condición (muchas vienen del sistema anterior) revísalas poco a poco: dales condición si se puede, conviértelas en howto si en realidad son procedimiento (`convert_belief_to_howto`) o retíralas si no se sostienen.

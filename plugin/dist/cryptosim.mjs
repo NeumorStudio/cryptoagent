@@ -8181,7 +8181,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.18.0";
+    CODE_VERSION = "0.19.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -40968,6 +40968,15 @@ function tradeStats(ps) {
   }).filter(Boolean);
 }
 var closedPositions = () => listPositions().filter((p) => p.status === "closed");
+var STRONG_NEGATIVE = { minDecided: 4, minSupportPct: 75, maxAvgPnlPct: -15 };
+function blockingBeliefs(venue, entry) {
+  const closed = closedPositions();
+  const pos = { venue, entry: { ...entry, venue }, research: {} };
+  return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => {
+    const t = ev.matchingTrades;
+    return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.supportPct ?? 0) >= STRONG_NEGATIVE.minSupportPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
+  }).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+}
 function recall(missionId, limit) {
   const current = (missionId ? getMission(missionId) : void 0) ?? getActiveMission() ?? getLastMission();
   const curProfile = current ? profile(current) : null;
@@ -41025,20 +41034,39 @@ function recallSummary(missionId) {
   const full = recall(missionId);
   return {
     currentMission: full.currentMission,
-    missionHistory: full.missionHistory.slice(0, 8).map((h) => ({ ...h, ...h.nextTime ? { nextTime: clip(h.nextTime, 300) } : {} })),
-    howtos: full.howtos.map((h) => ({ id: h.id, scope: h.scope, topic: h.topic, title: h.title, steps: clip(h.steps, 600) })),
-    beliefs: full.beliefs.slice(0, 10).map((b) => ({
+    missionHistory: full.missionHistory.slice(0, 5).map(({ distance: _d, ...h }) => ({ ...h, ...h.nextTime ? { nextTime: clip(h.nextTime, 220) } : {} })),
+    // Los howtos, solo por título: el texto de los que necesites, con howto_ids.
+    howtos: full.howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title}`),
+    beliefs: full.beliefs.slice(0, 8).map((b) => ({
       id: b.id,
-      statement: clip(b.statement, 300),
-      appliesTo: b.appliesTo,
+      statement: clip(b.statement, 200),
       ...b.condition ? { condition: b.condition, expectation: b.expectation } : {},
       evidence: b.evidence.verdict
     })),
     totalBeliefs: full.totalBeliefs,
-    tradeStats: full.tradeStats,
-    recurringErrors: full.recurringErrors,
-    apis: full.apis.slice(0, 10),
-    note: "Resumen: textos recortados y solo las 10 creencias m\xE1s relevantes. recall_memory con detail: completo trae todo."
+    tradeStats: full.tradeStats.allMissions,
+    recurringErrors: full.recurringErrors.slice(0, 5).map((e) => ({ ...e, errorClass: clip(e.errorClass, 140) })),
+    note: "Resumen: howtos por t\xEDtulo y las 8 creencias m\xE1s relevantes. recall_memory con howto_ids trae el texto de esos howtos; con detail: completo, todo (es largo: \xFAsalo solo si lo necesitas)."
+  };
+}
+function howtosById(ids) {
+  if (!ids.length) return [];
+  return db.prepare(`SELECT id, scope, topic, title, steps, status FROM howtos WHERE id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).all(...ids);
+}
+function memoryCatalog(missionId, opts = {}) {
+  const all = recall(missionId);
+  if (opts.full) return all;
+  const pick2 = new Set(opts.beliefIds ?? []);
+  return {
+    currentMission: all.currentMission,
+    howtos: all.howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title}`),
+    beliefs: all.beliefs.map(
+      (b) => pick2.has(b.id) ? b : { id: b.id, statement: clip(b.statement, 160), ...b.condition ? { expectation: b.expectation } : {}, evidence: b.evidence.verdict }
+    ),
+    ...opts.howtoIds?.length ? { howtoDetail: howtosById(opts.howtoIds) } : {},
+    missionHistory: all.missionHistory.slice(0, 8).map(({ distance: _d, ...h }) => ({ ...h, ...h.nextTime ? { nextTime: clip(h.nextTime, 220) } : {} })),
+    tradeStats: all.tradeStats.allMissions,
+    note: "Cat\xE1logo compacto. Con howto_ids o belief_ids, el detalle de esos; con full: true, todo."
   };
 }
 function recurringErrors() {
@@ -41059,7 +41087,60 @@ function logLearning(_sourceMission, title, body) {
 function recentLearning(limit = 5) {
   return db.prepare("SELECT ts, title FROM activity WHERE kind = 'lesson' ORDER BY id DESC LIMIT ?").all(limit);
 }
+var HOWTO_LIMIT = 18;
+var BELIEF_LIMIT = 18;
+var activeCount = (table2) => db.prepare(`SELECT COUNT(*) AS n FROM ${table2} WHERE status = 'active'`).get().n;
+var overlap = (a, b) => {
+  const sa = new Set(a);
+  const inter = b.filter((x) => sa.has(x)).length;
+  return inter / (sa.size + b.length - inter || 1);
+};
+function evidenceTwin(cond, expectation, closed, exceptId) {
+  const mine = closed.filter((p) => matches(cond, p)).map((p) => p.id);
+  if (mine.length < 3) return void 0;
+  const others = db.prepare("SELECT id, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL AND expectation = ? AND id IS NOT ?").all(expectation, exceptId ?? null);
+  return others.find((o) => overlap(mine, closed.filter((p) => matches(JSON.parse(o.condition), p)).map((p) => p.id)) >= 0.8)?.id;
+}
+function memoryHygiene() {
+  const closed = closedPositions();
+  const beliefs = db.prepare("SELECT * FROM beliefs WHERE status = 'active' ORDER BY id").all();
+  const withEv = beliefs.map((b) => ({ b, ev: beliefEvidence(b, closed) }));
+  const duplicates = [];
+  for (let i = 0; i < withEv.length; i++) {
+    for (let j = i + 1; j < withEv.length; j++) {
+      const [x, y] = [withEv[i], withEv[j]];
+      if (!x.b.condition || !y.b.condition || x.b.expectation !== y.b.expectation) continue;
+      const px = x.ev.matchingTrades?.positionIds ?? [];
+      const py = y.ev.matchingTrades?.positionIds ?? [];
+      if (px.length >= 3 && py.length >= 3 && overlap(px, py) >= 0.8) duplicates.push({ ids: [x.b.id, y.b.id], sharedTrades: px.filter((p) => py.includes(p)).length });
+    }
+  }
+  const contradicted = withEv.filter(({ ev }) => {
+    const t = ev.matchingTrades;
+    return t && (t.inFavor ?? 0) + (t.against ?? 0) >= 3 && (t.supportPct ?? 100) <= 40;
+  }).map(({ b, ev }) => ({ id: b.id, statement: clip(b.statement, 120), verdict: ev.verdict }));
+  const howtos = db.prepare("SELECT id, scope, topic, title, LENGTH(steps) AS chars FROM howtos WHERE status = 'active' ORDER BY scope, topic, id").all();
+  const fps = new Map(howtos.map((h) => [h.id, fingerprint(`${h.title} ${h.topic}`)]));
+  const similarHowtos = [];
+  for (let i = 0; i < howtos.length; i++) {
+    for (let j = i + 1; j < howtos.length; j++) {
+      if (similarity(fps.get(howtos[i].id), fps.get(howtos[j].id)) >= 0.3) similarHowtos.push([howtos[i].id, howtos[j].id]);
+    }
+  }
+  const tooMany = howtos.length > HOWTO_LIMIT || beliefs.length > BELIEF_LIMIT;
+  return {
+    counts: { howtos: howtos.length, howtoLimit: HOWTO_LIMIT, beliefs: beliefs.length, beliefLimit: BELIEF_LIMIT },
+    ...tooMany ? { mustConsolidate: "Hay m\xE1s memoria de la que admite el l\xEDmite: fusiona o retira antes de escribir nada nuevo (write_howto y write_belief lo rechazar\xE1n)." } : {},
+    duplicateBeliefs: duplicates,
+    contradictedBeliefs: contradicted,
+    similarHowtos,
+    howtoIndex: howtos.map((h) => `#${h.id} [${h.scope}/${h.topic}] ${h.title} (${h.chars} car.)`)
+  };
+}
 function writeHowto(a) {
+  if (activeCount("howtos") >= HOWTO_LIMIT) {
+    throw new Error(`Ya hay ${HOWTO_LIMIT} howtos activos o m\xE1s: ampl\xEDa uno existente (update_howto) o fusiona y retira alguno antes de escribir otro.`);
+  }
   const fp = fingerprint(`${a.title} ${a.steps}`);
   const dup = duplicateOf("howtos", fp);
   if (dup) throw new Error(`Ya hay un howto casi igual (#${dup}). Actual\xEDzalo con update_howto en lugar de crear otro.`);
@@ -41099,9 +41180,14 @@ function validateCondition(cond, expectation) {
 var sameCondition = (cond) => cond ? db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ?").get(JSON.stringify(cond))?.id : void 0;
 function writeBelief(a) {
   validateCondition(a.condition, a.expectation);
+  if (activeCount("beliefs") >= BELIEF_LIMIT) {
+    throw new Error(`Ya hay ${BELIEF_LIMIT} creencias activas o m\xE1s: corrige una existente (revise_belief) o retira las duplicadas o contradichas antes de escribir otra.`);
+  }
   const fp = fingerprint(a.statement);
   const dup = duplicateOf("beliefs", fp) ?? sameCondition(a.condition);
   if (dup) throw new Error(`Ya hay una creencia casi igual o con la misma condici\xF3n (#${dup}). Corr\xEDgela con revise_belief en lugar de crear otra.`);
+  const twin = a.condition && a.expectation ? evidenceTwin(a.condition, a.expectation, closedPositions()) : void 0;
+  if (twin) throw new Error(`La creencia #${twin} ya cubre casi las mismas operaciones con la misma expectativa: dicen lo mismo seg\xFAn los datos. Corr\xEDgela con revise_belief en lugar de crear otra.`);
   const id = Number(
     db.prepare(
       `INSERT INTO beliefs (created_at, updated_at, source_mission_id, statement, applies_to, expectation, condition, fingerprint)
@@ -41266,6 +41352,7 @@ function reviewQueue() {
     pendingFinalReviews: pendingReviews(),
     activeMission,
     recentApproach: recentApproach(),
+    memoryHygiene: memoryHygiene(),
     pendingObservations: db.prepare("SELECT id, ts, mission_id, kind, text FROM observations WHERE status = 'pending' ORDER BY id").all(),
     errorsWithoutHowto: recurringErrors().filter((e) => !e.howtoId),
     beliefsWithoutCondition
@@ -41487,6 +41574,27 @@ async function estimateTokenLaunch(a) {
   };
 }
 
+// src/sim/guard.ts
+init_venues();
+async function checkBuyAgainstMemory(a) {
+  const chain = getChain(a.chain);
+  const out = await chain.resolveToken(a.output);
+  if (chain.isCash(out.address) || out.address === chain.native.address) return [];
+  const features = await chain.entryFeatures(out.address).catch(() => null);
+  if (!features) return [];
+  const blocking = blockingBeliefs(chain.id, features);
+  const overridden = new Map((a.overrides ?? []).map((o) => [o.id, o]));
+  const missing = blocking.filter((b) => !overridden.has(b.id));
+  if (missing.length) {
+    throw new Error(
+      `Tu memoria desaconseja esta compra de ${out.symbol}:
+` + missing.map((b) => `- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`).join("\n") + `
+Si aun as\xED quieres comprarlo, repite la operaci\xF3n con thesis.overrides = [${missing.map((b) => `{ id: ${b.id}, reason: "por qu\xE9 esta vez es distinto" }`).join(", ")}].`
+    );
+  }
+  return blocking.map((b) => overridden.get(b.id));
+}
+
 // src/tools/index.ts
 init_paths();
 
@@ -41546,13 +41654,17 @@ var thesis = external_exports.object({
   sources: external_exports.array(external_exports.string().min(1)).min(1).describe("Fuentes consultadas: URLs o APIs concretas"),
   exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (si es una venta: qu\xE9 har\xE1s despu\xE9s)"),
   beliefs_applied: external_exports.array(external_exports.number().int()).describe("Ids de las creencias de tu memoria que aplicas en esta operaci\xF3n (vac\xEDo si ninguna). El simulador medir\xE1 c\xF3mo le va a cada una"),
-  memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria aqu\xED (creencias, howtos, el briefing del revisor) o por qu\xE9 nada de ella aplica a esta situaci\xF3n")
+  memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria aqu\xED (creencias, howtos, el briefing del revisor) o por qu\xE9 nada de ella aplica a esta situaci\xF3n"),
+  overrides: external_exports.array(external_exports.object({ id: external_exports.number().int(), reason: external_exports.string().min(10) })).optional().describe(
+    "Solo si el simulador rechaz\xF3 la compra porque tu memoria la desaconseja: las creencias que decides ignorar a sabiendas, cada una con el motivo concreto por el que esta vez es distinto. La operaci\xF3n cuenta igual como evidencia de esas creencias."
+  )
 }).describe("Tesis de la operaci\xF3n. Queda en el diario y el usuario la ve en el panel.");
 var formatThesis = (t) => `Por qu\xE9: ${t.why}
 Pruebas: ${t.evidence}
 Fuentes: ${t.sources.join(" \xB7 ")}
 Plan: ${t.exit_plan}
-Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}`;
+Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` + (t.overrides?.length ? `
+Ignora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 var SIM_TOOLS = [
   tool({
@@ -41674,6 +41786,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
       return json2(
         await swap({
           missionId: mid(ctx),
@@ -41706,6 +41819,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (!isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
       return json2(
         await swap({
           missionId: mid(ctx),
@@ -41840,6 +41954,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === void 0) throw new Error("Indica amount o sell_all");
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
       return json2(
         await placeOrder({
           missionId: mid(ctx),
@@ -41954,9 +42069,15 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "memory",
     role: "trader",
     researchTarget: () => void 0,
-    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual. La escribe un agente revisor a partir de lo que pas\xF3 en tus misiones. Incluye: howtos (c\xF3mo se hace algo y qu\xE9 errores evitar), creencias sobre el mercado con su evidencia real (calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la pr\xF3xima vez, estad\xEDsticas de tus operaciones, los errores que se repiten y qu\xE9 APIs han respondido bien. Por defecto, un resumen con lo m\xE1s relevante (textos recortados); con detail: completo, todo sin recortar.",
-    schema: external_exports.object({ detail: external_exports.enum(["resumen", "completo"]).default("resumen") }),
-    run: async ({ detail }, ctx) => toText(detail === "completo" ? recall(ctx.missionId) : recallSummary(ctx.missionId))
+    description: "Tu memoria entre misiones, ordenada por parecido con la misi\xF3n actual. La escribe un agente revisor a partir de lo que pas\xF3 en tus misiones. Incluye: howtos (c\xF3mo se hace algo y qu\xE9 errores evitar), creencias sobre el mercado con su evidencia real (calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la pr\xF3xima vez, estad\xEDsticas de tus operaciones, los errores que se repiten y qu\xE9 APIs han respondido bien. Por defecto, un resumen: howtos por t\xEDtulo y las creencias m\xE1s relevantes. Con howto_ids, el texto de esos howtos; con detail: completo, todo (largo).",
+    schema: external_exports.object({
+      detail: external_exports.enum(["resumen", "completo"]).default("resumen"),
+      howto_ids: external_exports.array(external_exports.number().int()).optional().describe("Ids de los howtos cuyo texto completo quieres leer")
+    }),
+    run: async ({ detail, howto_ids }, ctx) => {
+      if (howto_ids?.length) return toText({ howtos: howtosById(howto_ids) });
+      return toText(detail === "completo" ? recall(ctx.missionId) : recallSummary(ctx.missionId));
+    }
   }),
   tool({
     name: "trade_history",
@@ -42017,9 +42138,14 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "memory_catalog",
     kind: "memory",
     role: "reviewer",
-    description: "La memoria completa tal como la ve el agente (howtos, creencias activas con su evidencia calculada, historial, estad\xEDsticas, errores repetidos, APIs), ordenada por parecido con la misi\xF3n indicada o la activa.",
-    schema: external_exports.object({ mission_id: external_exports.number().int().optional() }),
-    run: async ({ mission_id }, ctx) => toText(recall(mission_id ?? ctx.missionId))
+    description: "La memoria tal como la ve el agente, ordenada por parecido con la misi\xF3n indicada o la activa. Por defecto, compacta: howtos por t\xEDtulo y creencias recortadas con su evidencia calculada. Con howto_ids y belief_ids, el detalle de esos; con full: true, todo (largo).",
+    schema: external_exports.object({
+      mission_id: external_exports.number().int().optional(),
+      howto_ids: external_exports.array(external_exports.number().int()).optional(),
+      belief_ids: external_exports.array(external_exports.number().int()).optional(),
+      full: external_exports.boolean().default(false)
+    }),
+    run: async ({ mission_id, howto_ids, belief_ids, full }, ctx) => toText(memoryCatalog(mission_id ?? ctx.missionId, { howtoIds: howto_ids, beliefIds: belief_ids, full }))
   }),
   tool({
     name: "wait_for_activity",

@@ -53,6 +53,8 @@ Tu memoria:
 - Al empezar cada sesión recibes el briefing del revisor para esta misión y un resumen de tu memoria; `recall_memory` tiene el detalle completo y `trade_history`, cada operación. Si el revisor cambia el briefing a mitad de misión, te llega en tu siguiente acción.
 - En cada operación, la tesis indica qué creencias aplicas (`beliefs_applied`, por su id) y cómo usas tu memoria (`memory_note`), o por qué nada de ella aplica.
 - Las creencias son hipótesis: fíjate en su evidencia antes de fiarte de ellas. Si lo que ves las contradice, dilo en tu tesis.
+- Mira también las negativas, no solo las que te animan a entrar. Si una compra cumple una creencia negativa con evidencia fuerte, el simulador la rechaza y te dice cuál. Puedes hacerla igualmente añadiendo a la tesis `overrides` con el id y el motivo concreto por el que esta vez es distinto; hazlo solo si de verdad lo es.
+- El resumen de memoria trae los howtos por título: lee el texto de los que te sirvan con `recall_memory` y `howto_ids`.
 - Cuando descubras algo (cómo se hace algo, un error y cómo lo resolviste, un patrón del mercado), déjalo en ese momento con `report_observation`: el revisor decidirá si pasa a tu memoria.
 - Si para intentar algo necesitas una capacidad que no tienes (una cuenta en una red social o en otro exchange, un navegador con sesión iniciada, una API, un mercado que el simulador no permite…), anótala con `request_capability` explicando qué harías con ella. El usuario revisa esas peticiones. No intentes conseguirla por tu cuenta.
 

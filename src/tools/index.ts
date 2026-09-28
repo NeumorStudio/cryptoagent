@@ -11,6 +11,7 @@ import * as positions from "../sim/positions.js";
 import * as sim from "../sim/portfolio.js";
 import * as transfers from "../sim/transfers.js";
 import { estimateTokenLaunch } from "../sim/launch.js";
+import { checkBuyAgainstMemory } from "../sim/guard.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 import { toText } from "./format.js";
@@ -66,11 +67,19 @@ const thesis = z
       .string()
       .min(1)
       .describe("Cómo aplicas tu memoria aquí (creencias, howtos, el briefing del revisor) o por qué nada de ella aplica a esta situación"),
+    overrides: z
+      .array(z.object({ id: z.number().int(), reason: z.string().min(10) }))
+      .optional()
+      .describe(
+        "Solo si el simulador rechazó la compra porque tu memoria la desaconseja: las creencias que decides ignorar a sabiendas, " +
+          "cada una con el motivo concreto por el que esta vez es distinto. La operación cuenta igual como evidencia de esas creencias.",
+      ),
   })
   .describe("Tesis de la operación. Queda en el diario y el usuario la ve en el panel.");
 
 const formatThesis = (t: z.infer<typeof thesis>) =>
-  `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}\nMemoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}`;
+  `Por qué: ${t.why}\nPruebas: ${t.evidence}\nFuentes: ${t.sources.join(" · ")}\nPlan: ${t.exit_plan}\nMemoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` +
+  (t.overrides?.length ? `\nIgnora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 
 const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 
@@ -218,6 +227,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
       return json(
         await sim.swap({
           missionId: mid(ctx),
@@ -255,6 +265,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
       return json(
         await sim.swap({
           missionId: mid(ctx),
@@ -414,6 +425,7 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === undefined) throw new Error("Indica amount o sell_all");
+      await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides });
       return json(
         await orders.placeOrder({
           missionId: mid(ctx),
@@ -545,10 +557,16 @@ export const SIM_TOOLS = [
       "Tu memoria entre misiones, ordenada por parecido con la misión actual. La escribe un agente revisor a partir de lo que pasó " +
       "en tus misiones. Incluye: howtos (cómo se hace algo y qué errores evitar), creencias sobre el mercado con su evidencia real " +
       "(calculada por el simulador con tus operaciones), el historial de misiones con lo que conviene hacer la próxima vez, " +
-      "estadísticas de tus operaciones, los errores que se repiten y qué APIs han respondido bien. Por defecto, un resumen con lo más " +
-      "relevante (textos recortados); con detail: completo, todo sin recortar.",
-    schema: z.object({ detail: z.enum(["resumen", "completo"]).default("resumen") }),
-    run: async ({ detail }, ctx) => toText(detail === "completo" ? memory.recall(ctx.missionId) : memory.recallSummary(ctx.missionId)),
+      "estadísticas de tus operaciones, los errores que se repiten y qué APIs han respondido bien. Por defecto, un resumen: howtos por " +
+      "título y las creencias más relevantes. Con howto_ids, el texto de esos howtos; con detail: completo, todo (largo).",
+    schema: z.object({
+      detail: z.enum(["resumen", "completo"]).default("resumen"),
+      howto_ids: z.array(z.number().int()).optional().describe("Ids de los howtos cuyo texto completo quieres leer"),
+    }),
+    run: async ({ detail, howto_ids }, ctx) => {
+      if (howto_ids?.length) return toText({ howtos: memory.howtosById(howto_ids) });
+      return toText(detail === "completo" ? memory.recall(ctx.missionId) : memory.recallSummary(ctx.missionId));
+    },
   }),
   tool({
     name: "trade_history",
@@ -626,10 +644,16 @@ export const SIM_TOOLS = [
     kind: "memory",
     role: "reviewer",
     description:
-      "La memoria completa tal como la ve el agente (howtos, creencias activas con su evidencia calculada, historial, estadísticas, errores " +
-      "repetidos, APIs), ordenada por parecido con la misión indicada o la activa.",
-    schema: z.object({ mission_id: z.number().int().optional() }),
-    run: async ({ mission_id }, ctx) => toText(memory.recall(mission_id ?? ctx.missionId)),
+      "La memoria tal como la ve el agente, ordenada por parecido con la misión indicada o la activa. Por defecto, compacta: howtos por " +
+      "título y creencias recortadas con su evidencia calculada. Con howto_ids y belief_ids, el detalle de esos; con full: true, todo (largo).",
+    schema: z.object({
+      mission_id: z.number().int().optional(),
+      howto_ids: z.array(z.number().int()).optional(),
+      belief_ids: z.array(z.number().int()).optional(),
+      full: z.boolean().default(false),
+    }),
+    run: async ({ mission_id, howto_ids, belief_ids, full }, ctx) =>
+      toText(memory.memoryCatalog(mission_id ?? ctx.missionId, { howtoIds: howto_ids, beliefIds: belief_ids, full })),
   }),
   tool({
     name: "wait_for_activity",

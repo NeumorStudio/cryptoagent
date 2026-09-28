@@ -37375,7 +37375,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var CODE_VERSION = "0.14.3";
+var CODE_VERSION = "0.14.4";
 var semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
 var newer = (a, b) => {
   const [x, y] = [semver(a), semver(b)];
@@ -39692,7 +39692,8 @@ async function checkOne(mission) {
   await settleTransfers({ missionId: mission.id, force: true });
   const problems = await liquidateAll(mission.id, null, reason);
   const final = await valuation(mission.id, true);
-  if (reached && !expired && (final.totalUsd < mission.target_usd || problems.length)) {
+  const realizedUsd = final.holdings.filter((h) => h.valuedBy === "stable").reduce((s, h) => s + h.usd, 0);
+  if (reached && !expired && realizedUsd < mission.target_usd) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
     const summary2 = problems.length ? `Misi\xF3n #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misi\xF3n contin\xFAa y se reintentar\xE1.` : `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });

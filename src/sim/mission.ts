@@ -237,9 +237,11 @@ async function checkOne(mission: Mission): Promise<string[]> {
   const final = await valuation(mission.id, true);
 
   // El objetivo se detecta con el valor de liquidación estimado, pero lo que cuenta es lo
-  // realizado al vender. Si al cerrar se queda corto y aún hay tiempo, la misión continúa.
-  // Si alguna venta falló, el valor no está realizado: la misión sigue y se reintenta en la próxima revisión.
-  if (reached && !expired && (final.totalUsd < mission.target_usd || problems.length)) {
+  // realizado al vender: el efectivo en stablecoins. Si al cerrar se queda corto y aún hay tiempo,
+  // la misión continúa y se reintenta. Lo que no se pudo vender (p. ej. un token sin ruta de venta,
+  // que vale 0) no impide cerrarla si el efectivo ya llega al objetivo.
+  const realizedUsd = final.holdings.filter((h) => h.valuedBy === "stable").reduce((s, h) => s + h.usd, 0);
+  if (reached && !expired && realizedUsd < mission.target_usd) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
     const summary = problems.length
       ? `Misión #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misión continúa y se reintentará.`

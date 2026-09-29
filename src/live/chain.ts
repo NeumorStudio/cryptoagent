@@ -42,7 +42,8 @@ async function solanaHoldings(owner: string): Promise<Holding[]> {
   return holdings;
 }
 
-const pad32 = (addr: string) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+/** Dirección EVM como argumento de 32 bytes de una llamada a contrato. */
+export const pad32 = (addr: string) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
 
 /** Saldos EVM: el nativo, las stablecoins y los tokens que se indiquen (en EVM no se pueden listar todos). */
 async function evmHoldings(chain: EvmChainId, owner: string, extraTokens: Array<{ address: string; symbol: string; decimals: number }>): Promise<Holding[]> {

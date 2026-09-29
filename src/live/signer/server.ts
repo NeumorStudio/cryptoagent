@@ -56,6 +56,8 @@ interface PendingIntent extends Intent {
 interface Ticket extends Intent {
   id: string;
   expiresAt: number;
+  /** El approve previo a un swap o puente ya se firmó: un ticket da para uno solo. */
+  approveUsed?: boolean;
 }
 
 /** Cuánto espera una operación la aprobación del usuario. */
@@ -195,10 +197,16 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
   async function sign(body: Record<string, unknown>): Promise<SendResult> {
     const accounts = ready();
     const t = state.tickets.get(String(body.ticket ?? ""));
+    for (const [id, x] of state.tickets) if (x.expiresAt < Date.now()) state.tickets.delete(id); // los que no llegaron a usarse
     if (!t || t.expiresAt < Date.now()) throw new HttpError(403, "Operación no aprobada o aprobación caducada");
     const kind = body.kind === "approve" ? "approve" : body.kind === "bridge" ? "bridge" : "swap";
     if (body.chain !== t.chain) throw new HttpError(403, "La cadena no coincide con la operación aprobada");
-    if ((kind === "bridge") !== (t.side === "move")) throw new HttpError(403, "El tipo de operación no coincide con la aprobada");
+    // El approve previo vale tanto para un swap como para un puente de un token ERC-20.
+    if (kind !== "approve" && (kind === "bridge") !== (t.side === "move")) throw new HttpError(403, "El tipo de operación no coincide con la aprobada");
+    if (kind === "approve") {
+      if (t.approveUsed) throw new HttpError(403, "Esta operación ya tiene su approve firmado");
+      t.approveUsed = true;
+    }
     // La transacción se construye tras la aprobación, con un precio nuevo: se admite algo de margen.
     if (kind !== "approve" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operación es mayor que la aprobada");
     if (kind !== "approve") state.tickets.delete(t.id);

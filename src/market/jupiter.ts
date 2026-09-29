@@ -45,6 +45,8 @@ export async function getTokenInfo(mint: string): Promise<TokenInfo> {
 export interface JupiterQuote {
   inAmount: string;
   outAmount: string;
+  /** Mínimo que dará el swap en la cadena (outAmount menos el slippage). */
+  otherAmountThreshold?: string;
   priceImpactPct: string;
   slippageBps: number;
   routePlan: Array<{ percent: number; swapInfo: { label?: string; ammKey: string } }>;

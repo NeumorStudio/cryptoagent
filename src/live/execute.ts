@@ -7,12 +7,12 @@ import { EVM_CHAINS, NATIVE, rpcBatch, type EvmChainId } from "../market/evm.js"
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, fromBaseUnits, getQuote, toBaseUnits } from "../market/jupiter.js";
 import { getMission, isLive } from "../sim/mission.js";
-import { balance } from "../sim/portfolio.js";
+import { balance, LimitNotReached } from "../sim/portfolio.js";
 import { recordTrade } from "../sim/positions.js";
 import type { ChainId, TradeMeta } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
 import type { TokenRef } from "../sim/venues/types.js";
-import { solanaRpc } from "./chain.js";
+import { pad32, solanaRpc } from "./chain.js";
 import { requestIntent, signTx } from "./client.js";
 import { livePub, syncHoldings } from "./sync.js";
 
@@ -50,6 +50,18 @@ export interface LiveSwapArgs {
   slippageBps: number;
   reasoning: string;
   meta?: TradeMeta;
+  /**
+   * Toma de beneficio (orden condicional): mínimo que debe dar el swap. Si la cotización no llega, no se pide
+   * aprobación ni se firma (LimitNotReached), y el slippage se acota para que la cadena tampoco dé menos.
+   * En real se recibe lo que dé la cadena (≥ minOut): `fillAtLimit` solo tiene sentido en la simulación.
+   */
+  minOut?: number;
+}
+
+/** Slippage que no deja bajar de `minOut` partiendo de una cotización `out` (unidades base). */
+function slippageForMinOut(slippageBps: number, out: bigint, minOut: bigint): number {
+  if (out < minOut) return -1;
+  return Math.min(slippageBps, Math.floor(Number(((out - minOut) * 10_000n) / out)));
 }
 
 export async function liveSwap(args: LiveSwapArgs) {
@@ -81,6 +93,8 @@ export async function liveSwap(args: LiveSwapArgs) {
 
   // Cotización para describir la operación y medir su tamaño.
   const quote = await chain.quote({ input, output, amountIn: amount, slippageBps: args.slippageBps });
+  if (args.minOut !== undefined && quote.amountOut < args.minOut) throw new LimitNotReached(quote.amountOut, args.minOut);
+  const minOutBase = args.minOut !== undefined ? toBaseUnits(args.minOut, output.decimals) : undefined;
   let usd = chain.isCash(input.address) ? amount : chain.isCash(output.address) ? quote.amountOut : 0;
   if (!usd) {
     const prices = await chain.priceUsd([input.address, output.address]).catch(() => ({}) as Record<string, number>);
@@ -111,7 +125,13 @@ export async function liveSwap(args: LiveSwapArgs) {
   let res: { hash: string; ok: boolean; error?: string };
   let pre: Record<string, bigint> | null = null;
   if (chain.id === "solana") {
-    const q = await getQuote(input.address, output.address, amountIn, args.slippageBps, 0);
+    let q = await getQuote(input.address, output.address, amountIn, args.slippageBps, 0);
+    if (minOutBase !== undefined) {
+      const s = slippageForMinOut(args.slippageBps, BigInt(q.outAmount), minOutBase);
+      if (s < 0) throw new LimitNotReached(fromBaseUnits(BigInt(q.outAmount), output.decimals), args.minOut!);
+      if (s < args.slippageBps) q = await getQuote(input.address, output.address, amountIn, s, 0);
+      if (BigInt(q.otherAmountThreshold ?? "0") < minOutBase) throw new LimitNotReached(fromBaseUnits(BigInt(q.outAmount), output.decimals), args.minOut!);
+    }
     const built = await fetchJson<{ swapTransaction?: string; error?: string }>("https://lite-api.jup.ag/swap/v1/swap", {
       method: "POST",
       ttlMs: 0,
@@ -128,18 +148,24 @@ export async function liveSwap(args: LiveSwapArgs) {
   } else {
     const c = EVM_CHAINS[evmChain!];
     const headers = { "x-client-id": "cryptoagent" };
-    const route = await fetchJson<{ code: number; message?: string; data?: { routeSummary: unknown; routerAddress: string } }>(
+    const route = await fetchJson<{ code: number; message?: string; data?: { routeSummary: { amountOut?: string }; routerAddress: string } }>(
       `https://aggregator-api.kyberswap.com/${c.kyber}/api/v1/routes?tokenIn=${input.address}&tokenOut=${output.address}&amountIn=${amountIn}&gasInclude=true`,
       { headers, ttlMs: 0 },
     );
     if (route.code !== 0 || !route.data) throw new Error(`KyberSwap no encuentra ruta: ${route.message ?? route.code}`);
+    let slippageBps = args.slippageBps;
+    if (minOutBase !== undefined) {
+      const out = BigInt(route.data.routeSummary.amountOut ?? "0");
+      slippageBps = slippageForMinOut(args.slippageBps, out, minOutBase);
+      if (slippageBps < 0) throw new LimitNotReached(fromBaseUnits(out, output.decimals), args.minOut!);
+    }
     const built = await fetchJson<{ code: number; message?: string; data?: { data: string; routerAddress: string; transactionValue: string; amountIn: string } }>(
       `https://aggregator-api.kyberswap.com/${c.kyber}/api/v1/route/build`,
       {
         method: "POST",
         ttlMs: 0,
         headers,
-        body: { routeSummary: route.data.routeSummary, sender: pub.evm, recipient: pub.evm, slippageTolerance: args.slippageBps, enableGasEstimation: false },
+        body: { routeSummary: route.data.routeSummary, sender: pub.evm, recipient: pub.evm, slippageTolerance: slippageBps, enableGasEstimation: false },
       },
     );
     if (built.code !== 0 || !built.data) throw new Error(`KyberSwap no construyó la transacción: ${built.message ?? built.code}`);
@@ -226,8 +252,6 @@ export function solanaBudget(input: TokenRef, amountIn: bigint, extraLamports = 
 }
 
 // ─── Reconciliación ─────────────────────────────────────────────────────────
-
-const pad32 = (addr: string) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
 
 export async function rawTokenBalance(chain: ChainId, pub: { solana: string; evm: string }, token: TokenRef): Promise<bigint> {
   if (chain !== "solana") return (await evmBalancesAt(chain as EvmChainId, pub.evm, [token], "latest"))[token.address]!;

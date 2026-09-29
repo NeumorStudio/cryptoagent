@@ -8294,7 +8294,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.37.2";
+    CODE_VERSION = "0.37.3";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -10267,85 +10267,6 @@ var init_lifi = __esm({
   }
 });
 
-// src/live/paths.ts
-import path5 from "node:path";
-var liveDir, signerInfoFile;
-var init_paths2 = __esm({
-  "src/live/paths.ts"() {
-    "use strict";
-    init_config();
-    liveDir = () => path5.join(config2.dataDir, "live");
-    signerInfoFile = () => path5.join(liveDir(), "signer.json");
-  }
-});
-
-// src/live/client.ts
-import { spawn } from "node:child_process";
-import { existsSync as existsSync2, readFileSync } from "node:fs";
-function readInfo() {
-  try {
-    return existsSync2(signerInfoFile()) ? JSON.parse(readFileSync(signerInfoFile(), "utf8")) : null;
-  } catch {
-    return null;
-  }
-}
-async function api(info, path9, init = {}, timeoutMs = 5e3) {
-  const res = await fetch(`http://127.0.0.1:${info.port}${path9}`, {
-    ...init,
-    headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
-    signal: AbortSignal.timeout(timeoutMs)
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-  return body;
-}
-async function signerStatus() {
-  const info = readInfo();
-  if (!info) return null;
-  try {
-    return { info, status: await api(info, "/api/status") };
-  } catch {
-    return null;
-  }
-}
-async function runningSigner() {
-  const s = await signerStatus();
-  if (!s) throw new Error("El firmante de la cartera no est\xE1 en marcha: pide al usuario que la abra y desbloquee con /cryptoagent:cartera");
-  return s.info;
-}
-async function requestIntent(intent) {
-  const info = await runningSigner();
-  const r = await api(info, "/api/intent", { method: "POST", body: JSON.stringify(intent) }, 1e5);
-  return r.ticket;
-}
-async function signTx(body) {
-  const info = await runningSigner();
-  return api(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 18e4);
-}
-async function ensureSigner() {
-  const running2 = await signerStatus();
-  if (running2) return { ...running2, started: false };
-  const entry = asset("signer.mjs", "src/live/signer/main.ts");
-  const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
-  const child2 = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
-  child2.unref();
-  for (let i = 0; i < 50; i++) {
-    await new Promise((r) => setTimeout(r, 200));
-    const s = await signerStatus();
-    if (s && s.status.pid === child2.pid) return { ...s, started: true };
-  }
-  throw new Error("El firmante no ha arrancado");
-}
-var walletUrl;
-var init_client = __esm({
-  "src/live/client.ts"() {
-    "use strict";
-    init_paths();
-    init_paths2();
-    walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
-  }
-});
-
 // src/live/chain.ts
 async function solanaRpc(method, params, ttlMs = 5e3) {
   const res = await fetchJson(solanaRpcUrl(), {
@@ -10432,6 +10353,85 @@ var init_chain = __esm({
     solanaRpcUrl = () => process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
     TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
     pad32 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  }
+});
+
+// src/live/paths.ts
+import path5 from "node:path";
+var liveDir, signerInfoFile;
+var init_paths2 = __esm({
+  "src/live/paths.ts"() {
+    "use strict";
+    init_config();
+    liveDir = () => path5.join(config2.dataDir, "live");
+    signerInfoFile = () => path5.join(liveDir(), "signer.json");
+  }
+});
+
+// src/live/client.ts
+import { spawn } from "node:child_process";
+import { existsSync as existsSync2, readFileSync } from "node:fs";
+function readInfo() {
+  try {
+    return existsSync2(signerInfoFile()) ? JSON.parse(readFileSync(signerInfoFile(), "utf8")) : null;
+  } catch {
+    return null;
+  }
+}
+async function api(info, path9, init = {}, timeoutMs = 5e3) {
+  const res = await fetch(`http://127.0.0.1:${info.port}${path9}`, {
+    ...init,
+    headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body;
+}
+async function signerStatus() {
+  const info = readInfo();
+  if (!info) return null;
+  try {
+    return { info, status: await api(info, "/api/status") };
+  } catch {
+    return null;
+  }
+}
+async function runningSigner() {
+  const s = await signerStatus();
+  if (!s) throw new Error("El firmante de la cartera no est\xE1 en marcha: pide al usuario que la abra y desbloquee con /cryptoagent:cartera");
+  return s.info;
+}
+async function requestIntent(intent) {
+  const info = await runningSigner();
+  const r = await api(info, "/api/intent", { method: "POST", body: JSON.stringify(intent) }, 1e5);
+  return r.ticket;
+}
+async function signTx(body) {
+  const info = await runningSigner();
+  return api(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 18e4);
+}
+async function ensureSigner() {
+  const running2 = await signerStatus();
+  if (running2) return { ...running2, started: false };
+  const entry = asset("signer.mjs", "src/live/signer/main.ts");
+  const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
+  const child2 = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
+  child2.unref();
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    const s = await signerStatus();
+    if (s && s.status.pid === child2.pid) return { ...s, started: true };
+  }
+  throw new Error("El firmante no ha arrancado");
+}
+var walletUrl;
+var init_client = __esm({
+  "src/live/client.ts"() {
+    "use strict";
+    init_paths();
+    init_paths2();
+    walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
   }
 });
 
@@ -10558,7 +10558,7 @@ async function liveBridge(a) {
     if (!isNativeIn) {
       const spender = q.approvalAddress ?? q.transactionRequest.to;
       if (await erc20Allowance(src.id, tin.address, pub.evm, spender) < amountIn) {
-        const data = `0x095ea7b3${spender.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${amountIn.toString(16).padStart(64, "0")}`;
+        const data = `0x095ea7b3${pad32(spender)}${amountIn.toString(16).padStart(64, "0")}`;
         const ap = await signTx({ ticket, chain: src.id, kind: "approve", usd: usd2, evmTx: { chainId: c.chainId, to: tin.address, data, value: "0" } });
         logLiveTx(m, src.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${a.amount} ${tin.symbol} a Li.Fi`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve fall\xF3 (${explorerTx(src.id, ap.hash)}): ${ap.error}`);
@@ -10671,6 +10671,7 @@ var init_bridge = __esm({
     init_mission();
     init_portfolio();
     init_venues();
+    init_chain();
     init_client();
     init_execute();
     init_sync();
@@ -11343,6 +11344,10 @@ function logLiveTx(missionId, chain, kind, status, summary, extra = {}) {
     extra.error ?? null
   );
 }
+function slippageForMinOut(slippageBps, out, minOut) {
+  if (out < minOut) return -1;
+  return Math.min(slippageBps, Math.floor(Number((out - minOut) * 10000n / out)));
+}
 async function liveSwap(args) {
   const mission = getMission(args.missionId);
   if (!isLive(mission)) throw new Error("liveSwap solo sirve para misiones reales");
@@ -11368,6 +11373,8 @@ async function liveSwap(args) {
     throw new Error(`No tienes ${chain.native.symbol} suficiente para pagar la red en ${chain.label} (tienes ${nativeLeft.toPrecision(3)}).`);
   }
   const quote2 = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps: args.slippageBps });
+  if (args.minOut !== void 0 && quote2.amountOut < args.minOut) throw new LimitNotReached(quote2.amountOut, args.minOut);
+  const minOutBase = args.minOut !== void 0 ? toBaseUnits(args.minOut, output2.decimals) : void 0;
   let usd2 = chain.isCash(input2.address) ? amount : chain.isCash(output2.address) ? quote2.amountOut : 0;
   if (!usd2) {
     const prices = await chain.priceUsd([input2.address, output2.address]).catch(() => ({}));
@@ -11388,7 +11395,13 @@ async function liveSwap(args) {
   let res;
   let pre = null;
   if (chain.id === "solana") {
-    const q = await getQuote(input2.address, output2.address, amountIn, args.slippageBps, 0);
+    let q = await getQuote(input2.address, output2.address, amountIn, args.slippageBps, 0);
+    if (minOutBase !== void 0) {
+      const s = slippageForMinOut(args.slippageBps, BigInt(q.outAmount), minOutBase);
+      if (s < 0) throw new LimitNotReached(fromBaseUnits(BigInt(q.outAmount), output2.decimals), args.minOut);
+      if (s < args.slippageBps) q = await getQuote(input2.address, output2.address, amountIn, s, 0);
+      if (BigInt(q.otherAmountThreshold ?? "0") < minOutBase) throw new LimitNotReached(fromBaseUnits(BigInt(q.outAmount), output2.decimals), args.minOut);
+    }
     const built = await fetchJson("https://lite-api.jup.ag/swap/v1/swap", {
       method: "POST",
       ttlMs: 0,
@@ -11410,13 +11423,19 @@ async function liveSwap(args) {
       { headers, ttlMs: 0 }
     );
     if (route.code !== 0 || !route.data) throw new Error(`KyberSwap no encuentra ruta: ${route.message ?? route.code}`);
+    let slippageBps = args.slippageBps;
+    if (minOutBase !== void 0) {
+      const out = BigInt(route.data.routeSummary.amountOut ?? "0");
+      slippageBps = slippageForMinOut(args.slippageBps, out, minOutBase);
+      if (slippageBps < 0) throw new LimitNotReached(fromBaseUnits(out, output2.decimals), args.minOut);
+    }
     const built = await fetchJson(
       `https://aggregator-api.kyberswap.com/${c.kyber}/api/v1/route/build`,
       {
         method: "POST",
         ttlMs: 0,
         headers,
-        body: { routeSummary: route.data.routeSummary, sender: pub.evm, recipient: pub.evm, slippageTolerance: args.slippageBps, enableGasEstimation: false }
+        body: { routeSummary: route.data.routeSummary, sender: pub.evm, recipient: pub.evm, slippageTolerance: slippageBps, enableGasEstimation: false }
       }
     );
     if (built.code !== 0 || !built.data) throw new Error(`KyberSwap no construy\xF3 la transacci\xF3n: ${built.message ?? built.code}`);
@@ -11424,7 +11443,7 @@ async function liveSwap(args) {
     if (!isNativeIn) {
       const allowance = await erc20Allowance(evmChain, input2.address, pub.evm, router);
       if (allowance < amountIn) {
-        const data = `0x095ea7b3${pad322(router)}${amountIn.toString(16).padStart(64, "0")}`;
+        const data = `0x095ea7b3${pad32(router)}${amountIn.toString(16).padStart(64, "0")}`;
         const ap = await signTx({ ticket, chain: chain.id, kind: "approve", usd: usd2, evmTx: { chainId: c.chainId, to: input2.address, data, value: "0" } });
         logLiveTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input2.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve fall\xF3 (${explorerTx(chain.id, ap.hash)}): ${ap.error}`);
@@ -11502,12 +11521,12 @@ async function rawTokenBalance(chain, pub, token2) {
   return value.reduce((s, a) => s + BigInt(a.account.data.parsed.info.tokenAmount.amount), 0n);
 }
 async function erc20Allowance(chain, token2, owner, spender) {
-  const [hex3] = await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token2, data: `0xdd62ed3e${pad322(owner)}${pad322(spender)}` }, "latest"] }]);
+  const [hex3] = await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token2, data: `0xdd62ed3e${pad32(owner)}${pad32(spender)}` }, "latest"] }]);
   return hex3 && hex3 !== "0x" ? BigInt(hex3) : 0n;
 }
 async function evmBalancesAt(chain, owner, tokens, block) {
   const calls = tokens.map(
-    (t) => t.address === NATIVE ? { method: "eth_getBalance", params: [owner, block] } : { method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad322(owner)}` }, block] }
+    (t) => t.address === NATIVE ? { method: "eth_getBalance", params: [owner, block] } : { method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, block] }
   );
   const out = await rpcBatch(chain, calls);
   return Object.fromEntries(tokens.map((t, i) => [t.address, out[i] && out[i] !== "0x" ? BigInt(out[i]) : 0n]));
@@ -11542,7 +11561,7 @@ async function reconcile(chain, hash2, pub, input2, output2, pre) {
   };
   return { sold: -delta(input2), received: delta(output2), networkFee: `${fromBaseUnits(gas, 18)} ${getChain(chain).native.symbol}` };
 }
-var NATIVE_RESERVE, SOLANA_MAX_PRIORITY_LAMPORTS, explorerTx, SOLANA_FEE_ALLOWANCE, pad322;
+var NATIVE_RESERVE, SOLANA_MAX_PRIORITY_LAMPORTS, explorerTx, SOLANA_FEE_ALLOWANCE;
 var init_execute = __esm({
   "src/live/execute.ts"() {
     "use strict";
@@ -11561,7 +11580,6 @@ var init_execute = __esm({
     SOLANA_MAX_PRIORITY_LAMPORTS = 1e6;
     explorerTx = (chain, hash2) => chain === "solana" ? `https://solscan.io/tx/${hash2}` : chain === "base" ? `https://basescan.org/tx/${hash2}` : `https://bscscan.com/tx/${hash2}`;
     SOLANA_FEE_ALLOWANCE = 10000000n;
-    pad322 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
   }
 });
 

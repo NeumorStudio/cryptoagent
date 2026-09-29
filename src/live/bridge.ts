@@ -11,6 +11,7 @@ import { balance } from "../sim/portfolio.js";
 import type { ChainId } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
 import type { ChainAdapter, TokenRef } from "../sim/venues/types.js";
+import { pad32 } from "./chain.js";
 import { requestIntent, signTx } from "./client.js";
 import { erc20Allowance, explorerTx, logLiveTx, NATIVE_RESERVE, rawTokenBalance, solanaBudget } from "./execute.js";
 import { livePub, syncHoldings } from "./sync.js";
@@ -97,7 +98,7 @@ export async function liveBridge(a: {
     if (!isNativeIn) {
       const spender = q.approvalAddress ?? q.transactionRequest.to!;
       if ((await erc20Allowance(src.id as EvmChainId, tin.address, pub.evm, spender)) < amountIn) {
-        const data = `0x095ea7b3${spender.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${amountIn.toString(16).padStart(64, "0")}`;
+        const data = `0x095ea7b3${pad32(spender)}${amountIn.toString(16).padStart(64, "0")}`;
         const ap = await signTx({ ticket, chain: src.id, kind: "approve", usd, evmTx: { chainId: c.chainId, to: tin.address, data, value: "0" } });
         logLiveTx(m, src.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${a.amount} ${tin.symbol} a Li.Fi`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve falló (${explorerTx(src.id, ap.hash)}): ${ap.error}`);

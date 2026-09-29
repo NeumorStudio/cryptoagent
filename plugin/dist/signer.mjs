@@ -7877,7 +7877,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.37.2";
+    CODE_VERSION = "0.37.3";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -63553,10 +63553,15 @@ function createSignerServer(opts) {
   async function sign2(body) {
     const accounts = ready();
     const t = state.tickets.get(String(body.ticket ?? ""));
+    for (const [id, x] of state.tickets) if (x.expiresAt < Date.now()) state.tickets.delete(id);
     if (!t || t.expiresAt < Date.now()) throw new HttpError(403, "Operaci\xF3n no aprobada o aprobaci\xF3n caducada");
     const kind = body.kind === "approve" ? "approve" : body.kind === "bridge" ? "bridge" : "swap";
     if (body.chain !== t.chain) throw new HttpError(403, "La cadena no coincide con la operaci\xF3n aprobada");
-    if (kind === "bridge" !== (t.side === "move")) throw new HttpError(403, "El tipo de operaci\xF3n no coincide con la aprobada");
+    if (kind !== "approve" && kind === "bridge" !== (t.side === "move")) throw new HttpError(403, "El tipo de operaci\xF3n no coincide con la aprobada");
+    if (kind === "approve") {
+      if (t.approveUsed) throw new HttpError(403, "Esta operaci\xF3n ya tiene su approve firmado");
+      t.approveUsed = true;
+    }
     if (kind !== "approve" && Number(body.usd) > t.usd * 1.2 + 1) throw new HttpError(403, "La operaci\xF3n es mayor que la aprobada");
     if (kind !== "approve") state.tickets.delete(t.id);
     try {

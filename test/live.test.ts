@@ -200,6 +200,12 @@ test("modo autónomo: dentro de los límites da ticket; fuera, no; el ticket de 
   const buy = await api("/api/intent", { missionId: m.id, chain: "solana", side: "buy", usd: 10, summary: "comprar" });
   assert.equal((await api("/api/sign", { ticket: buy.body.ticket, chain: "solana", kind: "bridge", usd: 10, solanaTx: "AA" })).status, 403);
   assert.equal((await api("/api/sign", { ticket: move.body.ticket, chain: "solana", kind: "bridge", usd: 50, solanaTx: "AA", budget: { lamports: "1", tokens: {} } })).status, 200);
+  // Un puente de USDC en EVM necesita su approve con el mismo ticket; y un solo approve por ticket.
+  const evmMove = await api("/api/intent", { missionId: m.id, chain: "base", side: "move", usd: 20, summary: "puente de USDC" });
+  assert.equal(evmMove.status, 200);
+  assert.equal((await api("/api/sign", { ticket: evmMove.body.ticket, chain: "base", kind: "approve", usd: 20, evmTx: {} })).status, 200);
+  assert.equal((await api("/api/sign", { ticket: evmMove.body.ticket, chain: "base", kind: "approve", usd: 20, evmTx: {} })).status, 403, "un segundo approve");
+  assert.equal((await api("/api/sign", { ticket: evmMove.body.ticket, chain: "base", kind: "bridge", usd: 20, evmTx: {}, evmLimits: { maxValue: "0" } })).status, 200);
 });
 
 test("modo manual: la operación espera a que el usuario la apruebe o la rechace en su página", async () => {

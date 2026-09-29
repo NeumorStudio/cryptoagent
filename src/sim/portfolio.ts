@@ -126,15 +126,24 @@ export function resetPortfolio(missionId: number, holdings: Holding[]) {
  * (conservando el nativo justo para pagar la red) y en Binance, los activos → USDC/USDT.
  * Devuelve lo que no se pudo vender.
  */
-export async function liquidateAll(missionId: number, sessionId: number | null, reasoning: string): Promise<string[]> {
+/**
+ * Vende todo a estables. Con `nativeOnly`, solo el nativo que quede (segundo paso de un cierre por objetivo);
+ * con `keepNative`, todo menos el nativo (primer paso: si al final no se cierra, sigue habiendo gas).
+ */
+export async function liquidateAll(
+  missionId: number,
+  sessionId: number | null,
+  reasoning: string,
+  opts: { keepNative?: boolean; nativeOnly?: boolean } = {},
+): Promise<string[]> {
   // Primero los futuros: su margen vuelve como efectivo a su cadena.
   const { closeAllPerps } = await import("./perps.js");
-  const problems: string[] = await closeAllPerps(missionId, reasoning);
+  const problems: string[] = opts.nativeOnly ? [] : await closeAllPerps(missionId, reasoning);
   const holdings = getHoldings(missionId);
   const meta = { exitReason: reasoning };
 
   for (const chain of allChains()) {
-    const tokens = holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
+    const tokens = opts.nativeOnly ? [] : holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
     for (const h of tokens) {
       await swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning, meta }).catch(
         (err) => problems.push(`${h.symbol} (${chain.label}): ${(err as Error).message}`),
@@ -143,7 +152,7 @@ export async function liquidateAll(missionId: number, sessionId: number | null, 
     // El nativo se vende al final, dejando lo necesario para la fee de esa última transacción.
     // Con dinero real no se vende: hace falta para pagar la red en las siguientes misiones.
     const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
-    if (nativeLeft > 0.000001 && !isLiveMission(missionId)) {
+    if (nativeLeft > 0.000001 && !isLiveMission(missionId) && !opts.keepNative) {
       const amount = Number(nativeLeft.toFixed(chain.native.decimals));
       await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning, meta }).catch(
         (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${(err as Error).message}`),
@@ -151,7 +160,7 @@ export async function liquidateAll(missionId: number, sessionId: number | null, 
     }
   }
 
-  for (const h of holdings.filter((h) => h.venue === "binance" && !binance.isCash(h.asset))) {
+  for (const h of holdings.filter((h) => !opts.nativeOnly && h.venue === "binance" && !binance.isCash(h.asset))) {
     let sold = false;
     for (const quote of ["USDC", "USDT"]) {
       const symbol = `${h.asset}${quote}`;

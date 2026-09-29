@@ -8271,7 +8271,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.35.0";
+    CODE_VERSION = "0.35.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -11189,11 +11189,17 @@ async function checkOne(mission) {
   const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : bust ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} se ha quedado sin fondos para operar (${value.toFixed(2)} USD)` : lossHit ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} ha llegado a la p\xE9rdida m\xE1xima (${value.toFixed(2)} < ${floor.toFixed(2)} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
-  const problems = await liquidateAll(mission.id, null, reason);
-  const final = await valuation(mission.id, true);
+  const keepNative = reached && !expired && !isLive(mission);
+  const problems = await liquidateAll(mission.id, null, reason, { keepNative });
+  let final = await valuation(mission.id, true);
   const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
-  const realizedUsd = final.holdings.filter((h) => h.valuedBy === "stable" || isLive(mission) && natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
-  if (reached && !expired && realizedUsd < mission.target_usd) {
+  const realizedUsd = final.holdings.filter((h) => h.valuedBy === "stable" || (isLive(mission) || keepNative) && natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
+  const closes = !(reached && !expired && realizedUsd < mission.target_usd);
+  if (keepNative && closes) {
+    problems.push(...await liquidateAll(mission.id, null, reason, { nativeOnly: true }));
+    final = await valuation(mission.id, true);
+  }
+  if (!closes) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
     const summary2 = problems.length ? `Misi\xF3n #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misi\xF3n contin\xFAa y se reintentar\xE1.` : `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });
@@ -11566,27 +11572,27 @@ function resetPortfolio(missionId, holdings) {
     for (const h of holdings) adjust(missionId, h.venue, h.asset, h.symbol, h.decimals, h.amount);
   });
 }
-async function liquidateAll(missionId, sessionId, reasoning2) {
+async function liquidateAll(missionId, sessionId, reasoning2, opts = {}) {
   const { closeAllPerps: closeAllPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
-  const problems = await closeAllPerps2(missionId, reasoning2);
+  const problems = opts.nativeOnly ? [] : await closeAllPerps2(missionId, reasoning2);
   const holdings = getHoldings(missionId);
   const meta3 = { exitReason: reasoning2 };
   for (const chain of allChains()) {
-    const tokens = holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
+    const tokens = opts.nativeOnly ? [] : holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
     for (const h of tokens) {
       await swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning: reasoning2, meta: meta3 }).catch(
         (err) => problems.push(`${h.symbol} (${chain.label}): ${err.message}`)
       );
     }
     const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
-    if (nativeLeft > 1e-6 && !isLiveMission(missionId)) {
+    if (nativeLeft > 1e-6 && !isLiveMission(missionId) && !opts.keepNative) {
       const amount = Number(nativeLeft.toFixed(chain.native.decimals));
       await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning: reasoning2, meta: meta3 }).catch(
         (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${err.message}`)
       );
     }
   }
-  for (const h of holdings.filter((h2) => h2.venue === "binance" && !binance.isCash(h2.asset))) {
+  for (const h of holdings.filter((h2) => !opts.nativeOnly && h2.venue === "binance" && !binance.isCash(h2.asset))) {
     let sold = false;
     for (const quote2 of ["USDC", "USDT"]) {
       const symbol2 = `${h.asset}${quote2}`;

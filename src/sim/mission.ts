@@ -387,8 +387,11 @@ async function checkOne(mission: Mission): Promise<string[]> {
         : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
-  const problems = await liquidateAll(mission.id, null, reason);
-  const final = await valuation(mission.id, true);
+  // Con el objetivo tocado, el nativo se vende solo si al final se cierra: si lo realizado se queda corto y la
+  // misión sigue, sin él no habría gas para volver a operar (en la M1 de la v0.35 se quedó sin SOL así).
+  const keepNative = reached && !expired && !isLive(mission);
+  const problems = await liquidateAll(mission.id, null, reason, { keepNative });
+  let final = await valuation(mission.id, true);
 
   // El objetivo se detecta con el valor de liquidación estimado, pero lo que cuenta es lo
   // realizado al vender: el efectivo en stablecoins. Si al cerrar se queda corto y aún hay tiempo,
@@ -397,9 +400,14 @@ async function checkOne(mission: Mission): Promise<string[]> {
   // En una misión real, el nativo no se vende (paga la red de las siguientes): cuenta como realizado.
   const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
   const realizedUsd = final.holdings
-    .filter((h) => h.valuedBy === "stable" || (isLive(mission) && natives.has(`${h.venue}:${h.asset}`)))
+    .filter((h) => h.valuedBy === "stable" || ((isLive(mission) || keepNative) && natives.has(`${h.venue}:${h.asset}`)))
     .reduce((s, h) => s + h.usd, 0);
-  if (reached && !expired && realizedUsd < mission.target_usd) {
+  const closes = !(reached && !expired && realizedUsd < mission.target_usd);
+  if (keepNative && closes) {
+    problems.push(...(await liquidateAll(mission.id, null, reason, { nativeOnly: true })));
+    final = await valuation(mission.id, true);
+  }
+  if (!closes) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
     const summary = problems.length
       ? `Misión #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misión continúa y se reintentará.`

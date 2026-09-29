@@ -928,7 +928,10 @@ export function recentApproach(count = 8) {
         .get(m.id, new Date(new Date(lastTrade).getTime() + 10_000).toISOString(), lastTrade);
     return {
       missionId: m.id,
-      idleAtEndMinutes,
+      // Minutos desde su última operación hasta el final, y si en ese tiempo tenía una posición abierta: esperar
+      // con una posición no es quedarse parado (el revisor leía el antiguo "idleAtEndMinutes" como efectivo).
+      minutesSinceLastTradeAtEnd: idleAtEndMinutes,
+      holdingAtEnd: holding,
       parkedAtEnd: !holding && idleAtEndMinutes >= Math.max(3, durationMin * 0.25),
       succeeded: m.status === "succeeded",
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),

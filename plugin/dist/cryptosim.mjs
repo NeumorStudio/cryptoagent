@@ -8279,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.36.0";
+    CODE_VERSION = "0.36.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42405,7 +42405,10 @@ function recentApproach(count = 8) {
     const holding = !!lastTrade && !!db.prepare("SELECT 1 FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at <= ? AND (closed_at IS NULL OR closed_at > ?) LIMIT 1").get(m.id, new Date(new Date(lastTrade).getTime() + 1e4).toISOString(), lastTrade);
     return {
       missionId: m.id,
-      idleAtEndMinutes,
+      // Minutos desde su última operación hasta el final, y si en ese tiempo tenía una posición abierta: esperar
+      // con una posición no es quedarse parado (el revisor leía el antiguo "idleAtEndMinutes" como efectivo).
+      minutesSinceLastTradeAtEnd: idleAtEndMinutes,
+      holdingAtEnd: holding,
       parkedAtEnd: !holding && idleAtEndMinutes >= Math.max(3, durationMin * 0.25),
       succeeded: m.status === "succeeded",
       resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),

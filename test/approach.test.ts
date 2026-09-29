@@ -22,7 +22,7 @@ test("una compra al final que sigue abierta hasta el cierre no es quedarse parad
   ).run(m.id, iso(buyAt + 5), iso(t0 + 15 * 60_000));
   db.prepare("UPDATE missions SET status = 'expired', final_usd = 27, ended_at = ? WHERE id = ?").run(iso(t0 + 15 * 60_000), m.id);
   const row = memory.recentApproach()!.perMission.find((x) => x.missionId === m.id)!;
-  assert.equal(row.idleAtEndMinutes, 11);
+  assert.equal(row.minutesSinceLastTradeAtEnd, 11);
   assert.equal(row.parkedAtEnd, false);
 });
 
@@ -39,7 +39,7 @@ test("abrir un futuro también es operar: no cuenta como quedarse parado al fina
   ).run(m.id, iso(t0 + 8 * 60_000 + 5), iso(t0 + 15 * 60_000));
   db.prepare("UPDATE missions SET status = 'expired', final_usd = 43, ended_at = ? WHERE id = ?").run(iso(t0 + 15 * 60_000), m.id);
   const row = memory.recentApproach()!.perMission.find((x) => x.missionId === m.id)!;
-  assert.equal(row.idleAtEndMinutes, 7);
+  assert.equal(row.minutesSinceLastTradeAtEnd, 7);
   assert.equal(row.parkedAtEnd, false);
 });
 

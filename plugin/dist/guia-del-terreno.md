@@ -159,8 +159,9 @@ Solo datos, sin veredicto: qué significan para tus resultados lo decides tú co
 
 - **Creador.** `creatorTokens` (tokens que ha lanzado) y `creatorGraduated` (cuántos se graduaron), de Jupiter en Solana; en EVM, GoPlus da el creador, lo que conserva (`devHoldingPct`) y sus otros honeypots (`creatorHoneypots`). `creatorTradesWithYou` y `creatorWorstPnlWithYouPct`: cuántos tokens suyos has operado tú y el peor resultado que te dieron.
 - **Token.** `insidersDetected` y `lpLockedPct` (RugCheck), `honeypot` e impuestos (GoPlus), `mcapToLiquidity` y `launchpad`. En BNB Chain el launchpad sale de la dirección: …7777 = Flap.sh, …4444 o …ffff = four.meme, también en tus operaciones antiguas.
+- **Volumen según cada fuente.** `token_report` trae `volumeCheck`: el volumen de 1 h según Jupiter, el de todos los pares de DexScreener y su cociente (`volume1hJupiterVsDexRatio`, también en los datos de cada posición).
 - **Entre lecturas.** Si lees un token dos veces, `riskCheck.sinceLastRead` dice cuánto cambiaron la liquidez, el precio y los compradores. Al comprar se guardan `readsBeforeBuy`, `minutesBetweenReads`, `liquidityTrendPct` y `netBuyersTrend`.
-- **Condiciones para tus creencias.** Todos se pueden usar: `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
+- **Condiciones para tus creencias.** Todos se pueden usar: `volume1hJupiterVsDexRatio`, `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
 
 ## 6. Futuros perpetuos (simulados con datos de Hyperliquid)
 
@@ -169,6 +170,6 @@ Solo datos, sin veredicto: qué significan para tus resultados lo decides tú co
 - **De dónde sale el margen.** Del efectivo (USDC/USDT) de una de tus cadenas, y al cerrar vuelve a ella.
 - **Costes.** Depósito 0,3 $; comisión del 0,045 % del nocional al abrir y al cerrar; funding cada hora (si es positivo, los largos pagan a los cortos); retirada 1 $.
 - **Liquidación.** Si el capital de la posición (margen + resultado − funding) baja del mantenimiento (la mitad del margen inicial al apalancamiento máximo), pierdes el margen. Con SOL (máximo 20x): a 10x, un ~7,5 % en contra; a 20x, solo un ~2,5 %. La respuesta de `open_perp` da el precio de liquidación.
-- **Take profit y stop loss.** Son opcionales y se vigilan solos.
+- **Take profit y stop loss.** Son opcionales y se vigilan solos. Se pueden fijar al abrir o después con `set_perp_exits` (con el precio de entrada real; 0 quita la salida).
 - **Lo que no se simula:** el slippage exacto en momentos de mucha volatilidad ni las cascadas de liquidaciones. En misiones reales no están disponibles.
 - **Cuándo encaja.** `strategy_fit` calcula, para tu objetivo y el tiempo que queda, la probabilidad de llegar con cada apalancamiento y el riesgo de liquidación, con la volatilidad real de ahora.

@@ -54,6 +54,8 @@ export interface Features {
   /** Subida del par principal (DexScreener), sin la curva anterior a la graduación. */
   pairPriceChange5mPct?: number;
   pairPriceChange1hPct?: number;
+  /** Volumen de 1 h según Jupiter dividido entre el de todos los pares de DexScreener. */
+  volume1hJupiterVsDexRatio?: number;
   priceChange24hPct?: number;
   /** Volumen de compras y de ventas en USD en los últimos 5 min, y su cociente (compras / ventas). */
   buyVolume5mUsd?: number;

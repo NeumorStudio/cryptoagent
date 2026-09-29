@@ -108,6 +108,12 @@ async function entryFeatures(mint: string): Promise<Features> {
     priceChange1hPct: round(t?.stats1h?.priceChange),
     priceChange24hPct: round(t?.stats24h?.priceChange),
     pairPriceChange5mPct: round(pair?.priceChange?.m5),
+    // Volumen de 1 h según Jupiter frente al de todos los pares de DexScreener (ver volumeJupiterVsDex).
+    volume1hJupiterVsDexRatio: (() => {
+      const jupVol = Number(t?.stats1h?.buyVolume ?? 0) + Number(t?.stats1h?.sellVolume ?? 0);
+      const dexVol = dex.status === "fulfilled" ? (dex.value.pairs ?? []).reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0) : 0;
+      return jupVol > 0 && dexVol > 0 ? round(jupVol / dexVol, 1) : undefined;
+    })(),
     pairPriceChange1hPct: round(pair?.priceChange?.h1),
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),

@@ -808,6 +808,24 @@ export const SIM_TOOLS = [
     },
   }),
   tool({
+    name: "set_perp_exits",
+    kind: "trade",
+    journaled: true,
+    description:
+      "Pone, cambia o quita la toma de beneficio y el stop de un futuro ya abierto (id en portfolio → perps). Así puedes calcularlos " +
+      "con el precio de entrada real que te devolvió open_perp. Un precio fija la salida; 0 la quita; si no pasas uno, se queda como estaba.",
+    schema: z.object({
+      perp_id: z.number().int(),
+      take_profit: z.number().min(0).optional(),
+      stop_loss: z.number().min(0).optional(),
+      reasoning: z.string().min(1),
+    }),
+    run: async (i, ctx) => {
+      const { setPerpExits } = await import("../sim/perps.js");
+      return json(await setPerpExits({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, takeProfit: i.take_profit, stopLoss: i.stop_loss, reasoning: i.reasoning }));
+    },
+  }),
+  tool({
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,

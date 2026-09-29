@@ -7862,7 +7862,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.35.5";
+    CODE_VERSION = "0.35.6";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8844,6 +8844,7 @@ async function tokenReport(mint) {
         pairAgeMinutes: ageMinutes2(top.pairCreatedAt),
         liquidityUsd: n2(top.liquidity?.usd, 0),
         volumeUsd: top.volume,
+        volume1hAllPairsUsd: n2(pairs.reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0), 0),
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
         priceChangePct: top.priceChange,
         websites: top.info?.websites?.map((w) => w.url),
@@ -8877,7 +8878,14 @@ async function tokenReport(mint) {
       };
     }) : Promise.resolve(void 0)
   ]);
-  return { mint, jupiter, dexscreener, rugcheck, ...pumpfun ? { pumpfun } : {} };
+  const volumeCheck = volumeJupiterVsDex(jupiter, dexscreener);
+  return { mint, jupiter, dexscreener, ...volumeCheck ? { volumeCheck } : {}, rugcheck, ...pumpfun ? { pumpfun } : {} };
+}
+function volumeJupiterVsDex(jupiter, dexscreener) {
+  const jup = (jupiter?.stats1h?.buyVolumeUsd ?? 0) + (jupiter?.stats1h?.sellVolumeUsd ?? 0);
+  const dex = dexscreener?.volume1hAllPairsUsd ?? 0;
+  if (!(jup > 0) || !(dex > 0)) return void 0;
+  return { jupiter1hUsd: Math.round(jup), dexscreener1hUsd: Math.round(dex), volume1hJupiterVsDexRatio: Number((jup / dex).toFixed(1)) };
 }
 var n2, ageMinutes2;
 var init_research = __esm({
@@ -8966,6 +8974,12 @@ async function entryFeatures(mint) {
     priceChange1hPct: round(t?.stats1h?.priceChange),
     priceChange24hPct: round(t?.stats24h?.priceChange),
     pairPriceChange5mPct: round(pair?.priceChange?.m5),
+    // Volumen de 1 h según Jupiter frente al de todos los pares de DexScreener (ver volumeJupiterVsDex).
+    volume1hJupiterVsDexRatio: (() => {
+      const jupVol = Number(t?.stats1h?.buyVolume ?? 0) + Number(t?.stats1h?.sellVolume ?? 0);
+      const dexVol = dex.status === "fulfilled" ? (dex.value.pairs ?? []).reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0) : 0;
+      return jupVol > 0 && dexVol > 0 ? round(jupVol / dexVol, 1) : void 0;
+    })(),
     pairPriceChange1hPct: round(pair?.priceChange?.h1),
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),

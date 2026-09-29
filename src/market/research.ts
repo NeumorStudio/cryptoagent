@@ -206,6 +206,7 @@ export async function tokenReport(mint: string) {
         pairAgeMinutes: ageMinutes(top.pairCreatedAt),
         liquidityUsd: n(top.liquidity?.usd, 0),
         volumeUsd: top.volume,
+        volume1hAllPairsUsd: n(pairs.reduce((s: number, p: any) => s + Number(p.volume?.h1 ?? 0), 0), 0),
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
         priceChangePct: top.priceChange,
         websites: top.info?.websites?.map((w: any) => w.url),
@@ -241,5 +242,21 @@ export async function tokenReport(mint: string) {
         })
       : Promise.resolve(undefined),
   ]);
-  return { mint, jupiter, dexscreener, rugcheck, ...(pumpfun ? { pumpfun } : {}) };
+  const volumeCheck = volumeJupiterVsDex(jupiter as any, dexscreener as any);
+  return { mint, jupiter, dexscreener, ...(volumeCheck ? { volumeCheck } : {}), rugcheck, ...(pumpfun ? { pumpfun } : {}) };
+}
+
+/**
+ * Volumen de la última hora según Jupiter y según DexScreener (todos sus pares), y su cociente. Jupiter cuenta
+ * todas las rutas; DexScreener, los pools que conoce. Solo el dato: qué significa una gran diferencia lo aprende
+ * el agente (lo pidió el revisor en la M6 de la v0.35.3: 162k en Jupiter frente a 10k en DexScreener).
+ */
+export function volumeJupiterVsDex(
+  jupiter: { stats1h?: { buyVolumeUsd?: number; sellVolumeUsd?: number } } | undefined,
+  dexscreener: { volume1hAllPairsUsd?: number } | undefined,
+) {
+  const jup = (jupiter?.stats1h?.buyVolumeUsd ?? 0) + (jupiter?.stats1h?.sellVolumeUsd ?? 0);
+  const dex = dexscreener?.volume1hAllPairsUsd ?? 0;
+  if (!(jup > 0) || !(dex > 0)) return undefined;
+  return { jupiter1hUsd: Math.round(jup), dexscreener1hUsd: Math.round(dex), volume1hJupiterVsDexRatio: Number((jup / dex).toFixed(1)) };
 }

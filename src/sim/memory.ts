@@ -52,6 +52,7 @@ export const CONDITION_FIELDS = [
   "priceChange1hPct",
   "pairPriceChange5mPct",
   "pairPriceChange1hPct",
+  "volume1hJupiterVsDexRatio",
   "priceChange24hPct",
   "buyVolume5mUsd",
   "sellVolume5mUsd",

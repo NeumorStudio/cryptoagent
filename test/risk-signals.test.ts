@@ -67,3 +67,13 @@ test("un creador que ya costó mucho no frena la compra: queda como dato, y una 
   assert.deepEqual([f.creator, f.creatorTokens, f.creatorGraduated, f.creatorGraduationPct, f.creatorTradesWithYou], [MEME_DEV, 40, 0, 0, 1]);
   assert.ok(f.creatorWorstPnlWithYouPct <= -90);
 });
+
+test("token_report compara el volumen de 1 h de Jupiter con el de todos los pares de DexScreener, sin veredicto", async () => {
+  const { volumeJupiterVsDex } = await import("../src/market/research.js");
+  assert.deepEqual(volumeJupiterVsDex({ stats1h: { buyVolumeUsd: 100_000, sellVolumeUsd: 62_000 } }, { volume1hAllPairsUsd: 10_000 }), {
+    jupiter1hUsd: 162_000,
+    dexscreener1hUsd: 10_000,
+    volume1hJupiterVsDexRatio: 16.2,
+  });
+  assert.equal(volumeJupiterVsDex({ stats1h: { buyVolumeUsd: 5 } }, { volume1hAllPairsUsd: 0 }), undefined, "sin volumen en una fuente no hay cociente");
+});

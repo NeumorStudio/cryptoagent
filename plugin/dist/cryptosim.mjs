@@ -8279,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.35.5";
+    CODE_VERSION = "0.35.6";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9366,6 +9366,7 @@ async function tokenReport(mint) {
         pairAgeMinutes: ageMinutes2(top.pairCreatedAt),
         liquidityUsd: n2(top.liquidity?.usd, 0),
         volumeUsd: top.volume,
+        volume1hAllPairsUsd: n2(pairs.reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0), 0),
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
         priceChangePct: top.priceChange,
         websites: top.info?.websites?.map((w) => w.url),
@@ -9399,7 +9400,14 @@ async function tokenReport(mint) {
       };
     }) : Promise.resolve(void 0)
   ]);
-  return { mint, jupiter, dexscreener, rugcheck, ...pumpfun ? { pumpfun } : {} };
+  const volumeCheck = volumeJupiterVsDex(jupiter, dexscreener);
+  return { mint, jupiter, dexscreener, ...volumeCheck ? { volumeCheck } : {}, rugcheck, ...pumpfun ? { pumpfun } : {} };
+}
+function volumeJupiterVsDex(jupiter, dexscreener) {
+  const jup = (jupiter?.stats1h?.buyVolumeUsd ?? 0) + (jupiter?.stats1h?.sellVolumeUsd ?? 0);
+  const dex = dexscreener?.volume1hAllPairsUsd ?? 0;
+  if (!(jup > 0) || !(dex > 0)) return void 0;
+  return { jupiter1hUsd: Math.round(jup), dexscreener1hUsd: Math.round(dex), volume1hJupiterVsDexRatio: Number((jup / dex).toFixed(1)) };
 }
 var n2, ageMinutes2;
 var init_research = __esm({
@@ -9488,6 +9496,12 @@ async function entryFeatures(mint) {
     priceChange1hPct: round(t?.stats1h?.priceChange),
     priceChange24hPct: round(t?.stats24h?.priceChange),
     pairPriceChange5mPct: round(pair?.priceChange?.m5),
+    // Volumen de 1 h según Jupiter frente al de todos los pares de DexScreener (ver volumeJupiterVsDex).
+    volume1hJupiterVsDexRatio: (() => {
+      const jupVol = Number(t?.stats1h?.buyVolume ?? 0) + Number(t?.stats1h?.sellVolume ?? 0);
+      const dexVol = dex.status === "fulfilled" ? (dex.value.pairs ?? []).reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0) : 0;
+      return jupVol > 0 && dexVol > 0 ? round(jupVol / dexVol, 1) : void 0;
+    })(),
     pairPriceChange1hPct: round(pair?.priceChange?.h1),
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
@@ -9936,7 +9950,8 @@ __export(perps_exports, {
   equity: () => equity,
   liquidationPrice: () => liquidationPrice,
   openPerp: () => openPerp,
-  openPerps: () => openPerps
+  openPerps: () => openPerps,
+  setPerpExits: () => setPerpExits
 });
 function liquidationPrice(p, maxLeverage) {
   const mmRate = 1 / (2 * maxLeverage);
@@ -10055,6 +10070,26 @@ async function closePerp(a) {
   const r = settle2(accrueFunding(p, m.markPx, m.fundingHourly), m.markPx, a.reasoning, false, a.sessionId);
   if (!r) throw new Error(`El futuro #${a.perpId} ya se est\xE1 cerrando`);
   return r;
+}
+async function setPerpExits(a) {
+  const p = db.prepare("SELECT * FROM perp_positions WHERE id = ? AND mission_id = ? AND status = 'open'").get(a.perpId, a.missionId);
+  if (!p) throw new Error(`El futuro #${a.perpId} no existe, no es de tu misi\xF3n o ya est\xE1 cerrado`);
+  if (a.takeProfit === void 0 && a.stopLoss === void 0) throw new Error("Indica take_profit, stop_loss o los dos (0 para quitarlo)");
+  const { markPx } = await perpMarket(p.coin);
+  const long = p.side === "long";
+  if (a.takeProfit && (long ? a.takeProfit <= markPx : a.takeProfit >= markPx)) {
+    throw new Error(`En un ${long ? "largo" : "corto"}, la toma de beneficio va ${long ? "por encima" : "por debajo"} del precio actual (${markPx})`);
+  }
+  if (a.stopLoss && (long ? a.stopLoss >= markPx : a.stopLoss <= markPx)) {
+    throw new Error(`En un ${long ? "largo" : "corto"}, el stop va ${long ? "por debajo" : "por encima"} del precio actual (${markPx})`);
+  }
+  const tp = a.takeProfit === void 0 ? p.take_profit : a.takeProfit || null;
+  const sl = a.stopLoss === void 0 ? p.stop_loss : a.stopLoss || null;
+  db.prepare("UPDATE perp_positions SET take_profit = ?, stop_loss = ? WHERE id = ?").run(tp, sl, p.id);
+  const label2 = `${p.coin}-PERP ${long ? "largo" : "corto"} ${p.leverage}x`;
+  const summary = `Salidas de ${label2} (#${p.id}): take profit ${tp ?? "ninguno"}, stop ${sl ?? "ninguno"}`;
+  logJournal({ missionId: a.missionId, sessionId: a.sessionId, kind: "perp", summary, reasoning: a.reasoning, details: { perpId: p.id, takeProfit: tp, stopLoss: sl, markPrice: markPx } });
+  return { perpId: p.id, position: label2, entryPrice: p.entry_price, markPrice: markPx, takeProfit: tp, stopLoss: sl };
 }
 async function openPerps(missionId) {
   const rows = db.prepare("SELECT * FROM perp_positions WHERE mission_id = ? AND status = 'open' ORDER BY id").all(missionId);
@@ -41769,6 +41804,7 @@ var CONDITION_FIELDS = [
   "priceChange1hPct",
   "pairPriceChange5mPct",
   "pairPriceChange1hPct",
+  "volume1hJupiterVsDexRatio",
   "priceChange24hPct",
   "buyVolume5mUsd",
   "sellVolume5mUsd",
@@ -43357,6 +43393,22 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     run: async (i, ctx) => {
       const { closePerp: closePerp2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
       return json2(await closePerp2({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, reasoning: i.reasoning }));
+    }
+  }),
+  tool({
+    name: "set_perp_exits",
+    kind: "trade",
+    journaled: true,
+    description: "Pone, cambia o quita la toma de beneficio y el stop de un futuro ya abierto (id en portfolio \u2192 perps). As\xED puedes calcularlos con el precio de entrada real que te devolvi\xF3 open_perp. Un precio fija la salida; 0 la quita; si no pasas uno, se queda como estaba.",
+    schema: external_exports.object({
+      perp_id: external_exports.number().int(),
+      take_profit: external_exports.number().min(0).optional(),
+      stop_loss: external_exports.number().min(0).optional(),
+      reasoning: external_exports.string().min(1)
+    }),
+    run: async (i, ctx) => {
+      const { setPerpExits: setPerpExits2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+      return json2(await setPerpExits2({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, takeProfit: i.take_profit, stopLoss: i.stop_loss, reasoning: i.reasoning }));
     }
   }),
   tool({

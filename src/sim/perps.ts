@@ -194,6 +194,31 @@ export async function closePerp(a: { missionId: number; sessionId: number | null
   return r;
 }
 
+/**
+ * Pone, cambia o quita (0) la toma de beneficio y el stop de un futuro ya abierto. Hasta ahora solo se podían
+ * fijar al abrir, cuando aún no se sabe el precio de entrada real (lo pidió el trader en la M9 de la v0.35.5).
+ */
+export async function setPerpExits(a: { missionId: number; sessionId: number | null; perpId: number; takeProfit?: number; stopLoss?: number; reasoning: string }) {
+  const p = db.prepare("SELECT * FROM perp_positions WHERE id = ? AND mission_id = ? AND status = 'open'").get(a.perpId, a.missionId) as unknown as PerpRow | undefined;
+  if (!p) throw new Error(`El futuro #${a.perpId} no existe, no es de tu misión o ya está cerrado`);
+  if (a.takeProfit === undefined && a.stopLoss === undefined) throw new Error("Indica take_profit, stop_loss o los dos (0 para quitarlo)");
+  const { markPx } = await perpMarket(p.coin);
+  const long = p.side === "long";
+  if (a.takeProfit && (long ? a.takeProfit <= markPx : a.takeProfit >= markPx)) {
+    throw new Error(`En un ${long ? "largo" : "corto"}, la toma de beneficio va ${long ? "por encima" : "por debajo"} del precio actual (${markPx})`);
+  }
+  if (a.stopLoss && (long ? a.stopLoss >= markPx : a.stopLoss <= markPx)) {
+    throw new Error(`En un ${long ? "largo" : "corto"}, el stop va ${long ? "por debajo" : "por encima"} del precio actual (${markPx})`);
+  }
+  const tp = a.takeProfit === undefined ? p.take_profit : a.takeProfit || null;
+  const sl = a.stopLoss === undefined ? p.stop_loss : a.stopLoss || null;
+  db.prepare("UPDATE perp_positions SET take_profit = ?, stop_loss = ? WHERE id = ?").run(tp, sl, p.id);
+  const label = `${p.coin}-PERP ${long ? "largo" : "corto"} ${p.leverage}x`;
+  const summary = `Salidas de ${label} (#${p.id}): take profit ${tp ?? "ninguno"}, stop ${sl ?? "ninguno"}`;
+  logJournal({ missionId: a.missionId, sessionId: a.sessionId, kind: "perp", summary, reasoning: a.reasoning, details: { perpId: p.id, takeProfit: tp, stopLoss: sl, markPrice: markPx } });
+  return { perpId: p.id, position: label, entryPrice: p.entry_price, markPrice: markPx, takeProfit: tp, stopLoss: sl };
+}
+
 /** Futuros abiertos de una misión con su situación actual (para la cartera y la valoración). */
 export async function openPerps(missionId: number) {
   const rows = db.prepare("SELECT * FROM perp_positions WHERE mission_id = ? AND status = 'open' ORDER BY id").all(missionId) as unknown as PerpRow[];

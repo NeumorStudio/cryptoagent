@@ -233,10 +233,19 @@ function memoryCell(chain: ChainId, f: Features, address: string, missionId: num
   const decision = missionId !== null ? positions.decisionContext(missionId, chain, address, 0, false) : {};
   const entry = { ...f, ...positions.creatorHistory(f.creator) } as unknown as Record<string, unknown>;
   const m = memory.beliefsFor(chain, entry, address, decision);
+  // Cada creencia con su evidencia al lado: "(2 a favor/1 en contra, hipótesis)". Menos de 10 casos es una
+  // hipótesis que puede ser suerte, no un filtro.
+  const ids = (list: number[]) =>
+    list
+      .map((id) => {
+        const c = m.cases[id];
+        return c ? `#${id} (${c.inFavor} a favor/${c.against} en contra${c.stage === "hypothesis" ? ", hipótesis" : c.stage === "provisional" ? ", provisional" : ""})` : `#${id}`;
+      })
+      .join(", ");
   return [
     ...(m.block.length ? [`frena #${m.block.join(", #")}`] : []),
-    ...(m.caution.length ? [`avisa #${m.caution.join(", #")}`] : []),
-    ...(m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []),
+    ...(m.caution.length ? [`avisa ${ids(m.caution)}`] : []),
+    ...(m.favor.length ? [`apoya ${ids(m.favor)}`] : []),
   ].join(" · ");
 }
 
@@ -1067,6 +1076,16 @@ export const SIM_TOOLS = [
   }),
 
   // ─── Revisor: lee todo lo ocurrido y escribe la memoria ────────────────────
+  tool({
+    name: "exploration_map",
+    kind: "memory",
+    role: "both",
+    description:
+      "Mapa de lo que has probado: operaciones cerradas por cadena, por edad y liquidez del token al entrar (contado) y por moneda (futuros), " +
+      "con ganadas, perdidas y resultado medio. Las casillas \"sin probar\" son zonas en las que nunca has operado.",
+    schema: z.object({}),
+    run: async () => json(memory.explorationMap()),
+  }),
   tool({
     name: "review_queue",
     kind: "memory",

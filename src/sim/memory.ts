@@ -305,6 +305,46 @@ function tradeStats(ps: Pos[]) {
 
 const closedPositions = () => listPositions().filter((p) => p.status === "closed");
 
+// ─── Mapa de lo explorado ───────────────────────────────────────────────────
+// Cuántas operaciones lleva en cada zona (cadena, edad y liquidez del token; futuros por moneda) y cómo le fue.
+// Solo datos: las zonas vacías son las que nunca ha probado, y las de 1-2 operaciones no demuestran nada todavía.
+
+const AGE_BUCKETS: Array<[string, number]> = [["<1 h", 60], ["1-3 h", 180], ["3-24 h", 1440], ["1-7 d", 10080], [">7 d", Infinity]];
+const LIQ_BUCKETS: Array<[string, number]> = [["<15k", 15_000], ["15-50k", 50_000], ["50-200k", 200_000], ["200k-1M", 1_000_000], [">1M", Infinity]];
+const bucket = (v: unknown, buckets: Array<[string, number]>) => (typeof v === "number" ? buckets.find(([, max]) => v < max)![0] : "sin dato");
+
+export function explorationMap() {
+  const closed = closedPositions();
+  const cell = (ps: Pos[]) => {
+    const s = summarizeTrades(ps);
+    return s.trades ? { trades: s.trades, wins: s.wins, losses: s.losses, avgPnlPct: s.avgPnlPct } : { trades: 0 };
+  };
+  const byVenue: Record<string, ReturnType<typeof cell>> = {};
+  for (const venue of new Set(closed.map((p) => p.venue))) byVenue[venue] = cell(closed.filter((p) => p.venue === venue));
+  // Contado: edad × liquidez del token al entrar, con todas las casillas (también las vacías).
+  const spot = closed.filter((p) => p.venue !== "hyperliquid");
+  const spotByAgeAndLiquidity = AGE_BUCKETS.map(([age]) => ({
+    age,
+    ...Object.fromEntries(
+      LIQ_BUCKETS.map(([liq]) => {
+        const ps = spot.filter((p) => bucket(p.entry.ageMinutes, AGE_BUCKETS) === age && bucket(p.entry.liquidityUsd, LIQ_BUCKETS) === liq);
+        const c = cell(ps);
+        return [liq, c.trades ? `${c.trades} op: ${c.wins}G/${c.losses}P, media ${c.avgPnlPct} %` : "sin probar"];
+      }),
+    ),
+  }));
+  const perps = closed.filter((p) => p.venue === "hyperliquid");
+  const perpsByCoin: Record<string, ReturnType<typeof cell>> = {};
+  for (const coin of new Set(perps.map((p) => p.symbol.split("-")[0]!))) perpsByCoin[coin] = cell(perps.filter((p) => p.symbol.startsWith(`${coin}-`)));
+  return {
+    closedTrades: closed.length,
+    byVenue,
+    spotByAgeAndLiquidity,
+    ...(perps.length ? { perpsByCoin } : {}),
+    note: "Operaciones cerradas por zona. \"sin probar\" = ninguna operación ahí; con 1-2 operaciones una zona no está probada.",
+  };
+}
+
 // ─── Freno de memoria: lo aprendido que no se puede pasar por alto ──────────
 
 /**
@@ -364,13 +404,22 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
 export function beliefsFor(venue: string, entry: Record<string, unknown>, asset = "", decision: Record<string, unknown> = {}) {
   const pos = { venue, asset, entry: { ...entry, venue }, research: decision } as unknown as Pos;
   const block = new Set(blockingBeliefs(venue, entry, asset, decision).map((b) => b.id));
-  const rows = (db.prepare("SELECT id, expectation, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all() as unknown as BeliefRow[]).filter((b) =>
+  const rows = (db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all() as unknown as BeliefRow[]).filter((b) =>
     matches(JSON.parse(b.condition!) as Condition, pos),
   );
+  // Con cuántos casos cuenta cada una: una creencia de 1-2 operaciones no descarta nada todavía, y sin verlo
+  // al lado del id, el trader las usaba todas como filtros duros y dejó de explorar (M11-M17 de la v0.35).
+  const closed = rows.length ? closedPositions() : [];
+  const cases: Record<number, { inFavor: number; against: number; stage: BeliefStage }> = {};
+  for (const b of rows) {
+    const t = beliefEvidence(b, closed).matchingTrades as { inFavor?: number; against?: number; stage?: BeliefStage } | undefined;
+    cases[b.id] = { inFavor: t?.inFavor ?? 0, against: t?.against ?? 0, stage: t?.stage ?? "hypothesis" };
+  }
   return {
     block: [...block],
     caution: rows.filter((b) => b.expectation === "negative" && !block.has(b.id)).map((b) => b.id),
     favor: rows.filter((b) => b.expectation === "positive").map((b) => b.id),
+    cases,
   };
 }
 

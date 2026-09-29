@@ -8279,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.35.7";
+    CODE_VERSION = "0.36.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -21069,23 +21069,23 @@ function isRecursiveSchema(inst) {
   return isRecursive(inst, /* @__PURE__ */ new Set(), true) !== NONE;
 }
 function bucketFor(state2, inst) {
-  let bucket = state2.buckets.get(inst);
-  if (!bucket) {
-    bucket = /* @__PURE__ */ new WeakMap();
-    state2.buckets.set(inst, bucket);
+  let bucket2 = state2.buckets.get(inst);
+  if (!bucket2) {
+    bucket2 = /* @__PURE__ */ new WeakMap();
+    state2.buckets.set(inst, bucket2);
   }
-  return bucket;
+  return bucket2;
 }
 var handoff;
 var open = [];
 var memo = {
   alloc(_inst, payload, empty) {
-    const bucket = handoff;
-    if (!bucket)
+    const bucket2 = handoff;
+    if (!bucket2)
       return empty;
     handoff = void 0;
     const entry = { value: empty, issues: null };
-    bucket.set(payload.value, entry);
+    bucket2.set(payload.value, entry);
     open.push(entry);
     return empty;
   },
@@ -21135,15 +21135,15 @@ var memo = {
           state2 = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
           ctx[STATE] = state2;
         }
-        let bucket;
+        let bucket2;
         if (lastCtx === ctx) {
-          bucket = lastBucket;
+          bucket2 = lastBucket;
         } else {
-          bucket = bucketFor(state2, inst);
+          bucket2 = bucketFor(state2, inst);
           lastCtx = ctx;
-          lastBucket = bucket;
+          lastBucket = bucket2;
         }
-        const hit = bucket.get(input2);
+        const hit = bucket2.get(input2);
         if (hit) {
           payload.value = hit.value;
           if (hit.issues) {
@@ -21156,7 +21156,7 @@ var memo = {
           }
           return payload;
         }
-        handoff = bucket;
+        handoff = bucket2;
         const depth = open.length;
         const result = base2(payload, ctx);
         handoff = void 0;
@@ -41988,6 +41988,39 @@ function tradeStats(ps) {
   }).filter(Boolean);
 }
 var closedPositions = () => listPositions().filter((p) => p.status === "closed");
+var AGE_BUCKETS = [["<1 h", 60], ["1-3 h", 180], ["3-24 h", 1440], ["1-7 d", 10080], [">7 d", Infinity]];
+var LIQ_BUCKETS = [["<15k", 15e3], ["15-50k", 5e4], ["50-200k", 2e5], ["200k-1M", 1e6], [">1M", Infinity]];
+var bucket = (v, buckets) => typeof v === "number" ? buckets.find(([, max]) => v < max)[0] : "sin dato";
+function explorationMap() {
+  const closed = closedPositions();
+  const cell3 = (ps) => {
+    const s = summarizeTrades(ps);
+    return s.trades ? { trades: s.trades, wins: s.wins, losses: s.losses, avgPnlPct: s.avgPnlPct } : { trades: 0 };
+  };
+  const byVenue = {};
+  for (const venue of new Set(closed.map((p) => p.venue))) byVenue[venue] = cell3(closed.filter((p) => p.venue === venue));
+  const spot = closed.filter((p) => p.venue !== "hyperliquid");
+  const spotByAgeAndLiquidity = AGE_BUCKETS.map(([age]) => ({
+    age,
+    ...Object.fromEntries(
+      LIQ_BUCKETS.map(([liq]) => {
+        const ps = spot.filter((p) => bucket(p.entry.ageMinutes, AGE_BUCKETS) === age && bucket(p.entry.liquidityUsd, LIQ_BUCKETS) === liq);
+        const c = cell3(ps);
+        return [liq, c.trades ? `${c.trades} op: ${c.wins}G/${c.losses}P, media ${c.avgPnlPct} %` : "sin probar"];
+      })
+    )
+  }));
+  const perps = closed.filter((p) => p.venue === "hyperliquid");
+  const perpsByCoin = {};
+  for (const coin of new Set(perps.map((p) => p.symbol.split("-")[0]))) perpsByCoin[coin] = cell3(perps.filter((p) => p.symbol.startsWith(`${coin}-`)));
+  return {
+    closedTrades: closed.length,
+    byVenue,
+    spotByAgeAndLiquidity,
+    ...perps.length ? { perpsByCoin } : {},
+    note: 'Operaciones cerradas por zona. "sin probar" = ninguna operaci\xF3n ah\xED; con 1-2 operaciones una zona no est\xE1 probada.'
+  };
+}
 var STRONG_NEGATIVE = { minDecided: 4, minWilsonLowPct: 50, maxAvgPnlPct: -15 };
 function blockingBeliefs(venue, entry, asset2 = "", decision = {}) {
   const closed = closedPositions();
@@ -42000,13 +42033,20 @@ function blockingBeliefs(venue, entry, asset2 = "", decision = {}) {
 function beliefsFor(venue, entry, asset2 = "", decision = {}) {
   const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
   const block = new Set(blockingBeliefs(venue, entry, asset2, decision).map((b) => b.id));
-  const rows = db.prepare("SELECT id, expectation, condition FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all().filter(
+  const rows = db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all().filter(
     (b) => matches(JSON.parse(b.condition), pos)
   );
+  const closed = rows.length ? closedPositions() : [];
+  const cases = {};
+  for (const b of rows) {
+    const t = beliefEvidence(b, closed).matchingTrades;
+    cases[b.id] = { inFavor: t?.inFavor ?? 0, against: t?.against ?? 0, stage: t?.stage ?? "hypothesis" };
+  }
   return {
     block: [...block],
     caution: rows.filter((b) => b.expectation === "negative" && !block.has(b.id)).map((b) => b.id),
-    favor: rows.filter((b) => b.expectation === "positive").map((b) => b.id)
+    favor: rows.filter((b) => b.expectation === "positive").map((b) => b.id),
+    cases
   };
 }
 function recall(missionId, limit) {
@@ -42917,10 +42957,14 @@ function memoryCell(chain, f, address, missionId = null) {
   const decision = missionId !== null ? decisionContext(missionId, chain, address, 0, false) : {};
   const entry = { ...f, ...creatorHistory(f.creator) };
   const m = beliefsFor(chain, entry, address, decision);
+  const ids = (list) => list.map((id) => {
+    const c = m.cases[id];
+    return c ? `#${id} (${c.inFavor} a favor/${c.against} en contra${c.stage === "hypothesis" ? ", hip\xF3tesis" : c.stage === "provisional" ? ", provisional" : ""})` : `#${id}`;
+  }).join(", ");
   return [
     ...m.block.length ? [`frena #${m.block.join(", #")}`] : [],
-    ...m.caution.length ? [`avisa #${m.caution.join(", #")}`] : [],
-    ...m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []
+    ...m.caution.length ? [`avisa ${ids(m.caution)}`] : [],
+    ...m.favor.length ? [`apoya ${ids(m.favor)}`] : []
   ].join(" \xB7 ");
 }
 async function screenCandidates(chain, candidates, n3, missionId = null) {
@@ -43609,6 +43653,14 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }
   }),
   // ─── Revisor: lee todo lo ocurrido y escribe la memoria ────────────────────
+  tool({
+    name: "exploration_map",
+    kind: "memory",
+    role: "both",
+    description: 'Mapa de lo que has probado: operaciones cerradas por cadena, por edad y liquidez del token al entrar (contado) y por moneda (futuros), con ganadas, perdidas y resultado medio. Las casillas "sin probar" son zonas en las que nunca has operado.',
+    schema: external_exports.object({}),
+    run: async () => json2(explorationMap())
+  }),
   tool({
     name: "review_queue",
     kind: "memory",

@@ -42,3 +42,16 @@ test("abrir un futuro también es operar: no cuenta como quedarse parado al fina
   assert.equal(row.idleAtEndMinutes, 7);
   assert.equal(row.parkedAtEnd, false);
 });
+
+test("el mapa de lo explorado cuenta las operaciones por zona y marca las que nunca se han probado", async () => {
+  const m = await createMission(50, 55, 15, undefined, { solana: 100 });
+  db.prepare(
+    `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, closed_at, status, qty_open, cost_open_usd, realized_cost_usd, realized_proceeds_usd, entry_features, research)
+     VALUES (?, 'solana', 'Young1', 'YNG', ?, ?, 'closed', 0, 0, 10, 12, '{"ageMinutes":90,"liquidityUsd":30000}', '{}')`,
+  ).run(m.id, new Date().toISOString(), new Date().toISOString());
+  const map = memory.explorationMap();
+  const row = map.spotByAgeAndLiquidity.find((r) => r.age === "1-3 h") as Record<string, string>;
+  assert.match(row["15-50k"]!, /1G/);
+  assert.equal(row[">1M"], "sin probar");
+  assert.ok(map.byVenue.solana!.trades >= 1);
+});

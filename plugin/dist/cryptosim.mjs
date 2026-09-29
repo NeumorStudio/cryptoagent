@@ -8279,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.35.4";
+    CODE_VERSION = "0.35.5";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -10271,12 +10271,12 @@ async function ensureSigner() {
   if (running2) return { ...running2, started: false };
   const entry = asset("signer.mjs", "src/live/signer/main.ts");
   const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
-  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
-  child.unref();
+  const child2 = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
+  child2.unref();
   for (let i = 0; i < 50; i++) {
     await new Promise((r) => setTimeout(r, 200));
     const s = await signerStatus();
-    if (s && s.status.pid === child.pid) return { ...s, started: true };
+    if (s && s.status.pid === child2.pid) return { ...s, started: true };
   }
   throw new Error("El firmante no ha arrancado");
 }
@@ -20901,9 +20901,9 @@ function isRecursive(inst, stack, resolve) {
     return PROVEN;
   stack.add(inst);
   let result = NONE;
-  const check2 = (child) => {
-    if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve);
+  const check2 = (child2) => {
+    if (result !== PROVEN && child2?._zod) {
+      const answer = isRecursive(child2, stack, resolve);
       if (answer > result)
         result = answer;
     }
@@ -20914,9 +20914,9 @@ function isRecursive(inst, stack, resolve) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
-      if (child > answer)
-        answer = child;
+      const child2 = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
+      if (child2 > answer)
+        answer = child2;
     }
     return answer;
   };
@@ -44292,6 +44292,34 @@ init_sync();
 init_config();
 init_db();
 
+// src/keep-awake.ts
+import { spawn as spawn3 } from "node:child_process";
+var ES_CONTINUOUS = 2147483648;
+var ES_SYSTEM_REQUIRED = 1;
+var ES_DISPLAY_REQUIRED = 2;
+var FLAGS = (ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) >>> 0;
+var child = null;
+function script(parentPid) {
+  return [
+    `Add-Type -Namespace Cryptoagent -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);'`,
+    `[void][Cryptoagent.Power]::SetThreadExecutionState([uint32]${FLAGS})`,
+    `while (Get-Process -Id ${parentPid} -ErrorAction SilentlyContinue) { Start-Sleep -Seconds 20 }`
+  ].join("; ");
+}
+function keepAwake(on, platform = process.platform) {
+  if (platform !== "win32") return "unsupported";
+  if (on && !child) {
+    child = spawn3("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script(process.pid)], { stdio: "ignore", windowsHide: true });
+    child.on("exit", () => child = null);
+    child.on("error", () => child = null);
+  } else if (!on && child) {
+    child.kill();
+    child = null;
+  }
+  return child ? "on" : "off";
+}
+process.on("exit", () => child?.kill());
+
 // src/sim/session.ts
 init_db();
 init_mission();
@@ -44679,6 +44707,11 @@ setInterval(async () => {
   await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misi\xF3n: ${err.message}`));
 }, config2.watchIntervalSeconds * 1e3);
+var missionRunning = () => !!db.prepare("SELECT 1 FROM missions WHERE status IN ('active', 'closing') LIMIT 1").get();
+setInterval(() => {
+  if (supersededBy()) return keepAwake(false);
+  keepAwake(missionRunning());
+}, 2e4);
 setInterval(async () => {
   if (supersededBy() || !holdsTickLease()) return;
   const open2 = db.prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1").get();

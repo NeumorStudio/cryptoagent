@@ -11,6 +11,7 @@ import { checkMission, createLiveMission, createMission, getActiveMission, getLa
 import { liveWalletSnapshot } from "./live/sync.js";
 import { config } from "./config.js";
 import { db, holdsTickLease, supersededBy } from "./db.js";
+import { keepAwake } from "./keep-awake.js";
 import { endSession, sessionBriefing, startSession } from "./sim/session.js";
 import { DEFAULT_ALLOCATION, VENUES } from "./sim/types.js";
 import { statusReport } from "./sim/status.js";
@@ -322,6 +323,14 @@ setInterval(async () => {
   await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misión: ${(err as Error).message}`));
 }, config.watchIntervalSeconds * 1000);
+
+// Con una misión en marcha, el equipo no se duerme (keep-awake.ts). Lo pide cada servidor abierto: si hay
+// varios, da igual; al acabar la misión todos lo sueltan.
+const missionRunning = () => !!db.prepare("SELECT 1 FROM missions WHERE status IN ('active', 'closing') LIMIT 1").get();
+setInterval(() => {
+  if (supersededBy()) return keepAwake(false);
+  keepAwake(missionRunning());
+}, 20_000);
 
 // Con órdenes por precio abiertas, se miran cada 15 s: un pico de un memecoin dura segundos y con la revisión
 // de cada minuto la toma de beneficios no llegaba a saltar (en las órdenes reales vigilan bots sin pausa).

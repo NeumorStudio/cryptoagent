@@ -7862,7 +7862,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.32.0";
+    CODE_VERSION = "0.33.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8737,6 +8737,29 @@ async function scanMarket(limit = 25) {
     for (const b of sol) add2(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
     return sol.length;
   };
+  const profiles = async () => {
+    const list = await fetchJson("https://api.dexscreener.com/token-profiles/latest/v1");
+    const mints = [...new Set(list.filter((p) => p.chainId === "solana").map((p) => String(p.tokenAddress)))].slice(0, 30);
+    if (!mints.length) return 0;
+    const res = await fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${mints.join(",")}`);
+    const best = /* @__PURE__ */ new Map();
+    for (const p of res.pairs ?? []) {
+      const mint = p.baseToken?.address;
+      if (mints.includes(mint) && (p.liquidity?.usd ?? 0) > (best.get(mint)?.liquidity?.usd ?? -1)) best.set(mint, p);
+    }
+    for (const [mint, p] of best) {
+      add2(mint, "dexscreener_profiles", {
+        symbol: p.baseToken?.symbol,
+        name: p.baseToken?.name,
+        mcapUsd: n2(p.marketCap ?? p.fdv, 0),
+        liquidityUsd: n2(p.liquidity?.usd, 0),
+        priceChange5mPct: n2(p.priceChange?.m5),
+        priceChange1hPct: n2(p.priceChange?.h1),
+        ageMinutes: ageMinutes2(p.pairCreatedAt)
+      });
+    }
+    return best.size;
+  };
   const gecko = async () => {
     const res = await fetchJson("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools");
     for (const p of res.data) {
@@ -8757,18 +8780,22 @@ async function scanMarket(limit = 25) {
     attempt("jupiter_trending_1h", () => jup("1h")),
     attempt("pumpfun_live", pump),
     attempt("dexscreener_boosted", boosts),
-    attempt("geckoterminal_trending", gecko)
+    attempt("geckoterminal_trending", gecko),
+    attempt("dexscreener_profiles", profiles)
   ]);
-  const candidates = [...merged.values()].map(
+  const all = [...merged.values()].map(
     (c) => c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05 ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` } : c
-  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  const candidates = all.slice(0, limit);
+  const newest = all.slice(limit).filter((c) => c.ageMinutes !== void 0 && c.ageMinutes < 60).sort((a, b) => (a.ageMinutes ?? 0) - (b.ageMinutes ?? 0)).slice(0, 5);
   return {
     note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con chain: solana y su mint.",
     sourcesStatus: status.map(
-      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}` : s.error
+      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending", "dexscreener_profiles"][i]}: ${s}` : s.error
     ),
     totalUnique: merged.size,
-    candidates
+    candidates,
+    ...newest.length ? { newest } : {}
   };
 }
 async function tokenReport(mint) {
@@ -9148,11 +9175,13 @@ var init_paths2 = __esm({
 });
 
 // src/sim/market-state.ts
-var MAX_AGE_MS;
+var MAX_AGE_MS, READS_MAX_AGE_MS, DECIDED_MAX_AGE_MS;
 var init_market_state = __esm({
   "src/sim/market-state.ts"() {
     "use strict";
     MAX_AGE_MS = 20 * 6e4;
+    READS_MAX_AGE_MS = 30 * 6e4;
+    DECIDED_MAX_AGE_MS = 5 * 6e4;
   }
 });
 

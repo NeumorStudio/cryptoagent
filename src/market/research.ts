@@ -85,6 +85,31 @@ export async function scanMarket(limit = 25) {
     for (const b of sol) add(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
     return sol.length;
   };
+  // Perfiles recién creados en DexScreener: es donde aparecen antes los tokens de minutos (lo descubrió el agente
+  // en la M25, a mano con http_get). Los datos del par, de su API de tokens (hasta 30 por petición).
+  const profiles = async () => {
+    const list = await fetchJson<any[]>("https://api.dexscreener.com/token-profiles/latest/v1");
+    const mints = [...new Set(list.filter((p) => p.chainId === "solana").map((p) => String(p.tokenAddress)))].slice(0, 30);
+    if (!mints.length) return 0;
+    const res = await fetchJson<{ pairs?: any[] }>(`https://api.dexscreener.com/latest/dex/tokens/${mints.join(",")}`);
+    const best = new Map<string, any>();
+    for (const p of res.pairs ?? []) {
+      const mint = p.baseToken?.address;
+      if (mints.includes(mint) && (p.liquidity?.usd ?? 0) > (best.get(mint)?.liquidity?.usd ?? -1)) best.set(mint, p);
+    }
+    for (const [mint, p] of best) {
+      add(mint, "dexscreener_profiles", {
+        symbol: p.baseToken?.symbol,
+        name: p.baseToken?.name,
+        mcapUsd: n(p.marketCap ?? p.fdv, 0),
+        liquidityUsd: n(p.liquidity?.usd, 0),
+        priceChange5mPct: n(p.priceChange?.m5),
+        priceChange1hPct: n(p.priceChange?.h1),
+        ageMinutes: ageMinutes(p.pairCreatedAt),
+      });
+    }
+    return best.size;
+  };
   const gecko = async () => {
     const res = await fetchJson<{ data: any[] }>("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools");
     for (const p of res.data) {
@@ -107,27 +132,36 @@ export async function scanMarket(limit = 25) {
     attempt("pumpfun_live", pump),
     attempt("dexscreener_boosted", boosts),
     attempt("geckoterminal_trending", gecko),
+    attempt("dexscreener_profiles", profiles),
   ]);
 
-  const candidates = [...merged.values()]
+  const all = [...merged.values()]
     .map((c: any) =>
       c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05
         ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` }
         : c,
     )
-    .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
-    .slice(0, limit);
+    .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  const candidates = all.slice(0, limit);
+  // Los que salen en más fuentes van primero, y un token de minutos casi nunca sale en varias: los más recientes
+  // que se han quedado fuera de la lista, aparte, para que se vean.
+  const newest = all
+    .slice(limit)
+    .filter((c) => c.ageMinutes !== undefined && c.ageMinutes < 60)
+    .sort((a, b) => (a.ageMinutes ?? 0) - (b.ageMinutes ?? 0))
+    .slice(0, 5);
   return {
     note:
       "Candidatos combinados de varias fuentes (los que aparecen en más fuentes van primero). " +
       "Para analizar uno a fondo usa token_report con chain: solana y su mint.",
     sourcesStatus: status.map((s, i) =>
       typeof s === "number"
-        ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}`
+        ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending", "dexscreener_profiles"][i]}: ${s}`
         : s.error,
     ),
     totalUnique: merged.size,
     candidates,
+    ...(newest.length ? { newest } : {}),
   };
 }
 

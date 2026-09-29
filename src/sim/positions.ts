@@ -3,7 +3,7 @@
 import { db, now } from "../db.js";
 import type { Features, TradeMeta, VenueId } from "./types.js";
 import { getVenue } from "./venues/index.js";
-import { marketContext } from "./market-state.js";
+import { decidedFeatures, marketContext, readTrend } from "./market-state.js";
 
 export type { TradeMeta };
 
@@ -62,13 +62,18 @@ export function decisionContext(missionId: number, venue: string, asset: string,
   const existing = (db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, venue, asset) as { c: number }).c;
   const capital = cash + openCost + (cashSpent ? addUsd : 0);
   const previous = db
-    .prepare("SELECT realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC")
-    .all(venue, asset) as Array<{ c: number; p: number }>;
+    .prepare("SELECT mission_id AS m, closed_at AS at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC")
+    .all(venue, asset) as Array<{ m: number; at: string; c: number; p: number }>;
   const deadline = (db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId) as { deadline: string } | undefined)?.deadline;
   return {
     ...(capital > 0 && addUsd > 0 ? { portfolioPct: Math.round(((existing + addUsd) / capital) * 100) } : {}),
     previousTradesInToken: previous.length,
     ...(previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {}),
+    // Volver en la misma ola (minutos) no es lo mismo que volver horas o días después.
+    ...(previous[0] ? { minutesSinceLastTradeInToken: Math.round((Date.now() - new Date(previous[0].at).getTime()) / 60_000) } : {}),
+    previousTradesInTokenThisMission: previous.filter((p) => p.m === missionId).length,
+    // Cómo cambiaba el token entre sus lecturas antes de comprar (liquidez y compradores netos).
+    ...readTrend(venue, asset),
     ...(deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)) } : {}),
     // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
     ...marketContext(venue),
@@ -84,6 +89,32 @@ export function tokenHistory(venue: string, asset: string) {
   const pct = (r: { c: number; p: number }) => (r.c > 0 ? Math.round((r.p / r.c - 1) * 100) : 0);
   const last = rows.at(-1)!;
   return `operado ${rows.length} ${rows.length === 1 ? "vez" : "veces"} (${rows.map((r) => `M${r.mission_id} ${pct(r) > 0 ? "+" : ""}${pct(r)} %`).join(", ")}); la última ${pct(last) > 0 ? "ganó" : pct(last) < 0 ? "perdió" : "quedó igual"}`;
+}
+
+/**
+ * Los datos del token que usó el agente al decidir (su última lectura, si tiene menos de 5 minutos); si no la
+ * hay, se leen ahora. `featuresSource` dice cuál fue.
+ */
+async function featuresAtDecision(venue: { id: string; entryFeatures(asset: string): Promise<Features> }, asset: string): Promise<Features> {
+  const d = decidedFeatures(venue.id, asset);
+  if (d) return { ...(d.features as Features), featuresSource: `lectura del agente, ${d.ageSeconds} s antes de comprar` } as Features;
+  return { ...(await venue.entryFeatures(asset)), featuresSource: "leídos tras la compra" } as Features;
+}
+
+/**
+ * Cuánto se alejó lo pagado del precio de referencia del token en ese momento (API de precios). En la M28, justo
+ * antes de un rug, la cotización real iba un 35 % por debajo del precio publicado: guardarlo permite medir si
+ * esa diferencia avisa.
+ */
+async function fillVsPrice(venue: string, asset: string, costUsd: number, qty: number) {
+  try {
+    const v = getVenue(venue as VenueId);
+    if (v.kind !== "chain" || !(costUsd > 0) || !(qty > 0)) return {};
+    const ref = (await v.priceUsd([asset]))[asset];
+    return ref ? { fillVsPricePct: Math.round(((costUsd / qty / ref) - 1) * 1000) / 10 } : {};
+  } catch {
+    return {};
+  }
 }
 
 async function openOrAdd(args: {
@@ -127,7 +158,13 @@ async function openOrAdd(args: {
     : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
   const research = args.inherit
     ? args.inherit.research
-    : JSON.stringify({ ...researchSnapshot(missionId, args.asset), ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true), adds: 0, addedWhileDown: false });
+    : JSON.stringify({
+        ...researchSnapshot(missionId, args.asset),
+        ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true),
+        ...(await fillVsPrice(args.venue, args.asset, args.costUsd, args.qty)),
+        adds: 0,
+        addedWhileDown: false,
+      });
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -199,7 +236,7 @@ export async function recordTrade(args: {
       qty: args.bought.qty,
       costUsd: args.valueUsd,
       meta: args.meta,
-      features: measurable ? () => venue.entryFeatures(args.bought.asset) : undefined,
+      features: measurable ? () => featuresAtDecision(venue, args.bought.asset) : undefined,
     });
   }
 }
@@ -252,7 +289,7 @@ export function sellFromPosition(args: { missionId: number; venue: VenueId; asse
 export async function buyIntoPosition(args: { missionId: number; venue: VenueId; asset: string; symbol: string; qty: number; costUsd: number; meta?: TradeMeta }) {
   const venue = getVenue(args.venue);
   const measurable = venue.kind === "chain" && args.asset !== venue.native.address;
-  await openOrAdd({ ...args, features: measurable ? () => venue.entryFeatures(args.asset) : undefined });
+  await openOrAdd({ ...args, features: measurable ? () => featuresAtDecision(venue, args.asset) : undefined });
 }
 
 /**

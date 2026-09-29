@@ -4,6 +4,7 @@ import { db, logActivity, logJournal, now } from "../db.js";
 import { fetchText } from "../market/http.js";
 import { CHAINS, VENUES, type ChainId, type Features } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
+import type { TokenRef } from "../sim/venues/types.js";
 import * as mission from "../sim/mission.js";
 import * as memory from "../sim/memory.js";
 import * as orders from "../sim/orders.js";
@@ -15,7 +16,7 @@ import { checkBuyAgainstMemory } from "../sim/guard.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 import { toText } from "./format.js";
-import { recordScan } from "../sim/market-state.js";
+import { recordFeatures, recordRead, recordScan } from "../sim/market-state.js";
 
 /** Misión del contexto; las herramientas que la necesitan solo se ejecutan si existe. */
 const mid = (ctx: ToolCtx): number => {
@@ -89,6 +90,8 @@ function riskCheck(chain: ChainId, token: string, f: Features) {
   const key = `${chain}:${token.toLowerCase()}`;
   const prev = lastReads.get(key);
   lastReads.set(key, { at: Date.now(), f });
+  recordRead(chain, token, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
+  recordFeatures(chain, token, f as unknown as Record<string, unknown>);
   const rugs = memory.creatorRugs(f.creator);
   const change = (a?: number, b?: number) => (a !== undefined && b !== undefined && a !== 0 ? Number((((b - a) / Math.abs(a)) * 100).toFixed(1)) : undefined);
   const flags: string[] = [];
@@ -131,6 +134,7 @@ const SOURCE_CODE: Record<string, string> = {
   jupiter_trending_1h: "jup1h",
   pumpfun_live: "pump",
   dexscreener_boosted: "dexBoost",
+  dexscreener_profiles: "dexNew",
   geckoterminal_trending: "gecko",
   geckoterminal_trending_pools: "gecko",
   geckoterminal_new_pools: "geckoNew",
@@ -139,12 +143,8 @@ const SOURCE_CODE: Record<string, string> = {
 /** Fuentes abreviadas y nombre solo si aporta algo distinto del símbolo. */
 export function compactScan(scan: unknown) {
   if (!scan || typeof scan !== "object" || !Array.isArray((scan as { candidates?: unknown }).candidates)) return scan;
-  const s = scan as { candidates: Array<Record<string, unknown>> };
-  return {
-    ...s,
-    sourcesStatus: undefined,
-    sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h · pump: en directo en pump.fun · dexBoost: promocionado en DexScreener · gecko/geckoNew: GeckoTerminal tendencia/nuevos",
-    candidates: s.candidates.map(({ sources, name, symbol, ...c }) => {
+  const s = scan as { candidates: Array<Record<string, unknown>>; newest?: Array<Record<string, unknown>> };
+  const row = ({ sources, name, symbol, ...c }: Record<string, unknown>) => {
       // GeckoTerminal da el nombre del par ("CATE / SOL"): tampoco aporta nada.
       const n = typeof name === "string" ? name.trim().toLowerCase().replace(/ \/ \S+$/, "") : "";
       const same = typeof symbol === "string" && n === symbol.trim().toLowerCase();
@@ -155,7 +155,15 @@ export function compactScan(scan: unknown) {
         sources: Array.isArray(sources) ? sources.map((x) => SOURCE_CODE[x] ?? x).join(",") : sources,
         ...Object.fromEntries(Object.entries(c).slice(1)),
       };
-    }),
+  };
+  return {
+    ...s,
+    sourcesStatus: undefined,
+    sourceCodes:
+      "jup5m/jup1h: tendencia en Jupiter 5 min/1 h · pump: en directo en pump.fun · dexBoost: promocionado en DexScreener · " +
+      "dexNew: perfil recién creado en DexScreener · gecko/geckoNew: GeckoTerminal tendencia/nuevos",
+    candidates: s.candidates.map(row),
+    ...(s.newest?.length ? { newest: s.newest.map(row), newestNote: "Los de menos de 60 min que no entran en la lista (salen en pocas fuentes)" } : {}),
   };
 }
 
@@ -285,6 +293,21 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
   });
 }
 
+/**
+ * Coste de comprar y vender al momento (spread, comisiones e impacto) con 25 $ de un estable: lo que el precio
+ * tiene que subir solo para quedarse igual. Se descubría después de comprar; así está antes de decidir.
+ */
+async function roundTripCost(chain: ChainId, token: TokenRef) {
+  const c = getChain(chain);
+  const stable = c.stables[0];
+  if (!stable || c.isCash(token.address)) return undefined;
+  const usd = 25;
+  const buy = await c.quote({ input: stable, output: token, amountIn: usd, slippageBps: 300 });
+  if (!(buy.amountOut > 0)) return undefined;
+  const sell = await c.quote({ input: token, output: stable, amountIn: buy.amountOut, slippageBps: 300 });
+  return { withUsd: usd, backUsd: Number(sell.amountOut.toFixed(2)), costPct: Number(((1 - sell.amountOut / usd) * 100).toFixed(2)) };
+}
+
 /** token_report sin lo que ya sabe el agente (la dirección que ha pedido) ni lo que no sirve para decidir. */
 export function compactReport(report: unknown): Record<string, unknown> {
   const r = { ...(report as Record<string, unknown>) };
@@ -379,7 +402,13 @@ export const SIM_TOOLS = [
       const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
       const resolved = await c.resolveToken(token.trim()).catch(() => null);
       const history = resolved ? positions.tokenHistory(chain, resolved.address) : undefined;
-      return json({ ...compactReport(report), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}), yourHistory: history ?? "nunca lo has operado" });
+      const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => undefined) : undefined;
+      return json({
+        ...compactReport(report),
+        ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}),
+        yourHistory: history ?? "nunca lo has operado",
+        ...(roundTrip ? { roundTrip } : {}),
+      });
     },
   }),
   tool({
@@ -1263,11 +1292,13 @@ export const SIM_TOOLS = [
     role: "reviewer",
     description:
       "Escribe (o reescribe) el briefing de una misión: lo que el agente debe tener presente de su memoria para esa misión en concreto, " +
-      "citando los ids de howtos y creencias. El agente lo recibe al empezar cada sesión y, si lo cambias a mitad de misión, en su siguiente acción.",
-    schema: z.object({ mission_id: z.number().int(), text: z.string().min(1) }),
-    run: async ({ mission_id, text }) => {
-      memory.writeBriefing(mission_id, text);
-      return `Briefing de la misión #${mission_id} guardado.`;
+      "citando los ids de howtos y creencias. El agente lo recibe al empezar cada sesión y, si lo cambias a mitad de misión, en su siguiente acción. " +
+      "Con append: true, el texto se añade al final del briefing actual (con la hora) en vez de sustituirlo: útil a mitad de misión, sin reescribir lo que ya había.",
+    schema: z.object({ mission_id: z.number().int(), text: z.string().min(1), append: z.boolean().default(false) }),
+    run: async ({ mission_id, text, append }) => {
+      const current = append ? memory.getBriefing(mission_id)?.text : undefined;
+      memory.writeBriefing(mission_id, current ? `${current}\n\nActualización (${now().slice(11, 16)} UTC): ${text}` : text);
+      return `Briefing de la misión #${mission_id} ${current ? "ampliado" : "guardado"}.`;
     },
   }),
 

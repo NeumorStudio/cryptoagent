@@ -125,7 +125,7 @@ function insertMission(args: {
     kind: "mission",
     summary:
       `${args.live ? "Misión REAL" : "Misión"} #${id} iniciada: de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD ` +
-      `antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`,
+      `en ${Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)} min (el reloj arranca cuando el agente empieza a trabajar)`,
   });
   return id;
 }

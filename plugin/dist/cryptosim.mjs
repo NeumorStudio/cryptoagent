@@ -8271,7 +8271,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.32.0";
+    CODE_VERSION = "0.33.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9247,6 +9247,29 @@ async function scanMarket(limit = 25) {
     for (const b of sol) add(b.tokenAddress, "dexscreener_boosted", { dexscreenerBoost: b.totalAmount });
     return sol.length;
   };
+  const profiles = async () => {
+    const list = await fetchJson("https://api.dexscreener.com/token-profiles/latest/v1");
+    const mints = [...new Set(list.filter((p) => p.chainId === "solana").map((p) => String(p.tokenAddress)))].slice(0, 30);
+    if (!mints.length) return 0;
+    const res = await fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${mints.join(",")}`);
+    const best = /* @__PURE__ */ new Map();
+    for (const p of res.pairs ?? []) {
+      const mint = p.baseToken?.address;
+      if (mints.includes(mint) && (p.liquidity?.usd ?? 0) > (best.get(mint)?.liquidity?.usd ?? -1)) best.set(mint, p);
+    }
+    for (const [mint, p] of best) {
+      add(mint, "dexscreener_profiles", {
+        symbol: p.baseToken?.symbol,
+        name: p.baseToken?.name,
+        mcapUsd: n2(p.marketCap ?? p.fdv, 0),
+        liquidityUsd: n2(p.liquidity?.usd, 0),
+        priceChange5mPct: n2(p.priceChange?.m5),
+        priceChange1hPct: n2(p.priceChange?.h1),
+        ageMinutes: ageMinutes2(p.pairCreatedAt)
+      });
+    }
+    return best.size;
+  };
   const gecko = async () => {
     const res = await fetchJson("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools");
     for (const p of res.data) {
@@ -9267,18 +9290,22 @@ async function scanMarket(limit = 25) {
     attempt("jupiter_trending_1h", () => jup("1h")),
     attempt("pumpfun_live", pump),
     attempt("dexscreener_boosted", boosts),
-    attempt("geckoterminal_trending", gecko)
+    attempt("geckoterminal_trending", gecko),
+    attempt("dexscreener_profiles", profiles)
   ]);
-  const candidates = [...merged.values()].map(
+  const all = [...merged.values()].map(
     (c) => c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05 ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` } : c
-  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  const candidates = all.slice(0, limit);
+  const newest = all.slice(limit).filter((c) => c.ageMinutes !== void 0 && c.ageMinutes < 60).sort((a, b) => (a.ageMinutes ?? 0) - (b.ageMinutes ?? 0)).slice(0, 5);
   return {
     note: "Candidatos combinados de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para analizar uno a fondo usa token_report con chain: solana y su mint.",
     sourcesStatus: status.map(
-      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending"][i]}: ${s}` : s.error
+      (s, i) => typeof s === "number" ? `${["jupiter_trending_5m", "jupiter_trending_1h", "pumpfun_live", "dexscreener_boosted", "geckoterminal_trending", "dexscreener_profiles"][i]}: ${s}` : s.error
     ),
     totalUnique: merged.size,
-    candidates
+    candidates,
+    ...newest.length ? { newest } : {}
   };
 }
 async function tokenReport(mint) {
@@ -9580,12 +9607,42 @@ function marketContext(chain) {
     ...fresh ? { marketYoungTokens: s.young, ...s.medianTraders5m !== void 0 ? { marketMedianTraders5m: s.medianTraders5m } : {} } : {}
   };
 }
-var byChain, MAX_AGE_MS;
+function recordRead(chain, token2, r) {
+  const key = readKey(chain, token2);
+  const now2 = { at: Date.now(), ...r };
+  const prev = reads.get(key);
+  reads.set(key, prev && now2.at - prev.first.at <= READS_MAX_AGE_MS ? { first: prev.first, last: now2, count: prev.count + 1 } : { first: now2, last: now2, count: 1 });
+}
+function readTrend(chain, token2) {
+  const r = reads.get(readKey(chain, token2));
+  if (!r || Date.now() - r.last.at > READS_MAX_AGE_MS) return { readsBeforeBuy: 0 };
+  const trend = { readsBeforeBuy: r.count };
+  if (r.count >= 2) {
+    trend.minutesBetweenReads = Number(((r.last.at - r.first.at) / 6e4).toFixed(1));
+    if (r.first.liquidityUsd && r.last.liquidityUsd !== void 0) trend.liquidityTrendPct = Math.round((r.last.liquidityUsd / r.first.liquidityUsd - 1) * 100);
+    if (r.first.netBuyers5m !== void 0 && r.last.netBuyers5m !== void 0) trend.netBuyersTrend = r.last.netBuyers5m - r.first.netBuyers5m;
+  }
+  return trend;
+}
+function recordFeatures(chain, token2, features) {
+  decided.set(readKey(chain, token2), { at: Date.now(), features });
+}
+function decidedFeatures(chain, token2) {
+  const d = decided.get(readKey(chain, token2));
+  if (!d || Date.now() - d.at > DECIDED_MAX_AGE_MS) return void 0;
+  return { features: d.features, ageSeconds: Math.round((Date.now() - d.at) / 1e3) };
+}
+var byChain, MAX_AGE_MS, reads, READS_MAX_AGE_MS, readKey, decided, DECIDED_MAX_AGE_MS;
 var init_market_state = __esm({
   "src/sim/market-state.ts"() {
     "use strict";
     byChain = /* @__PURE__ */ new Map();
     MAX_AGE_MS = 20 * 6e4;
+    reads = /* @__PURE__ */ new Map();
+    READS_MAX_AGE_MS = 30 * 6e4;
+    readKey = (chain, token2) => `${chain}:${token2.toLowerCase()}`;
+    decided = /* @__PURE__ */ new Map();
+    DECIDED_MAX_AGE_MS = 5 * 6e4;
   }
 });
 
@@ -9614,12 +9671,17 @@ function decisionContext(missionId, venue, asset2, addUsd, cashSpent) {
   const openCost = db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND status = 'open'").get(missionId).c;
   const existing = db.prepare("SELECT COALESCE(SUM(cost_open_usd), 0) AS c FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, venue, asset2).c;
   const capital = cash + openCost + (cashSpent ? addUsd : 0);
-  const previous = db.prepare("SELECT realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC").all(venue, asset2);
+  const previous = db.prepare("SELECT mission_id AS m, closed_at AS at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC").all(venue, asset2);
   const deadline = db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId)?.deadline;
   return {
     ...capital > 0 && addUsd > 0 ? { portfolioPct: Math.round((existing + addUsd) / capital * 100) } : {},
     previousTradesInToken: previous.length,
     ...previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {},
+    // Volver en la misma ola (minutos) no es lo mismo que volver horas o días después.
+    ...previous[0] ? { minutesSinceLastTradeInToken: Math.round((Date.now() - new Date(previous[0].at).getTime()) / 6e4) } : {},
+    previousTradesInTokenThisMission: previous.filter((p) => p.m === missionId).length,
+    // Cómo cambiaba el token entre sus lecturas antes de comprar (liquidez y compradores netos).
+    ...readTrend(venue, asset2),
     ...deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)) } : {},
     // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
     ...marketContext(venue)
@@ -9631,6 +9693,21 @@ function tokenHistory(venue, asset2) {
   const pct4 = (r) => r.c > 0 ? Math.round((r.p / r.c - 1) * 100) : 0;
   const last = rows.at(-1);
   return `operado ${rows.length} ${rows.length === 1 ? "vez" : "veces"} (${rows.map((r) => `M${r.mission_id} ${pct4(r) > 0 ? "+" : ""}${pct4(r)} %`).join(", ")}); la \xFAltima ${pct4(last) > 0 ? "gan\xF3" : pct4(last) < 0 ? "perdi\xF3" : "qued\xF3 igual"}`;
+}
+async function featuresAtDecision(venue, asset2) {
+  const d = decidedFeatures(venue.id, asset2);
+  if (d) return { ...d.features, featuresSource: `lectura del agente, ${d.ageSeconds} s antes de comprar` };
+  return { ...await venue.entryFeatures(asset2), featuresSource: "le\xEDdos tras la compra" };
+}
+async function fillVsPrice(venue, asset2, costUsd, qty) {
+  try {
+    const v = getVenue(venue);
+    if (v.kind !== "chain" || !(costUsd > 0) || !(qty > 0)) return {};
+    const ref = (await v.priceUsd([asset2]))[asset2];
+    return ref ? { fillVsPricePct: Math.round((costUsd / qty / ref - 1) * 1e3) / 10 } : {};
+  } catch {
+    return {};
+  }
 }
 async function openOrAdd(args) {
   const missionId = args.missionId;
@@ -9653,7 +9730,13 @@ async function openOrAdd(args) {
     return;
   }
   const features = args.inherit ? args.inherit.entry_features : JSON.stringify(args.features ? await args.features().catch(() => ({ venue: args.venue })) : { venue: args.venue });
-  const research = args.inherit ? args.inherit.research : JSON.stringify({ ...researchSnapshot(missionId, args.asset), ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true), adds: 0, addedWhileDown: false });
+  const research = args.inherit ? args.inherit.research : JSON.stringify({
+    ...researchSnapshot(missionId, args.asset),
+    ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true),
+    ...await fillVsPrice(args.venue, args.asset, args.costUsd, args.qty),
+    adds: 0,
+    addedWhileDown: false
+  });
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -9709,7 +9792,7 @@ async function recordTrade(args) {
       qty: args.bought.qty,
       costUsd: args.valueUsd,
       meta: args.meta,
-      features: measurable ? () => venue.entryFeatures(args.bought.asset) : void 0
+      features: measurable ? () => featuresAtDecision(venue, args.bought.asset) : void 0
     });
   }
 }
@@ -9741,7 +9824,7 @@ function sellFromPosition(args) {
 async function buyIntoPosition(args) {
   const venue = getVenue(args.venue);
   const measurable = venue.kind === "chain" && args.asset !== venue.native.address;
-  await openOrAdd({ ...args, features: measurable ? () => venue.entryFeatures(args.asset) : void 0 });
+  await openOrAdd({ ...args, features: measurable ? () => featuresAtDecision(venue, args.asset) : void 0 });
 }
 function listPositions(missionId) {
   const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
@@ -10912,7 +10995,7 @@ function insertMission(args) {
     missionId: id,
     sessionId: null,
     kind: "mission",
-    summary: `${args.live ? "Misi\xF3n REAL" : "Misi\xF3n"} #${id} iniciada: de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD antes del ${new Date(deadline).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}`
+    summary: `${args.live ? "Misi\xF3n REAL" : "Misi\xF3n"} #${id} iniciada: de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD en ${Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)} min (el reloj arranca cuando el agente empieza a trabajar)`
   });
   return id;
 }
@@ -11885,7 +11968,7 @@ async function candles(venue, token2, fromSec, toSec) {
   const pools = await fetchJson(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${token2}/pools?page=1`, {
     ttlMs: 36e5
   });
-  const pool = pools.data[0]?.attributes.address;
+  const pool = [...pools.data].sort((a, b) => Number(b.attributes.reserve_in_usd ?? 0) - Number(a.attributes.reserve_in_usd ?? 0))[0]?.attributes.address;
   if (!pool) throw new Error("sin pool en GeckoTerminal");
   const limit = Math.min(1e3, Math.ceil((toSec - fromSec) / 60) + 3);
   const res = await fetchJson(
@@ -11922,13 +12005,15 @@ async function one(p) {
   const out = {
     ...base2,
     marketMovePct: pct2(entry, exit, d),
-    bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[2])), d) : void 0,
-    worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[3])), d) : void 0,
+    // Con los cierres de cada minuto, no con los máximos y mínimos: en pools pequeños las mechas son picos de un
+    // segundo que no se podían vender (en la M28, p/acc "llegó a +66 %" justo antes de un rug del -95 %).
+    bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[4])), d) : void 0,
+    worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[4])), d) : void 0,
     ifHeld15Pct: at15 ? pct2(entry, at15, d) : void 0,
     ifHeld30Pct: at30 ? pct2(entry, at30, d) : void 0
   };
   const notes = [];
-  if (out.bestWhileHeldPct !== void 0 && out.marketMovePct !== void 0 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
+  if (out.bestWhileHeldPct !== void 0 && out.marketMovePct !== void 0 && out.bestWhileHeldPct >= 3 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
     notes.push(`lleg\xF3 a +${out.bestWhileHeldPct} % mientras la ten\xEDa y sali\xF3 en ${out.marketMovePct} %: la salida dej\xF3 dinero en la mesa`);
   }
   if (out.ifHeld15Pct !== void 0 && out.marketMovePct !== void 0 && out.ifHeld15Pct > out.marketMovePct + 30) {
@@ -11940,6 +12025,10 @@ async function one(p) {
   }
   if (out.bestWhileHeldPct !== void 0 && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) notes.push("nunca lleg\xF3 a ir en positivo: el problema fue la entrada, no la salida");
   if (perp) notes.push(`futuro a ${perp[3]}x: los % son del precio en el sentido de la posici\xF3n; sobre el margen, por ${perp[3]}`);
+  if (out.marketMovePct !== void 0 && base2.actualPct !== null && Math.abs(out.marketMovePct - base2.actualPct) > 15) {
+    out.unreliable = `el precio del pool (${out.marketMovePct} %) no cuadra con la venta real (${base2.actualPct} %): no eran precios de venta`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  }
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== void 0) cache2.set(p.id, out);
   return out;
@@ -41656,7 +41745,15 @@ var CONDITION_FIELDS = [
   // mediana de operadores en 5 min).
   "hourUtc",
   "marketYoungTokens",
-  "marketMedianTraders5m"
+  "marketMedianTraders5m",
+  // Reentrada (cuánto hace y si es en esta misión) y evolución de las lecturas antes de comprar.
+  "minutesSinceLastTradeInToken",
+  "previousTradesInTokenThisMission",
+  "readsBeforeBuy",
+  "minutesBetweenReads",
+  "liquidityTrendPct",
+  "netBuyersTrend",
+  "fillVsPricePct"
 ];
 var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
 var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
@@ -41670,7 +41767,14 @@ var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
   "minutesLeft",
   "hourUtc",
   "marketYoungTokens",
-  "marketMedianTraders5m"
+  "marketMedianTraders5m",
+  "minutesSinceLastTradeInToken",
+  "previousTradesInTokenThisMission",
+  "readsBeforeBuy",
+  "minutesBetweenReads",
+  "liquidityTrendPct",
+  "netBuyersTrend",
+  "fillVsPricePct"
 ]);
 function fieldValue(p, f) {
   if (f === "venue") return p.entry.venue ?? p.venue;
@@ -41720,7 +41824,7 @@ function wilson(successes, n3) {
   const half = z2 * Math.sqrt(p * (1 - p) / n3 + z2 * z2 / (4 * n3 * n3)) / denom;
   return { low: Math.round(Math.max(0, center - half) * 100), high: Math.round(Math.min(1, center + half) * 100) };
 }
-var beliefStage = (decided) => decided >= 30 ? "rule" : decided >= 10 ? "provisional" : "hypothesis";
+var beliefStage = (decided2) => decided2 >= 30 ? "rule" : decided2 >= 10 ? "provisional" : "hypothesis";
 var STAGE_LABEL = {
   hypothesis: "hip\xF3tesis (menos de 10 casos: puede ser suerte)",
   provisional: "provisional (10-29 casos)",
@@ -41736,15 +41840,15 @@ function beliefEvidence(b, closed) {
     const wins = ps.filter((p) => outcome(p) === "win").length;
     const losses = ps.filter((p) => outcome(p) === "loss").length;
     const [inFavor, against] = b.expectation === "negative" ? [losses, wins] : [wins, losses];
-    const decided = inFavor + against;
-    const support = decided ? Math.round(inFavor / decided * 100) : null;
-    const ci = wilson(inFavor, decided);
-    const stage = beliefStage(decided);
+    const decided2 = inFavor + against;
+    const support = decided2 ? Math.round(inFavor / decided2 * 100) : null;
+    const ci = wilson(inFavor, decided2);
+    const stage = beliefStage(decided2);
     const summary = summarizeTrades(ps);
     matched = { ...summary, inFavor, against, supportPct: support, wilsonLowPct: ci.low, wilsonHighPct: ci.high, stage };
     const counts = `${inFavor} a favor, ${against} en contra; acierto ${support} %, intervalo ${ci.low}-${ci.high} %`;
-    verdict = decided < 3 ? `sin evidencia suficiente (${decided} operaciones decisivas; hacen falta al menos 3)` : ci.low >= 50 ? `se sostiene (${counts})` : ci.high < 50 ? `los datos la contradicen (${counts})` : `sin confirmar (${counts})`;
-    if (decided >= 3) verdict += ` \xB7 ${STAGE_LABEL[stage]}`;
+    verdict = decided2 < 3 ? `sin evidencia suficiente (${decided2} operaciones decisivas; hacen falta al menos 3)` : ci.low >= 50 ? `se sostiene (${counts})` : ci.high < 50 ? `los datos la contradicen (${counts})` : `sin confirmar (${counts})`;
+    if (decided2 >= 3) verdict += ` \xB7 ${STAGE_LABEL[stage]}`;
     verdict += magnitude(summary);
   }
   return { verdict, appliedIn: applied, ...matched ? { matchingTrades: matched } : {} };
@@ -42618,6 +42722,8 @@ function riskCheck(chain, token2, f) {
   const key = `${chain}:${token2.toLowerCase()}`;
   const prev = lastReads.get(key);
   lastReads.set(key, { at: Date.now(), f });
+  recordRead(chain, token2, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
+  recordFeatures(chain, token2, f);
   const rugs = creatorRugs(f.creator);
   const change = (a, b) => a !== void 0 && b !== void 0 && a !== 0 ? Number(((b - a) / Math.abs(a) * 100).toFixed(1)) : void 0;
   const flags = [];
@@ -42654,6 +42760,7 @@ var SOURCE_CODE = {
   jupiter_trending_1h: "jup1h",
   pumpfun_live: "pump",
   dexscreener_boosted: "dexBoost",
+  dexscreener_profiles: "dexNew",
   geckoterminal_trending: "gecko",
   geckoterminal_trending_pools: "gecko",
   geckoterminal_new_pools: "geckoNew"
@@ -42661,21 +42768,23 @@ var SOURCE_CODE = {
 function compactScan(scan) {
   if (!scan || typeof scan !== "object" || !Array.isArray(scan.candidates)) return scan;
   const s = scan;
+  const row = ({ sources, name, symbol: symbol2, ...c }) => {
+    const n3 = typeof name === "string" ? name.trim().toLowerCase().replace(/ \/ \S+$/, "") : "";
+    const same = typeof symbol2 === "string" && n3 === symbol2.trim().toLowerCase();
+    return {
+      ...Object.fromEntries(Object.entries(c).slice(0, 1)),
+      symbol: symbol2,
+      ...same || !name ? {} : { name: String(name).slice(0, 24) },
+      sources: Array.isArray(sources) ? sources.map((x) => SOURCE_CODE[x] ?? x).join(",") : sources,
+      ...Object.fromEntries(Object.entries(c).slice(1))
+    };
+  };
   return {
     ...s,
     sourcesStatus: void 0,
-    sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h \xB7 pump: en directo en pump.fun \xB7 dexBoost: promocionado en DexScreener \xB7 gecko/geckoNew: GeckoTerminal tendencia/nuevos",
-    candidates: s.candidates.map(({ sources, name, symbol: symbol2, ...c }) => {
-      const n3 = typeof name === "string" ? name.trim().toLowerCase().replace(/ \/ \S+$/, "") : "";
-      const same = typeof symbol2 === "string" && n3 === symbol2.trim().toLowerCase();
-      return {
-        ...Object.fromEntries(Object.entries(c).slice(0, 1)),
-        symbol: symbol2,
-        ...same || !name ? {} : { name: String(name).slice(0, 24) },
-        sources: Array.isArray(sources) ? sources.map((x) => SOURCE_CODE[x] ?? x).join(",") : sources,
-        ...Object.fromEntries(Object.entries(c).slice(1))
-      };
-    })
+    sourceCodes: "jup5m/jup1h: tendencia en Jupiter 5 min/1 h \xB7 pump: en directo en pump.fun \xB7 dexBoost: promocionado en DexScreener \xB7 dexNew: perfil reci\xE9n creado en DexScreener \xB7 gecko/geckoNew: GeckoTerminal tendencia/nuevos",
+    candidates: s.candidates.map(row),
+    ...s.newest?.length ? { newest: s.newest.map(row), newestNote: "Los de menos de 60 min que no entran en la lista (salen en pocas fuentes)" } : {}
   };
 }
 function positionValues(v) {
@@ -42777,6 +42886,16 @@ async function briefReports(chain, tokens, missionId = null) {
     tokens: rows
   });
 }
+async function roundTripCost(chain, token2) {
+  const c = getChain(chain);
+  const stable = c.stables[0];
+  if (!stable || c.isCash(token2.address)) return void 0;
+  const usd2 = 25;
+  const buy = await c.quote({ input: stable, output: token2, amountIn: usd2, slippageBps: 300 });
+  if (!(buy.amountOut > 0)) return void 0;
+  const sell = await c.quote({ input: token2, output: stable, amountIn: buy.amountOut, slippageBps: 300 });
+  return { withUsd: usd2, backUsd: Number(sell.amountOut.toFixed(2)), costPct: Number(((1 - sell.amountOut / usd2) * 100).toFixed(2)) };
+}
 function compactReport(report) {
   const r = { ...report };
   delete r.mint;
@@ -42847,7 +42966,13 @@ var SIM_TOOLS = [
       const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
       const resolved = await c.resolveToken(token2.trim()).catch(() => null);
       const history = resolved ? tokenHistory(chain, resolved.address) : void 0;
-      return json2({ ...compactReport(report), ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {}, yourHistory: history ?? "nunca lo has operado" });
+      const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => void 0) : void 0;
+      return json2({
+        ...compactReport(report),
+        ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {},
+        yourHistory: history ?? "nunca lo has operado",
+        ...roundTrip ? { roundTrip } : {}
+      });
     }
   }),
   tool({
@@ -43598,11 +43723,14 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "write_briefing",
     kind: "memory",
     role: "reviewer",
-    description: "Escribe (o reescribe) el briefing de una misi\xF3n: lo que el agente debe tener presente de su memoria para esa misi\xF3n en concreto, citando los ids de howtos y creencias. El agente lo recibe al empezar cada sesi\xF3n y, si lo cambias a mitad de misi\xF3n, en su siguiente acci\xF3n.",
-    schema: external_exports.object({ mission_id: external_exports.number().int(), text: external_exports.string().min(1) }),
-    run: async ({ mission_id, text: text2 }) => {
-      writeBriefing(mission_id, text2);
-      return `Briefing de la misi\xF3n #${mission_id} guardado.`;
+    description: "Escribe (o reescribe) el briefing de una misi\xF3n: lo que el agente debe tener presente de su memoria para esa misi\xF3n en concreto, citando los ids de howtos y creencias. El agente lo recibe al empezar cada sesi\xF3n y, si lo cambias a mitad de misi\xF3n, en su siguiente acci\xF3n. Con append: true, el texto se a\xF1ade al final del briefing actual (con la hora) en vez de sustituirlo: \xFAtil a mitad de misi\xF3n, sin reescribir lo que ya hab\xEDa.",
+    schema: external_exports.object({ mission_id: external_exports.number().int(), text: external_exports.string().min(1), append: external_exports.boolean().default(false) }),
+    run: async ({ mission_id, text: text2, append }) => {
+      const current = append ? getBriefing(mission_id)?.text : void 0;
+      writeBriefing(mission_id, current ? `${current}
+
+Actualizaci\xF3n (${now().slice(11, 16)} UTC): ${text2}` : text2);
+      return `Briefing de la misi\xF3n #${mission_id} ${current ? "ampliado" : "guardado"}.`;
     }
   }),
   // ─── Usuario: peticiones de capacidades ───────────────────────────────────

@@ -73,3 +73,39 @@ test("cada compra guarda la hora UTC y, tras un escaneo, cómo estaba el mercado
   const report = String((await runTool("token_report", { chain: "solana", token: mint }, ctx)).content);
   assert.match(report, /"yourHistory":"operado \d+ ve/);
 });
+
+test("la compra guarda cuánto hace de la última operación en el token y cómo cambiaron sus lecturas; token_report da el coste de ida y vuelta", async () => {
+  const { recordRead, resetMarketState } = await import("../src/sim/market-state.js");
+  resetMarketState();
+  recordRead("solana", mint, { liquidityUsd: 10_000, netBuyers5m: 20 });
+  recordRead("solana", mint, { liquidityUsd: 12_000, netBuyers5m: 35 });
+  const d = decisionContext(mission.id, "solana", mint, 10, false);
+  assert.equal(d.readsBeforeBuy, 2);
+  assert.equal(d.liquidityTrendPct, 20);
+  assert.equal(d.netBuyersTrend, 15);
+  assert.ok((d.minutesSinceLastTradeInToken ?? -1) >= 0, "ya lo operó en el primer test");
+  assert.ok((d.previousTradesInTokenThisMission ?? 0) >= 1);
+  const report = JSON.parse(String((await runTool("token_report", { chain: "solana", token: mint }, ctx)).content));
+  assert.equal(report.roundTrip.withUsd, 25);
+  assert.ok(report.roundTrip.costPct > 0 && report.roundTrip.costPct < 2, String(report.roundTrip.costPct));
+});
+
+test("cada compra guarda cuánto se alejó lo pagado del precio de referencia", () => {
+  const p = listPositions(mission.id).find((x) => x.asset === mint && x.research.fillVsPricePct !== undefined)!;
+  // Precio 2 y comisión del pool 0,3 %: se paga ~2,006 por unidad, un +0,3 %.
+  assert.ok(Number(p.research.fillVsPricePct) > 0 && Number(p.research.fillVsPricePct) < 1, String(p.research.fillVsPricePct));
+});
+
+test("la posición guarda los datos del token que el agente leyó al decidir, no los de después de comprar", async () => {
+  const { recordFeatures, resetMarketState } = await import("../src/sim/market-state.js");
+  resetMarketState();
+  setPrice(mint, 2);
+  // Una posición nueva (la de tests anteriores, si queda, se cierra antes).
+  await runTool("simulate_swap", { chain: "solana", input: mint, output: "USDC", sell_all: true, slippage_bps: 100, thesis }, ctx);
+  recordFeatures("solana", mint, { venue: "solana", priceChange5mPct: 186, netBuyers5m: 290 });
+  const r = await runTool("simulate_swap", { chain: "solana", input: "USDC", output: mint, amount: 5, slippage_bps: 100, thesis }, ctx);
+  assert.ok(!r.isError, String(r.content));
+  const p = listPositions(mission.id).filter((x) => x.asset === mint && x.status === "open").at(-1)!;
+  assert.equal(p.entry.priceChange5mPct, 186);
+  assert.match(String(p.entry.featuresSource), /lectura del agente/);
+});

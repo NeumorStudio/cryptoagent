@@ -85,6 +85,14 @@ export const CONDITION_FIELDS = [
   "hourUtc",
   "marketYoungTokens",
   "marketMedianTraders5m",
+  // Reentrada (cuánto hace y si es en esta misión) y evolución de las lecturas antes de comprar.
+  "minutesSinceLastTradeInToken",
+  "previousTradesInTokenThisMission",
+  "readsBeforeBuy",
+  "minutesBetweenReads",
+  "liquidityTrendPct",
+  "netBuyersTrend",
+  "fillVsPricePct",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -109,6 +117,13 @@ const RESEARCH_FIELDS = new Set([
   "hourUtc",
   "marketYoungTokens",
   "marketMedianTraders5m",
+  "minutesSinceLastTradeInToken",
+  "previousTradesInTokenThisMission",
+  "readsBeforeBuy",
+  "minutesBetweenReads",
+  "liquidityTrendPct",
+  "netBuyersTrend",
+  "fillVsPricePct",
 ]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {

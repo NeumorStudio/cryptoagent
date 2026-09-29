@@ -15,7 +15,7 @@ export interface Counterfactual {
   actualPct: number | null;
   /** Movimiento del precio de mercado entre la entrada y la salida. */
   marketMovePct?: number;
-  /** Lo más alto y lo más bajo que llegó mientras la tenía, sobre el precio de entrada. */
+  /** Lo más alto y lo más bajo que llegó mientras la tenía (cierres de cada minuto), sobre el precio de entrada. */
   bestWhileHeldPct?: number;
   worstWhileHeldPct?: number;
   /** Si la hubiera mantenido 15 o 30 minutos más (sobre el precio de entrada). */
@@ -23,6 +23,8 @@ export interface Counterfactual {
   ifHeld30Pct?: number;
   reading?: string;
   unavailable?: string;
+  /** El precio del pool se aleja mucho del resultado real: sus máximos y "habría dado" no eran vendibles. */
+  unreliable?: string;
 }
 
 const cache = new Map<number, Counterfactual>();
@@ -31,10 +33,11 @@ const pct = (a: number, b: number, decimals = 1) => Number(((b / a - 1) * 100).t
 async function candles(venue: string, token: string, fromSec: number, toSec: number): Promise<Array<[number, number, number, number, number]>> {
   const net = NETWORK[venue];
   if (!net) throw new Error("cadena sin datos de velas");
-  const pools = await fetchJson<{ data: Array<{ attributes: { address: string } }> }>(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${token}/pools?page=1`, {
+  const pools = await fetchJson<{ data: Array<{ attributes: { address: string; reserve_in_usd?: string } }> }>(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${token}/pools?page=1`, {
     ttlMs: 3_600_000,
   });
-  const pool = pools.data[0]?.attributes.address;
+  // El pool con más liquidez: el primero de la lista puede ser uno pequeño (o manipulado) que no es donde se opera.
+  const pool = [...pools.data].sort((a, b) => Number(b.attributes.reserve_in_usd ?? 0) - Number(a.attributes.reserve_in_usd ?? 0))[0]?.attributes.address;
   if (!pool) throw new Error("sin pool en GeckoTerminal");
   const limit = Math.min(1000, Math.ceil((toSec - fromSec) / 60) + 3);
   const res = await fetchJson<{ data: { attributes: { ohlcv_list: Array<[number, number, number, number, number]> } } }>(
@@ -84,13 +87,15 @@ async function one(p: Pos): Promise<Counterfactual> {
   const out: Counterfactual = {
     ...base,
     marketMovePct: pct(entry, exit, d),
-    bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[2])), d) : undefined,
-    worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[3])), d) : undefined,
+    // Con los cierres de cada minuto, no con los máximos y mínimos: en pools pequeños las mechas son picos de un
+    // segundo que no se podían vender (en la M28, p/acc "llegó a +66 %" justo antes de un rug del -95 %).
+    bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[4])), d) : undefined,
+    worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[4])), d) : undefined,
     ifHeld15Pct: at15 ? pct(entry, at15, d) : undefined,
     ifHeld30Pct: at30 ? pct(entry, at30, d) : undefined,
   };
   const notes: string[] = [];
-  if (out.bestWhileHeldPct !== undefined && out.marketMovePct !== undefined && out.bestWhileHeldPct - out.marketMovePct >= 20) {
+  if (out.bestWhileHeldPct !== undefined && out.marketMovePct !== undefined && out.bestWhileHeldPct >= 3 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
     notes.push(`llegó a +${out.bestWhileHeldPct} % mientras la tenía y salió en ${out.marketMovePct} %: la salida dejó dinero en la mesa`);
   }
   if (out.ifHeld15Pct !== undefined && out.marketMovePct !== undefined && out.ifHeld15Pct > out.marketMovePct + 30) {
@@ -102,6 +107,12 @@ async function one(p: Pos): Promise<Counterfactual> {
   }
   if (out.bestWhileHeldPct !== undefined && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) notes.push("nunca llegó a ir en positivo: el problema fue la entrada, no la salida");
   if (perp) notes.push(`futuro a ${perp[3]}x: los % son del precio en el sentido de la posición; sobre el margen, por ${perp[3]}`);
+  // Si el precio del pool no cuadra con lo que dio la venta real (rug, pool distinto o mucho impacto), sus
+  // "llegó a" y "habría dado" no eran precios a los que se pudiera vender: se avisa para no juzgar la salida con ellos.
+  if (out.marketMovePct !== undefined && base.actualPct !== null && Math.abs(out.marketMovePct - base.actualPct) > 15) {
+    out.unreliable = `el precio del pool (${out.marketMovePct} %) no cuadra con la venta real (${base.actualPct} %): no eran precios de venta`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  }
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== undefined) cache.set(p.id, out); // completa: ya no cambia
   return out;

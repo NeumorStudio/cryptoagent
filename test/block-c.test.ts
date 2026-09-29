@@ -142,3 +142,13 @@ test("una toma de beneficio es una orden límite: si al vender el precio no lleg
   await swap({ missionId: m4.id, sessionId: null, chain: "solana", input: mint, output: "USDC", sellAll: true, slippageBps: 100, reasoning: "tp", minOut: qty * 1.9 });
   assert.equal(getHoldings(m4.id).find((h) => h.asset === mint)?.amount ?? 0, 0);
 });
+
+test("write_briefing con append añade al briefing actual sin borrarlo", async () => {
+  const memory = await import("../src/sim/memory.js");
+  const m5 = await createMission(1000, 1100, 30, undefined, { solana: 100 });
+  const c5 = { sessionId: 1, missionId: m5.id };
+  await runTool("write_briefing", { mission_id: m5.id, text: "Base: la #5." }, c5);
+  await runTool("write_briefing", { mission_id: m5.id, text: "Cuidado con el pico.", append: true }, c5);
+  const t = memory.getBriefing(m5.id)!.text;
+  assert.match(t, /^Base: la #5\.\n\nActualización \(\d\d:\d\d UTC\): Cuidado con el pico\.$/);
+});

@@ -867,12 +867,14 @@ export function recentApproach(count = 8) {
     const end = new Date(m.ended_at ?? m.deadline).getTime();
     const durationMin = (new Date(m.deadline).getTime() - new Date(m.started_at ?? m.created_at).getTime()) / 60_000;
     const idleAtEndMinutes = m.status === "succeeded" || !lastTrade ? 0 : Math.max(0, Math.round((end - new Date(lastTrade).getTime()) / 60_000));
-    // Esperar con una posición abierta no es rendirse; esperar en efectivo, sí.
+    // Esperar con una posición abierta no es rendirse; esperar en efectivo, sí. La posición se anota unos
+    // milisegundos después que el swap en el diario: si la última operación fue justo esa compra, cuenta (en la
+    // M3 de la v0.35.3, THUMB abierta hasta el final salía como "aparcado en efectivo").
     const holding =
       !!lastTrade &&
       !!db
         .prepare("SELECT 1 FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at <= ? AND (closed_at IS NULL OR closed_at > ?) LIMIT 1")
-        .get(m.id, lastTrade, lastTrade);
+        .get(m.id, new Date(new Date(lastTrade).getTime() + 10_000).toISOString(), lastTrade);
     return {
       missionId: m.id,
       idleAtEndMinutes,

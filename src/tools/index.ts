@@ -83,7 +83,7 @@ const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), les
 
 // ─── Chequeo de riesgo de token_report ──────────────────────────────────────
 
-/** Última lectura de cada token (en este proceso), para decir qué ha cambiado en la siguiente. */
+/** Última lectura de cada token en cada misión (en este proceso), para decir qué ha cambiado en la siguiente. */
 const lastReads = new Map<string, { at: number; f: Features }>();
 
 /**
@@ -91,12 +91,12 @@ const lastReads = new Map<string, { at: number; f: Features }>();
  * (creencias con condición sobre estos mismos campos). Antes eran "alarmas" puestas por nosotros, y los
  * datos del agente llegaron a desmentir alguna (creadores en serie: 10 de 11 ganadas).
  */
-function riskCheck(chain: ChainId, token: string, f: Features) {
-  const key = `${chain}:${token.toLowerCase()}`;
+function riskCheck(chain: ChainId, token: string, f: Features, missionId: number | null) {
+  const key = `${missionId ?? "-"}:${chain}:${token.toLowerCase()}`;
   const prev = lastReads.get(key);
   lastReads.set(key, { at: Date.now(), f });
-  recordRead(chain, token, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
-  recordFeatures(chain, token, f as unknown as Record<string, unknown>);
+  recordRead(missionId, chain, token, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
+  recordFeatures(missionId, chain, token, f as unknown as Record<string, unknown>);
   const change = (a?: number, b?: number) => (a !== undefined && b !== undefined && a !== 0 ? Number((((b - a) / Math.abs(a)) * 100).toFixed(1)) : undefined);
   return {
     ...(f.creatorIsLaunchpadDeployer ? { creatorIsLaunchpadDeployer: true } : {}),
@@ -262,7 +262,7 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
     const address = String(cand.mint ?? cand.token ?? "");
     const f = address ? await c.entryFeatures(address).catch(() => null) : null;
     if (!f) return { ...cand, risk: "sin datos" };
-    const rc = riskCheck(chain, address, f);
+    const rc = riskCheck(chain, address, f, missionId);
     return { ...cand, risk: riskCell(rc), memory: memoryCell(chain, f, address, missionId), yourHistory: positions.tokenHistory(chain, address) };
   });
   return [...checked, ...candidates.slice(n)];
@@ -275,7 +275,7 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
     const t = await c.resolveToken(token).catch(() => null);
     const f = t ? await c.entryFeatures(t.address).catch(() => null) : null;
     if (!t || !f) return { token, symbol: t?.symbol, error: "sin datos (dirección desconocida o APIs caídas)" };
-    const rc = riskCheck(chain, token, f);
+    const rc = riskCheck(chain, token, f, missionId);
     const since = rc.sinceLastRead;
     return {
       token,
@@ -418,13 +418,17 @@ export const SIM_TOOLS = [
       if (tokens?.length) return briefReports(chain, tokens, ctx.missionId);
       if (!token) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
-      const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
-      const resolved = await c.resolveToken(token.trim()).catch(() => null);
+      const resolving = c.resolveToken(token.trim()).catch(() => null);
+      const [report, resolved, features] = await Promise.all([
+        c.research.report(token.trim()),
+        resolving,
+        resolving.then((t) => (t ? c.entryFeatures(t.address) : null)).catch(() => null),
+      ]);
       const history = resolved ? positions.tokenHistory(chain, resolved.address) : undefined;
       const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => undefined) : undefined;
       return json({
         ...compactReport(report),
-        ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}),
+        ...(features ? { riskCheck: riskCheck(chain, token.trim(), features, ctx.missionId) } : {}),
         yourHistory: history ?? "nunca lo has operado",
         ...(roundTrip ? { roundTrip } : {}),
       });

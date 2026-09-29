@@ -192,7 +192,7 @@ export function fetchText(url: string, opts: RequestOpts = {}): Promise<{ status
  */
 /** Fallo de red o de límite de peticiones: vuelve a intentarlo más tarde y probablemente funcione. */
 export function isTransientError(err: unknown): boolean {
-  return /HTTP (408|429|5dd)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String((err as Error)?.message ?? err));
+  return /HTTP (408|429|5\d\d)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String((err as Error)?.message ?? err));
 }
 
 export function isNoRouteError(err: unknown): boolean {

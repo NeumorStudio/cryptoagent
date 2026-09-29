@@ -36,6 +36,7 @@ export function marketContext(chain: string) {
 // ─── Lecturas de un token antes de comprarlo ───────────────────────────────
 // La primera y la última lectura (token_report o el chequeo del escaneo) de cada token: con ellas se guarda en
 // la compra cómo evolucionaban la liquidez y los compradores netos mientras el agente lo miraba.
+// Van por misión: el servidor sigue vivo entre misiones, y una compra no debe guardar lo que leyó otra.
 
 interface Read {
   at: number;
@@ -44,19 +45,19 @@ interface Read {
 }
 const reads = new Map<string, { first: Read; last: Read; count: number }>();
 const READS_MAX_AGE_MS = 30 * 60_000;
-const readKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`;
+const readKey = (missionId: number | null, chain: string, token: string) => `${missionId ?? "-"}:${chain}:${token.toLowerCase()}`;
 
 /** Anota una lectura de un token (liquidez y compradores netos del momento). */
-export function recordRead(chain: string, token: string, r: { liquidityUsd?: number; netBuyers5m?: number }) {
-  const key = readKey(chain, token);
+export function recordRead(missionId: number | null, chain: string, token: string, r: { liquidityUsd?: number; netBuyers5m?: number }) {
+  const key = readKey(missionId, chain, token);
   const now: Read = { at: Date.now(), ...r };
   const prev = reads.get(key);
   reads.set(key, prev && now.at - prev.first.at <= READS_MAX_AGE_MS ? { first: prev.first, last: now, count: prev.count + 1 } : { first: now, last: now, count: 1 });
 }
 
 /** Cómo cambió el token entre la primera y la última lectura antes de comprar. */
-export function readTrend(chain: string, token: string): { readsBeforeBuy: number; minutesBetweenReads?: number; liquidityTrendPct?: number; netBuyersTrend?: number } {
-  const r = reads.get(readKey(chain, token));
+export function readTrend(missionId: number, chain: string, token: string): { readsBeforeBuy: number; minutesBetweenReads?: number; liquidityTrendPct?: number; netBuyersTrend?: number } {
+  const r = reads.get(readKey(missionId, chain, token));
   if (!r || Date.now() - r.last.at > READS_MAX_AGE_MS) return { readsBeforeBuy: 0 };
   const trend: ReturnType<typeof readTrend> = { readsBeforeBuy: r.count };
   if (r.count >= 2) {
@@ -74,13 +75,13 @@ export function readTrend(chain: string, token: string): { readsBeforeBuy: numbe
 const decided = new Map<string, { at: number; features: Record<string, unknown> }>();
 const DECIDED_MAX_AGE_MS = 5 * 60_000;
 
-export function recordFeatures(chain: string, token: string, features: Record<string, unknown>) {
-  decided.set(readKey(chain, token), { at: Date.now(), features });
+export function recordFeatures(missionId: number | null, chain: string, token: string, features: Record<string, unknown>) {
+  decided.set(readKey(missionId, chain, token), { at: Date.now(), features });
 }
 
 /** La última lectura completa del token si tiene menos de 5 minutos, con su antigüedad en segundos. */
-export function decidedFeatures(chain: string, token: string) {
-  const d = decided.get(readKey(chain, token));
+export function decidedFeatures(missionId: number, chain: string, token: string) {
+  const d = decided.get(readKey(missionId, chain, token));
   if (!d || Date.now() - d.at > DECIDED_MAX_AGE_MS) return undefined;
   return { features: d.features, ageSeconds: Math.round((Date.now() - d.at) / 1000) };
 }

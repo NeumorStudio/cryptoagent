@@ -95,6 +95,8 @@ async function entryFeatures(mint: string): Promise<Features> {
     ...(sharedDeployer
       ? { creatorIsLaunchpadDeployer: true }
       : {
+          // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
+          creatorIsLaunchpadDeployer: mints === undefined ? undefined : false,
           creator: t?.dev ?? rc?.creator ?? undefined,
           creatorTokens: mints,
           creatorGraduated: migrations,

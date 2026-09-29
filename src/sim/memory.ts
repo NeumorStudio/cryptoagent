@@ -398,16 +398,18 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
   return (db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all() as unknown as BeliefRow[])
     .filter((b) => matches(JSON.parse(b.condition!) as Condition, pos))
     .map((b) => ({ b, ev: beliefEvidence(b, closed) }))
-    .filter(({ ev }) => {
-      const t = ev.matchingTrades as { inFavor?: number; against?: number; wilsonLowPct?: number; avgPnlPct?: number } | undefined;
-      return (
-        t !== undefined &&
-        (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided &&
-        (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct &&
-        (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct
-      );
-    })
+    .filter(({ ev }) => isStrongNegative(ev))
     .map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+}
+
+function isStrongNegative(ev: ReturnType<typeof beliefEvidence>) {
+  const t = ev.matchingTrades as { inFavor?: number; against?: number; wilsonLowPct?: number; avgPnlPct?: number } | undefined;
+  return (
+    t !== undefined &&
+    (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided &&
+    (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct &&
+    (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct
+  );
 }
 
 /**
@@ -417,7 +419,7 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
  */
 export function beliefsFor(venue: string, entry: Record<string, unknown>, asset = "", decision: Record<string, unknown> = {}) {
   const pos = { venue, asset, entry: { ...entry, venue }, research: decision } as unknown as Pos;
-  const block = new Set(blockingBeliefs(venue, entry, asset, decision).map((b) => b.id));
+  const block = new Set<number>();
   const rows = (db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all() as unknown as BeliefRow[]).filter((b) =>
     matches(JSON.parse(b.condition!) as Condition, pos),
   );
@@ -426,7 +428,9 @@ export function beliefsFor(venue: string, entry: Record<string, unknown>, asset 
   const closed = rows.length ? closedPositions() : [];
   const cases: Record<number, { inFavor: number; against: number; stage: BeliefStage; verdict: BeliefVerdict }> = {};
   for (const b of rows) {
-    const t = beliefEvidence(b, closed).matchingTrades as { inFavor?: number; against?: number; stage?: BeliefStage; wilsonLowPct?: number; wilsonHighPct?: number } | undefined;
+    const ev = beliefEvidence(b, closed);
+    if (b.expectation === "negative" && isStrongNegative(ev)) block.add(b.id);
+    const t = ev.matchingTrades as { inFavor?: number; against?: number; stage?: BeliefStage; wilsonLowPct?: number; wilsonHighPct?: number } | undefined;
     const inFavor = t?.inFavor ?? 0;
     const against = t?.against ?? 0;
     cases[b.id] = { inFavor, against, stage: t?.stage ?? "hypothesis", verdict: beliefVerdict(inFavor + against, t?.wilsonLowPct, t?.wilsonHighPct) };
@@ -741,8 +745,8 @@ function validateCondition(cond: Condition | undefined, expectation: string | un
   if (cond && !expectation) throw new Error("Una creencia con condición necesita expectation: positive (tiende a ganar) o negative (tiende a perder)");
 }
 
-const sameCondition = (cond: Condition | undefined) =>
-  cond ? (db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ?").get(JSON.stringify(cond)) as { id: number } | undefined)?.id : undefined;
+const sameCondition = (cond: Condition | undefined, exceptId = 0) =>
+  cond ? (db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ? AND id != ?").get(JSON.stringify(cond), exceptId) as { id: number } | undefined)?.id : undefined;
 
 export function writeBelief(a: { statement: string; appliesTo: string; expectation?: "positive" | "negative"; condition?: Condition; missionId: number | null }) {
   validateCondition(a.condition, a.expectation);
@@ -791,6 +795,14 @@ export function reviseBelief(a: {
   if (a.statement) {
     const dup = duplicateOf("beliefs", fingerprint(statement), a.id);
     if (dup) throw new Error(`Con ese texto sería casi igual que la creencia #${dup}. Si sobran, retira una de las dos.`);
+  }
+  // Cambiar la condición o la expectativa no puede dejar dos creencias activas que digan lo mismo.
+  if (!a.retire && b.status === "active" && (a.condition || a.expectation) && condition && expectation) {
+    const cond = JSON.parse(condition) as Condition;
+    const dup = sameCondition(cond, a.id);
+    if (dup) throw new Error(`Con esa condición sería igual que la creencia #${dup}. Si sobran, retira una de las dos.`);
+    const twin = evidenceTwin(cond, expectation, closedPositions(), a.id);
+    if (twin) throw new Error(`Con esa condición cubriría casi las mismas operaciones que la creencia #${twin} con la misma expectativa. Si sobran, retira una de las dos.`);
   }
   db.prepare(
     `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ? WHERE id = ?`,

@@ -131,6 +131,27 @@ test("duplicados: no se guardan dos veces", () => {
   assert.throws(() => memory.writeHowto({ scope: "solana", topic: "órdenes", title: "Margen en órdenes de venta", steps: "Cotizar la venta antes y dejar 5 % de margen", missionId: null }), new RegExp(`#${id}`));
 });
 
+test("duplicados: revise_belief tampoco deja dos creencias activas con la misma condición", () => {
+  const b = memory.writeBelief({
+    statement: "Los tokens con muchos holders aguantan mejor",
+    appliesTo: "x",
+    expectation: "positive",
+    condition: { all: [{ f: "holders", op: ">", v: 5000 }] },
+    missionId: null,
+  });
+  assert.throws(
+    () => memory.reviseBelief({ id: b.id, expectation: "negative", condition: { all: [{ f: "ageMinutes", op: "<", v: 30 }] }, reason: "x" }),
+    /igual que la creencia/,
+  );
+  memory.reviseBelief({ id: b.id, retire: true, reason: "solo para el test" });
+});
+
+test("un dato booleano conocido como false cumple las condiciones '= false' y '!= true'", () => {
+  const pos = { venue: "solana", asset: "x", entry: { creatorIsLaunchpadDeployer: false }, research: {} } as unknown as Parameters<typeof memory.matches>[1];
+  assert.ok(memory.matches({ all: [{ f: "creatorIsLaunchpadDeployer", op: "=", v: false }] }, pos));
+  assert.ok(memory.matches({ all: [{ f: "creatorIsLaunchpadDeployer", op: "!=", v: true }] }, pos));
+});
+
 test("una creencia retirada deja de estar activa y no se puede citar", async () => {
   const id = memory.activeBeliefIds()[0]!;
   memory.reviseBelief({ id, retire: true, reason: "los datos la contradicen" });

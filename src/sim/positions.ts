@@ -73,7 +73,7 @@ export function decisionContext(missionId: number, venue: string, asset: string,
     ...(previous[0] ? { minutesSinceLastTradeInToken: Math.round((Date.now() - new Date(previous[0].at).getTime()) / 60_000) } : {}),
     previousTradesInTokenThisMission: previous.filter((p) => p.m === missionId).length,
     // Cómo cambiaba el token entre sus lecturas antes de comprar (liquidez y compradores netos).
-    ...readTrend(venue, asset),
+    ...readTrend(missionId, venue, asset),
     ...(deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)) } : {}),
     // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
     ...marketContext(venue),
@@ -109,8 +109,8 @@ export function creatorHistory(creator: unknown): { creatorTradesWithYou?: numbe
  * Los datos del token que usó el agente al decidir (su última lectura, si tiene menos de 5 minutos); si no la
  * hay, se leen ahora. `featuresSource` dice cuál fue.
  */
-async function featuresAtDecision(venue: { id: string; entryFeatures(asset: string): Promise<Features> }, asset: string): Promise<Features> {
-  const d = decidedFeatures(venue.id, asset);
+async function featuresAtDecision(missionId: number, venue: { id: string; entryFeatures(asset: string): Promise<Features> }, asset: string): Promise<Features> {
+  const d = decidedFeatures(missionId, venue.id, asset);
   const f = d ? (d.features as Features) : await venue.entryFeatures(asset);
   return {
     ...f,
@@ -254,7 +254,7 @@ export async function recordTrade(args: {
       qty: args.bought.qty,
       costUsd: args.valueUsd,
       meta: args.meta,
-      features: measurable ? () => featuresAtDecision(venue, args.bought.asset) : undefined,
+      features: measurable ? () => featuresAtDecision(args.missionId, venue, args.bought.asset) : undefined,
     });
   }
 }
@@ -307,7 +307,7 @@ export function sellFromPosition(args: { missionId: number; venue: VenueId; asse
 export async function buyIntoPosition(args: { missionId: number; venue: VenueId; asset: string; symbol: string; qty: number; costUsd: number; meta?: TradeMeta }) {
   const venue = getVenue(args.venue);
   const measurable = venue.kind === "chain" && args.asset !== venue.native.address;
-  await openOrAdd({ ...args, features: measurable ? () => featuresAtDecision(venue, args.asset) : undefined });
+  await openOrAdd({ ...args, features: measurable ? () => featuresAtDecision(args.missionId, venue, args.asset) : undefined });
 }
 
 /**

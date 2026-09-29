@@ -4,7 +4,7 @@
 // Varios procesos (un servidor MCP por sesión de Claude Code, el vigilante, los informes) pueden
 // arrancar a la vez: cada paso se aplica dentro de BEGIN IMMEDIATE y vuelve a comprobar la versión,
 // así que solo uno lo ejecuta. Antes de migrar una base de datos con datos se hace una copia.
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { fingerprint, lessonRefs } from "./sim/text.js";
@@ -399,7 +399,11 @@ function backup(db: DatabaseSync, dataDir: string, from: number) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const file = path.join(dir, `sim-v${from}-${stamp}-${process.pid}.db`);
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-  const old = readdirSync(dir).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).sort();
+  const old = readdirSync(dir)
+    .filter((f) => f.startsWith("sim-v") && f.endsWith(".db"))
+    .map((f) => ({ f, t: statSync(path.join(dir, f)).mtimeMs }))
+    .sort((a, b) => a.t - b.t)
+    .map(({ f }) => f); // por fecha: por nombre, "sim-v10" iría antes que "sim-v9"
   for (const f of old.slice(0, Math.max(0, old.length - MAX_BACKUPS))) rmSync(path.join(dir, f), { force: true });
   return file;
 }

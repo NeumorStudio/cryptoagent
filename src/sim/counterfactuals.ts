@@ -122,7 +122,7 @@ async function one(p: Pos): Promise<Counterfactual> {
 export async function missionCounterfactuals(missionId: number, limit = 8): Promise<Counterfactual[]> {
   const closed = listPositions(missionId)
     .filter((p) => p.status === "closed")
-    .slice(-limit);
+    .slice(0, limit); // listPositions viene de la más nueva a la más antigua
   const out: Counterfactual[] = [];
   for (const p of closed) {
     const cached = cache.get(p.id);

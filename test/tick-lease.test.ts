@@ -17,6 +17,7 @@ test("el cierre reintenta los fallos pasajeros (429, red) y no los definitivos",
   const { isTransientError } = await import("../src/market/http.js");
   assert.equal(isTransientError(new Error("HTTP 429 en https://lite-api.jup.ag/swap/v1/quote: Rate limit exceeded")), true);
   assert.equal(isTransientError(new Error("fetch failed")), true);
+  assert.equal(isTransientError(new Error("HTTP 502 en https://api.binance.com/api/v3/order")), true);
   assert.equal(isTransientError(new Error("Saldo insuficiente: tienes 1 USDC")), false);
   assert.equal(isTransientError(new Error("Jupiter: COULD_NOT_FIND_ANY_ROUTE")), false);
 });

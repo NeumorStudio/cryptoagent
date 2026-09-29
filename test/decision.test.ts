@@ -77,12 +77,13 @@ test("cada compra guarda la hora UTC y, tras un escaneo, cómo estaba el mercado
 test("la compra guarda cuánto hace de la última operación en el token y cómo cambiaron sus lecturas; token_report da el coste de ida y vuelta", async () => {
   const { recordRead, resetMarketState } = await import("../src/sim/market-state.js");
   resetMarketState();
-  recordRead("solana", mint, { liquidityUsd: 10_000, netBuyers5m: 20 });
-  recordRead("solana", mint, { liquidityUsd: 12_000, netBuyers5m: 35 });
+  recordRead(mission.id, "solana", mint, { liquidityUsd: 10_000, netBuyers5m: 20 });
+  recordRead(mission.id, "solana", mint, { liquidityUsd: 12_000, netBuyers5m: 35 });
   const d = decisionContext(mission.id, "solana", mint, 10, false);
   assert.equal(d.readsBeforeBuy, 2);
   assert.equal(d.liquidityTrendPct, 20);
   assert.equal(d.netBuyersTrend, 15);
+  assert.equal(decisionContext(mission.id + 1, "solana", mint, 10, false).readsBeforeBuy, 0, "las lecturas de otra misión no cuentan");
   assert.ok((d.minutesSinceLastTradeInToken ?? -1) >= 0, "ya lo operó en el primer test");
   assert.ok((d.previousTradesInTokenThisMission ?? 0) >= 1);
   const report = JSON.parse(String((await runTool("token_report", { chain: "solana", token: mint }, ctx)).content));
@@ -102,7 +103,7 @@ test("la posición guarda los datos del token que el agente leyó al decidir, no
   setPrice(mint, 2);
   // Una posición nueva (la de tests anteriores, si queda, se cierra antes).
   await runTool("simulate_swap", { chain: "solana", input: mint, output: "USDC", sell_all: true, slippage_bps: 100, thesis }, ctx);
-  recordFeatures("solana", mint, { venue: "solana", priceChange5mPct: 186, netBuyers5m: 290 });
+  recordFeatures(mission.id, "solana", mint, { venue: "solana", priceChange5mPct: 186, netBuyers5m: 290 });
   const r = await runTool("simulate_swap", { chain: "solana", input: "USDC", output: mint, amount: 5, slippage_bps: 100, thesis }, ctx);
   assert.ok(!r.isError, String(r.content));
   const p = listPositions(mission.id).filter((x) => x.asset === mint && x.status === "open").at(-1)!;

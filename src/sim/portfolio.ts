@@ -347,6 +347,7 @@ export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: s
   const chain = getChain(chainId);
   const [input, output] = await Promise.all([chain.resolveToken(inputRef), chain.resolveToken(outputRef)]);
   const q = await chain.quote({ input, output, amountIn: amount, slippageBps });
+  for (const [k, v] of lastQuotes) if (Date.now() - v.at > QUOTE_TTL_MS) lastQuotes.delete(k); // si no, crece con cada token cotizado
   if (missionId != null) lastQuotes.set(quoteKey(missionId, chain.id, input.address, output.address), { amountIn: amount, amountOut: q.amountOut, at: Date.now() });
   return {
     chain: chain.id,

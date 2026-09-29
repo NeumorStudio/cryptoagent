@@ -7693,7 +7693,7 @@ var init_text = __esm({
 });
 
 // src/migrations.ts
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import path3 from "node:path";
 function decisionBackfill(db2) {
   const positions = db2.prepare("SELECT id, mission_id, venue, asset, opened_at, closed_at, status, cost_open_usd, realized_cost_usd, realized_proceeds_usd, research FROM positions ORDER BY opened_at, id").all();
@@ -7882,7 +7882,7 @@ function backup(db2, dataDir, from) {
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const file2 = path3.join(dir2, `sim-v${from}-${stamp}-${process.pid}.db`);
   db2.exec(`VACUUM INTO '${file2.replace(/'/g, "''")}'`);
-  const old = readdirSync(dir2).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).sort();
+  const old = readdirSync(dir2).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).map((f) => ({ f, t: statSync(path3.join(dir2, f)).mtimeMs })).sort((a, b) => a.t - b.t).map(({ f }) => f);
   for (const f of old.slice(0, Math.max(0, old.length - MAX_BACKUPS))) rmSync(path3.join(dir2, f), { force: true });
   return file2;
 }
@@ -8294,7 +8294,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.37.1";
+    CODE_VERSION = "0.37.2";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8401,7 +8401,7 @@ function fetchText(url2, opts = {}) {
   return value;
 }
 function isTransientError(err) {
-  return /HTTP (408|429|5dd)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String(err?.message ?? err));
+  return /HTTP (408|429|5\d\d)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String(err?.message ?? err));
 }
 function isNoRouteError(err) {
   const msg = String(err?.message ?? err);
@@ -9495,6 +9495,8 @@ async function entryFeatures(mint) {
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
     ...sharedDeployer ? { creatorIsLaunchpadDeployer: true } : {
+      // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
+      creatorIsLaunchpadDeployer: mints === void 0 ? void 0 : false,
       creator: t?.dev ?? rc?.creator ?? void 0,
       creatorTokens: mints,
       creatorGraduated: migrations,
@@ -9660,14 +9662,14 @@ function marketContext(chain) {
     ...fresh ? { marketYoungTokens: s.young, ...s.medianTraders5m !== void 0 ? { marketMedianTraders5m: s.medianTraders5m } : {} } : {}
   };
 }
-function recordRead(chain, token2, r) {
-  const key = readKey(chain, token2);
+function recordRead(missionId, chain, token2, r) {
+  const key = readKey(missionId, chain, token2);
   const now2 = { at: Date.now(), ...r };
   const prev = reads.get(key);
   reads.set(key, prev && now2.at - prev.first.at <= READS_MAX_AGE_MS ? { first: prev.first, last: now2, count: prev.count + 1 } : { first: now2, last: now2, count: 1 });
 }
-function readTrend(chain, token2) {
-  const r = reads.get(readKey(chain, token2));
+function readTrend(missionId, chain, token2) {
+  const r = reads.get(readKey(missionId, chain, token2));
   if (!r || Date.now() - r.last.at > READS_MAX_AGE_MS) return { readsBeforeBuy: 0 };
   const trend = { readsBeforeBuy: r.count };
   if (r.count >= 2) {
@@ -9677,11 +9679,11 @@ function readTrend(chain, token2) {
   }
   return trend;
 }
-function recordFeatures(chain, token2, features) {
-  decided.set(readKey(chain, token2), { at: Date.now(), features });
+function recordFeatures(missionId, chain, token2, features) {
+  decided.set(readKey(missionId, chain, token2), { at: Date.now(), features });
 }
-function decidedFeatures(chain, token2) {
-  const d = decided.get(readKey(chain, token2));
+function decidedFeatures(missionId, chain, token2) {
+  const d = decided.get(readKey(missionId, chain, token2));
   if (!d || Date.now() - d.at > DECIDED_MAX_AGE_MS) return void 0;
   return { features: d.features, ageSeconds: Math.round((Date.now() - d.at) / 1e3) };
 }
@@ -9693,7 +9695,7 @@ var init_market_state = __esm({
     MAX_AGE_MS = 20 * 6e4;
     reads = /* @__PURE__ */ new Map();
     READS_MAX_AGE_MS = 30 * 6e4;
-    readKey = (chain, token2) => `${chain}:${token2.toLowerCase()}`;
+    readKey = (missionId, chain, token2) => `${missionId ?? "-"}:${chain}:${token2.toLowerCase()}`;
     decided = /* @__PURE__ */ new Map();
     DECIDED_MAX_AGE_MS = 5 * 6e4;
   }
@@ -9734,7 +9736,7 @@ function decisionContext(missionId, venue, asset2, addUsd, cashSpent) {
     ...previous[0] ? { minutesSinceLastTradeInToken: Math.round((Date.now() - new Date(previous[0].at).getTime()) / 6e4) } : {},
     previousTradesInTokenThisMission: previous.filter((p) => p.m === missionId).length,
     // Cómo cambiaba el token entre sus lecturas antes de comprar (liquidez y compradores netos).
-    ...readTrend(venue, asset2),
+    ...readTrend(missionId, venue, asset2),
     ...deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)) } : {},
     // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
     ...marketContext(venue)
@@ -9754,8 +9756,8 @@ function creatorHistory(creator) {
   const pnls = rows.filter((r) => r.c > 0).map((r) => Math.round((r.p / r.c - 1) * 100));
   return { creatorTradesWithYou: rows.length, ...pnls.length ? { creatorWorstPnlWithYouPct: Math.min(...pnls) } : {} };
 }
-async function featuresAtDecision(venue, asset2) {
-  const d = decidedFeatures(venue.id, asset2);
+async function featuresAtDecision(missionId, venue, asset2) {
+  const d = decidedFeatures(missionId, venue.id, asset2);
   const f = d ? d.features : await venue.entryFeatures(asset2);
   return {
     ...f,
@@ -9856,7 +9858,7 @@ async function recordTrade(args) {
       qty: args.bought.qty,
       costUsd: args.valueUsd,
       meta: args.meta,
-      features: measurable ? () => featuresAtDecision(venue, args.bought.asset) : void 0
+      features: measurable ? () => featuresAtDecision(args.missionId, venue, args.bought.asset) : void 0
     });
   }
 }
@@ -9888,7 +9890,7 @@ function sellFromPosition(args) {
 async function buyIntoPosition(args) {
   const venue = getVenue(args.venue);
   const measurable = venue.kind === "chain" && args.asset !== venue.native.address;
-  await openOrAdd({ ...args, features: measurable ? () => featuresAtDecision(venue, args.asset) : void 0 });
+  await openOrAdd({ ...args, features: measurable ? () => featuresAtDecision(args.missionId, venue, args.asset) : void 0 });
 }
 function listPositions(missionId) {
   const rows = missionId === void 0 ? db.prepare("SELECT * FROM positions ORDER BY id DESC").all() : db.prepare("SELECT * FROM positions WHERE mission_id = ? ORDER BY id DESC").all(missionId);
@@ -11215,7 +11217,7 @@ async function stopMission(closePositions, missionId) {
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
 }
 function minutesSinceLastTrade(mission) {
-  const last = db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(mission.id).ts;
+  const last = db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'perp') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(mission.id).ts;
   return (Date.now() - new Date(last ?? mission.started_at ?? mission.created_at).getTime()) / 6e4;
 }
 function idleCheck(mission, v, secondsLeft) {
@@ -11790,6 +11792,7 @@ async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50,
   const chain = getChain(chainId);
   const [input2, output2] = await Promise.all([chain.resolveToken(inputRef), chain.resolveToken(outputRef)]);
   const q = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps });
+  for (const [k, v] of lastQuotes) if (Date.now() - v.at > QUOTE_TTL_MS) lastQuotes.delete(k);
   if (missionId != null) lastQuotes.set(quoteKey(missionId, chain.id, input2.address, output2.address), { amountIn: amount, amountOut: q.amountOut, at: Date.now() });
   return {
     chain: chain.id,
@@ -12146,7 +12149,7 @@ async function one(p) {
   return out;
 }
 async function missionCounterfactuals(missionId, limit = 8) {
-  const closed = listPositions(missionId).filter((p) => p.status === "closed").slice(-limit);
+  const closed = listPositions(missionId).filter((p) => p.status === "closed").slice(0, limit);
   const out = [];
   for (const p of closed) {
     const cached3 = cache2.get(p.id);
@@ -42057,21 +42060,24 @@ var STRONG_NEGATIVE = { minDecided: 4, minWilsonLowPct: 50, maxAvgPnlPct: -15 };
 function blockingBeliefs(venue, entry, asset2 = "", decision = {}) {
   const closed = closedPositions();
   const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
-  return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => {
-    const t = ev.matchingTrades;
-    return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
-  }).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+  return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => isStrongNegative(ev)).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+}
+function isStrongNegative(ev) {
+  const t = ev.matchingTrades;
+  return t !== void 0 && (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided && (t.wilsonLowPct ?? 0) >= STRONG_NEGATIVE.minWilsonLowPct && (t.avgPnlPct ?? 0) <= STRONG_NEGATIVE.maxAvgPnlPct;
 }
 function beliefsFor(venue, entry, asset2 = "", decision = {}) {
   const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
-  const block = new Set(blockingBeliefs(venue, entry, asset2, decision).map((b) => b.id));
+  const block = /* @__PURE__ */ new Set();
   const rows = db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND condition IS NOT NULL").all().filter(
     (b) => matches(JSON.parse(b.condition), pos)
   );
   const closed = rows.length ? closedPositions() : [];
   const cases = {};
   for (const b of rows) {
-    const t = beliefEvidence(b, closed).matchingTrades;
+    const ev = beliefEvidence(b, closed);
+    if (b.expectation === "negative" && isStrongNegative(ev)) block.add(b.id);
+    const t = ev.matchingTrades;
     const inFavor = t?.inFavor ?? 0;
     const against = t?.against ?? 0;
     cases[b.id] = { inFavor, against, stage: t?.stage ?? "hypothesis", verdict: beliefVerdict(inFavor + against, t?.wilsonLowPct, t?.wilsonHighPct) };
@@ -42294,7 +42300,7 @@ function updateHowto(a) {
 function validateCondition(cond, expectation) {
   if (cond && !expectation) throw new Error("Una creencia con condici\xF3n necesita expectation: positive (tiende a ganar) o negative (tiende a perder)");
 }
-var sameCondition = (cond) => cond ? db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ?").get(JSON.stringify(cond))?.id : void 0;
+var sameCondition = (cond, exceptId = 0) => cond ? db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ? AND id != ?").get(JSON.stringify(cond), exceptId)?.id : void 0;
 function writeBelief(a) {
   validateCondition(a.condition, a.expectation);
   if (activeCount("beliefs") >= BELIEF_LIMIT) {
@@ -42329,6 +42335,13 @@ function reviseBelief(a) {
   if (a.statement) {
     const dup = duplicateOf("beliefs", fingerprint(statement), a.id);
     if (dup) throw new Error(`Con ese texto ser\xEDa casi igual que la creencia #${dup}. Si sobran, retira una de las dos.`);
+  }
+  if (!a.retire && b.status === "active" && (a.condition || a.expectation) && condition && expectation) {
+    const cond = JSON.parse(condition);
+    const dup = sameCondition(cond, a.id);
+    if (dup) throw new Error(`Con esa condici\xF3n ser\xEDa igual que la creencia #${dup}. Si sobran, retira una de las dos.`);
+    const twin = evidenceTwin(cond, expectation, closedPositions(), a.id);
+    if (twin) throw new Error(`Con esa condici\xF3n cubrir\xEDa casi las mismas operaciones que la creencia #${twin} con la misma expectativa. Si sobran, retira una de las dos.`);
   }
   db.prepare(
     `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ? WHERE id = ?`
@@ -42691,7 +42704,7 @@ init_positions();
 
 // src/dashboard/timeline.ts
 init_db();
-import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync4, statSync } from "node:fs";
+import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
 import os2 from "node:os";
 import path7 from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
@@ -42880,12 +42893,12 @@ Riesgos comprobados: ${t.risks_checked}` : "") + (t.overrides?.length ? `
 Ignora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
 var lastReads = /* @__PURE__ */ new Map();
-function riskCheck(chain, token2, f) {
-  const key = `${chain}:${token2.toLowerCase()}`;
+function riskCheck(chain, token2, f, missionId) {
+  const key = `${missionId ?? "-"}:${chain}:${token2.toLowerCase()}`;
   const prev = lastReads.get(key);
   lastReads.set(key, { at: Date.now(), f });
-  recordRead(chain, token2, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
-  recordFeatures(chain, token2, f);
+  recordRead(missionId, chain, token2, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
+  recordFeatures(missionId, chain, token2, f);
   const change = (a, b) => a !== void 0 && b !== void 0 && a !== 0 ? Number(((b - a) / Math.abs(a) * 100).toFixed(1)) : void 0;
   return {
     ...f.creatorIsLaunchpadDeployer ? { creatorIsLaunchpadDeployer: true } : {},
@@ -43012,7 +43025,7 @@ async function screenCandidates(chain, candidates, n3, missionId = null) {
     const address = String(cand.mint ?? cand.token ?? "");
     const f = address ? await c.entryFeatures(address).catch(() => null) : null;
     if (!f) return { ...cand, risk: "sin datos" };
-    const rc = riskCheck(chain, address, f);
+    const rc = riskCheck(chain, address, f, missionId);
     return { ...cand, risk: riskCell(rc), memory: memoryCell(chain, f, address, missionId), yourHistory: tokenHistory(chain, address) };
   });
   return [...checked, ...candidates.slice(n3)];
@@ -43023,7 +43036,7 @@ async function briefReports(chain, tokens, missionId = null) {
     const t = await c.resolveToken(token2).catch(() => null);
     const f = t ? await c.entryFeatures(t.address).catch(() => null) : null;
     if (!t || !f) return { token: token2, symbol: t?.symbol, error: "sin datos (direcci\xF3n desconocida o APIs ca\xEDdas)" };
-    const rc = riskCheck(chain, token2, f);
+    const rc = riskCheck(chain, token2, f, missionId);
     const since = rc.sinceLastRead;
     return {
       token: token2,
@@ -43132,13 +43145,17 @@ var SIM_TOOLS = [
       if (tokens?.length) return briefReports(chain, tokens, ctx.missionId);
       if (!token2) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
-      const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
-      const resolved = await c.resolveToken(token2.trim()).catch(() => null);
+      const resolving = c.resolveToken(token2.trim()).catch(() => null);
+      const [report, resolved, features] = await Promise.all([
+        c.research.report(token2.trim()),
+        resolving,
+        resolving.then((t) => t ? c.entryFeatures(t.address) : null).catch(() => null)
+      ]);
       const history = resolved ? tokenHistory(chain, resolved.address) : void 0;
       const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => void 0) : void 0;
       return json2({
         ...compactReport(report),
-        ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {},
+        ...features ? { riskCheck: riskCheck(chain, token2.trim(), features, ctx.missionId) } : {},
         yourHistory: history ?? "nunca lo has operado",
         ...roundTrip ? { roundTrip } : {}
       });
@@ -44188,7 +44205,7 @@ function transcriptEvents(since) {
       }
       const file2 = path7.join(subDir, f.replace(".meta.json", ".jsonl"));
       if (!existsSync4(file2)) continue;
-      const st = statSync(file2);
+      const st = statSync2(file2);
       if (st.mtimeMs < sinceMs) continue;
       const cached3 = fileCache.get(file2);
       if (cached3 && cached3.mtimeMs === st.mtimeMs && cached3.size === st.size) {

@@ -311,7 +311,7 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
 /** Minutos desde la última operación (o desde que empezó la misión). */
 export function minutesSinceLastTrade(mission: Mission): number {
   const last = (
-    db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(mission.id) as { ts: string | null }
+    db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'perp') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(mission.id) as { ts: string | null }
   ).ts;
   return (Date.now() - new Date(last ?? mission.started_at ?? mission.created_at).getTime()) / 60_000;
 }

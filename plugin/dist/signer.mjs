@@ -7312,7 +7312,7 @@ var init_text = __esm({
 });
 
 // src/migrations.ts
-import { mkdirSync as mkdirSync2, readdirSync, rmSync } from "node:fs";
+import { mkdirSync as mkdirSync2, readdirSync, rmSync, statSync } from "node:fs";
 import path4 from "node:path";
 function decisionBackfill(db2) {
   const positions = db2.prepare("SELECT id, mission_id, venue, asset, opened_at, closed_at, status, cost_open_usd, realized_cost_usd, realized_proceeds_usd, research FROM positions ORDER BY opened_at, id").all();
@@ -7501,7 +7501,7 @@ function backup(db2, dataDir, from16) {
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const file = path4.join(dir, `sim-v${from16}-${stamp}-${process.pid}.db`);
   db2.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-  const old = readdirSync(dir).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).sort();
+  const old = readdirSync(dir).filter((f) => f.startsWith("sim-v") && f.endsWith(".db")).map((f) => ({ f, t: statSync(path4.join(dir, f)).mtimeMs })).sort((a, b) => a.t - b.t).map(({ f }) => f);
   for (const f of old.slice(0, Math.max(0, old.length - MAX_BACKUPS))) rmSync(path4.join(dir, f), { force: true });
   return file;
 }
@@ -7877,7 +7877,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.37.1";
+    CODE_VERSION = "0.37.2";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8973,6 +8973,8 @@ async function entryFeatures(mint) {
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
     ...sharedDeployer ? { creatorIsLaunchpadDeployer: true } : {
+      // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
+      creatorIsLaunchpadDeployer: mints === void 0 ? void 0 : false,
       creator: t?.dev ?? rc?.creator ?? void 0,
       creatorTokens: mints,
       creatorGraduated: migrations,

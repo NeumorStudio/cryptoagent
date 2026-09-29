@@ -364,7 +364,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
     lastSync.set(mission.id, Date.now());
   }
   const v = await valuation(mission.id);
-  const value = v.totalUsd;
+  let value = v.totalUsd;
   // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido.
   let reached = value >= mission.target_usd && v.reliable;
   // Antes de venderlo todo por haber llegado, se confirma con cotizaciones del momento: la valoración puede venir
@@ -372,6 +372,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
   // la v0.36.1 se dio por alcanzado con 57,46 $, la venta dio 47,46 y se llevó por delante la toma de beneficio.
   if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
     const fresh = await valuation(mission.id, false, { fresh: true });
+    value = fresh.totalUsd;
     reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
     if (!reached) return [];
   }

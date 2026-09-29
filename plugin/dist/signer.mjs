@@ -7877,7 +7877,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.37.0";
+    CODE_VERSION = "0.37.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -7968,9 +7968,9 @@ function fetchText(url, opts = {}) {
   const key = opts.body !== void 0 || opts.method === "POST" ? `${opts.method ?? "GET"} ${url} ${JSON.stringify(opts.body ?? null)}` : url;
   const nowMs = Date.now();
   const hit = cache.get(key);
-  if (hit && hit.expires > nowMs) return hit.value;
+  if (hit && hit.expires > nowMs && nowMs - hit.at < ttl) return hit.value;
   const value = request(url, { ...opts, timeoutMs: opts.timeoutMs ?? 15e3 });
-  cache.set(key, { expires: nowMs + ttl, value });
+  cache.set(key, { at: nowMs, expires: nowMs + ttl, value });
   value.then(
     (r) => {
       if (r.status < 200 || r.status >= 300) cache.delete(key);

@@ -8294,7 +8294,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.37.0";
+    CODE_VERSION = "0.37.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8386,9 +8386,9 @@ function fetchText(url2, opts = {}) {
   const key = opts.body !== void 0 || opts.method === "POST" ? `${opts.method ?? "GET"} ${url2} ${JSON.stringify(opts.body ?? null)}` : url2;
   const nowMs = Date.now();
   const hit = cache.get(key);
-  if (hit && hit.expires > nowMs) return hit.value;
+  if (hit && hit.expires > nowMs && nowMs - hit.at < ttl) return hit.value;
   const value = request(url2, { ...opts, timeoutMs: opts.timeoutMs ?? 15e3 });
-  cache.set(key, { expires: nowMs + ttl, value });
+  cache.set(key, { at: nowMs, expires: nowMs + ttl, value });
   value.then(
     (r) => {
       if (r.status < 200 || r.status >= 300) cache.delete(key);
@@ -11245,10 +11245,11 @@ async function checkOne(mission) {
     lastSync.set(mission.id, Date.now());
   }
   const v = await valuation(mission.id);
-  const value = v.totalUsd;
+  let value = v.totalUsd;
   let reached = value >= mission.target_usd && v.reliable;
   if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
     const fresh = await valuation(mission.id, false, { fresh: true });
+    value = fresh.totalUsd;
     reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
     if (!reached) return [];
   }

@@ -65,6 +65,8 @@ async function pace(host: string) {
 const MAX_CACHE_ENTRIES = 2_000;
 
 interface Cached {
+  /** Cuándo se pidió: cada llamada decide con su propio ttl si le vale (no solo quien la guardó). */
+  at: number;
   expires: number;
   value: Promise<{ status: number; body: string }>;
 }
@@ -165,10 +167,13 @@ export function fetchText(url: string, opts: RequestOpts = {}): Promise<{ status
   const key = opts.body !== undefined || opts.method === "POST" ? `${opts.method ?? "GET"} ${url} ${JSON.stringify(opts.body ?? null)}` : url;
   const nowMs = Date.now();
   const hit = cache.get(key);
-  if (hit && hit.expires > nowMs) return hit.value;
+  // Vale si no ha caducado para quien la guardó ni para quien la pide ahora: una petición "del momento" (ttl
+  // corto) no puede recibir la de hace 10 s que dejó guardada otra (en la M9 de la v0.37.0, el cierre por
+  // objetivo "revaloró" con la cotización de la valoración anterior y vendió un 7 % por debajo).
+  if (hit && hit.expires > nowMs && nowMs - hit.at < ttl) return hit.value;
 
   const value = request(url, { ...opts, timeoutMs: opts.timeoutMs ?? 15_000 });
-  cache.set(key, { expires: nowMs + ttl, value });
+  cache.set(key, { at: nowMs, expires: nowMs + ttl, value });
   value.then(
     (r) => {
       if (r.status < 200 || r.status >= 300) cache.delete(key);

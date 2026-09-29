@@ -15,6 +15,7 @@ import { checkBuyAgainstMemory } from "../sim/guard.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 import { toText } from "./format.js";
+import { recordScan } from "../sim/market-state.js";
 
 /** Misión del contexto; las herramientas que la necesitan solo se ejecutan si existe. */
 const mid = (ctx: ToolCtx): number => {
@@ -233,7 +234,7 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
     const flags = rc.flags.filter((x) => !x.startsWith("ninguna señal"));
     // El aviso del escaneo (creador en serie, Flap.sh) ya sale entre las alarmas.
     const { warning: _w, ...rest } = cand;
-    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId) };
+    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId), yourHistory: positions.tokenHistory(chain, address) };
   });
   return [...checked, ...candidates.slice(n)];
 }
@@ -264,6 +265,7 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
       launchpad: f.launchpad,
       alarms: flags.length ? flags.join("; ") : "ninguna",
       memory: memoryCell(chain, f, t.address, missionId),
+      yourHistory: positions.tokenHistory(chain, t.address) ?? "nunca",
       sinceLastRead:
         typeof since === "string"
           ? "primera lectura"
@@ -344,6 +346,8 @@ export const SIM_TOOLS = [
     }),
     run: async ({ chain, limit, check_top }, ctx) => {
       const scan = compactScan(await getChain(chain).research.scan(limit)) as { candidates?: Array<Record<string, unknown>> };
+      // Actividad del mercado (siempre sobre los 15 primeros, para que sea comparable entre escaneos).
+      if (Array.isArray(scan.candidates)) recordScan(chain, scan.candidates.slice(0, 15));
       if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top, ctx.missionId);
       return toText(scan);
     },
@@ -373,7 +377,9 @@ export const SIM_TOOLS = [
       if (!token) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token.trim()), c.resolveToken(token.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
-      return json({ ...compactReport(report), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}) });
+      const resolved = await c.resolveToken(token.trim()).catch(() => null);
+      const history = resolved ? positions.tokenHistory(chain, resolved.address) : undefined;
+      return json({ ...compactReport(report), ...(features ? { riskCheck: riskCheck(chain, token.trim(), features) } : {}), yourHistory: history ?? "nunca lo has operado" });
     },
   }),
   tool({

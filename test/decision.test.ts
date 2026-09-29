@@ -61,3 +61,15 @@ test("una creencia aprendida sobre el tamaño frena la compra grande y deja pasa
   assert.ok(!(await buy(15)).isError, "con poco capital no la cumple");
   void USDC_MINT;
 });
+
+test("cada compra guarda la hora UTC y, tras un escaneo, cómo estaba el mercado; token_report enseña su historial", async () => {
+  const { recordScan, resetMarketState } = await import("../src/sim/market-state.js");
+  resetMarketState();
+  recordScan("solana", [{ ageMinutes: 30, traders5m: 40 }, { ageMinutes: 900, traders5m: 10 }, { ageMinutes: 120, traders5m: 25 }]);
+  const ctxNow = decisionContext(mission.id, "solana", mint, 10, false);
+  assert.equal(ctxNow.hourUtc, new Date().getUTCHours());
+  assert.equal(ctxNow.marketYoungTokens, 2);
+  assert.equal(ctxNow.marketMedianTraders5m, 25);
+  const report = String((await runTool("token_report", { chain: "solana", token: mint }, ctx)).content);
+  assert.match(report, /"yourHistory":"operado \d+ ve/);
+});

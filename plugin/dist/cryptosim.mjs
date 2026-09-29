@@ -8033,6 +8033,20 @@ var init_migrations = __esm({
         version: 8,
         description: "Datos de decisi\xF3n en las posiciones antiguas (tama\xF1o, reentrada, promediar, tiempo que quedaba), sacados del diario",
         up: decisionBackfill
+      },
+      {
+        version: 9,
+        description: "Hora UTC de entrada en las posiciones antiguas (la actividad del mercado no se puede reconstruir)",
+        up: (db2) => {
+          const rows = db2.prepare("SELECT id, opened_at, research FROM positions").all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const r of rows) {
+            const research = JSON.parse(r.research ?? "{}");
+            if (research.hourUtc !== void 0) continue;
+            research.hourUtc = new Date(r.opened_at).getUTCHours();
+            update.run(JSON.stringify(research), r.id);
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8257,7 +8271,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.31.1";
+    CODE_VERSION = "0.32.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9548,6 +9562,33 @@ var init_venues = __esm({
   }
 });
 
+// src/sim/market-state.ts
+function recordScan(chain, candidates) {
+  const ages = candidates.map((c) => Number(c.ageMinutes)).filter((x) => Number.isFinite(x));
+  const traders = candidates.map((c) => Number(c.traders5m)).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+  byChain.set(chain, {
+    at: Date.now(),
+    young: ages.filter((a) => a < 180).length,
+    ...traders.length ? { medianTraders5m: traders[Math.floor(traders.length / 2)] } : {}
+  });
+}
+function marketContext(chain) {
+  const s = byChain.get(chain);
+  const fresh = s && Date.now() - s.at <= MAX_AGE_MS;
+  return {
+    hourUtc: (/* @__PURE__ */ new Date()).getUTCHours(),
+    ...fresh ? { marketYoungTokens: s.young, ...s.medianTraders5m !== void 0 ? { marketMedianTraders5m: s.medianTraders5m } : {} } : {}
+  };
+}
+var byChain, MAX_AGE_MS;
+var init_market_state = __esm({
+  "src/sim/market-state.ts"() {
+    "use strict";
+    byChain = /* @__PURE__ */ new Map();
+    MAX_AGE_MS = 20 * 6e4;
+  }
+});
+
 // src/sim/positions.ts
 function researchSnapshot(missionId, mint) {
   const mission = db.prepare("SELECT created_at FROM missions WHERE id = ?").get(missionId);
@@ -9579,8 +9620,17 @@ function decisionContext(missionId, venue, asset2, addUsd, cashSpent) {
     ...capital > 0 && addUsd > 0 ? { portfolioPct: Math.round((existing + addUsd) / capital * 100) } : {},
     previousTradesInToken: previous.length,
     ...previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {},
-    ...deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)) } : {}
+    ...deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)) } : {},
+    // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
+    ...marketContext(venue)
   };
+}
+function tokenHistory(venue, asset2) {
+  const rows = db.prepare("SELECT mission_id, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at").all(venue, asset2);
+  if (!rows.length) return void 0;
+  const pct4 = (r) => r.c > 0 ? Math.round((r.p / r.c - 1) * 100) : 0;
+  const last = rows.at(-1);
+  return `operado ${rows.length} ${rows.length === 1 ? "vez" : "veces"} (${rows.map((r) => `M${r.mission_id} ${pct4(r) > 0 ? "+" : ""}${pct4(r)} %`).join(", ")}); la \xFAltima ${pct4(last) > 0 ? "gan\xF3" : pct4(last) < 0 ? "perdi\xF3" : "qued\xF3 igual"}`;
 }
 async function openOrAdd(args) {
   const missionId = args.missionId;
@@ -9729,6 +9779,7 @@ var init_positions = __esm({
     "use strict";
     init_db();
     init_venues();
+    init_market_state();
   }
 });
 
@@ -41600,7 +41651,12 @@ var CONDITION_FIELDS = [
   "previousTradesInToken",
   "lastPnlInTokenPct",
   "addedWhileDown",
-  "minutesLeft"
+  "minutesLeft",
+  // Cuándo y con qué mercado decidió: hora UTC y actividad del último escaneo (tokens de menos de 3 h y
+  // mediana de operadores en 5 min).
+  "hourUtc",
+  "marketYoungTokens",
+  "marketMedianTraders5m"
 ];
 var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
 var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
@@ -41611,7 +41667,10 @@ var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
   "previousTradesInToken",
   "lastPnlInTokenPct",
   "addedWhileDown",
-  "minutesLeft"
+  "minutesLeft",
+  "hourUtc",
+  "marketYoungTokens",
+  "marketMedianTraders5m"
 ]);
 function fieldValue(p, f) {
   if (f === "venue") return p.entry.venue ?? p.venue;
@@ -42517,6 +42576,7 @@ function tool(def) {
 }
 
 // src/tools/index.ts
+init_market_state();
 var mid = (ctx) => {
   if (ctx.missionId === null) throw new Error("No hay ninguna misi\xF3n");
   return ctx.missionId;
@@ -42674,7 +42734,7 @@ async function screenCandidates(chain, candidates, n3, missionId = null) {
     const rc = riskCheck(chain, address, f);
     const flags = rc.flags.filter((x) => !x.startsWith("ninguna se\xF1al"));
     const { warning: _w, ...rest } = cand;
-    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId) };
+    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId), yourHistory: tokenHistory(chain, address) };
   });
   return [...checked, ...candidates.slice(n3)];
 }
@@ -42703,6 +42763,7 @@ async function briefReports(chain, tokens, missionId = null) {
       launchpad: f.launchpad,
       alarms: flags.length ? flags.join("; ") : "ninguna",
       memory: memoryCell(chain, f, t.address, missionId),
+      yourHistory: tokenHistory(chain, t.address) ?? "nunca",
       sinceLastRead: typeof since === "string" ? "primera lectura" : [
         `hace ${since.minutesAgo} min`,
         since.liquidityChangePct !== void 0 ? `liq ${since.liquidityChangePct > 0 ? "+" : ""}${since.liquidityChangePct} %` : "",
@@ -42763,6 +42824,7 @@ var SIM_TOOLS = [
     }),
     run: async ({ chain, limit, check_top }, ctx) => {
       const scan = compactScan(await getChain(chain).research.scan(limit));
+      if (Array.isArray(scan.candidates)) recordScan(chain, scan.candidates.slice(0, 15));
       if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top, ctx.missionId);
       return toText(scan);
     }
@@ -42783,7 +42845,9 @@ var SIM_TOOLS = [
       if (!token2) throw new Error("Indica token (ficha completa) o tokens (fichas breves de varios)");
       const c = getChain(chain);
       const [report, features] = await Promise.all([c.research.report(token2.trim()), c.resolveToken(token2.trim()).then((t) => c.entryFeatures(t.address)).catch(() => null)]);
-      return json2({ ...compactReport(report), ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {} });
+      const resolved = await c.resolveToken(token2.trim()).catch(() => null);
+      const history = resolved ? tokenHistory(chain, resolved.address) : void 0;
+      return json2({ ...compactReport(report), ...features ? { riskCheck: riskCheck(chain, token2.trim(), features) } : {}, yourHistory: history ?? "nunca lo has operado" });
     }
   }),
   tool({

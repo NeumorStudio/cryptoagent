@@ -141,6 +141,20 @@ export const MIGRATIONS: Migration[] = [
     description: "Datos de decisión en las posiciones antiguas (tamaño, reentrada, promediar, tiempo que quedaba), sacados del diario",
     up: decisionBackfill,
   },
+  {
+    version: 9,
+    description: "Hora UTC de entrada en las posiciones antiguas (la actividad del mercado no se puede reconstruir)",
+    up: (db) => {
+      const rows = db.prepare("SELECT id, opened_at, research FROM positions").all() as Array<{ id: number; opened_at: string; research: string | null }>;
+      const update = db.prepare("UPDATE positions SET research = ? WHERE id = ?");
+      for (const r of rows) {
+        const research = JSON.parse(r.research ?? "{}") as Record<string, unknown>;
+        if (research.hourUtc !== undefined) continue;
+        research.hourUtc = new Date(r.opened_at).getUTCHours();
+        update.run(JSON.stringify(research), r.id);
+      }
+    },
+  },
 ];
 
 /**

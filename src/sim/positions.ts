@@ -3,6 +3,7 @@
 import { db, now } from "../db.js";
 import type { Features, TradeMeta, VenueId } from "./types.js";
 import { getVenue } from "./venues/index.js";
+import { marketContext } from "./market-state.js";
 
 export type { TradeMeta };
 
@@ -69,7 +70,20 @@ export function decisionContext(missionId: number, venue: string, asset: string,
     previousTradesInToken: previous.length,
     ...(previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {}),
     ...(deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)) } : {}),
+    // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
+    ...marketContext(venue),
   };
+}
+
+/** Historial del agente con un token (todas las misiones), para verlo al decidir. */
+export function tokenHistory(venue: string, asset: string) {
+  const rows = db
+    .prepare("SELECT mission_id, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at")
+    .all(venue, asset) as Array<{ mission_id: number; c: number; p: number }>;
+  if (!rows.length) return undefined;
+  const pct = (r: { c: number; p: number }) => (r.c > 0 ? Math.round((r.p / r.c - 1) * 100) : 0);
+  const last = rows.at(-1)!;
+  return `operado ${rows.length} ${rows.length === 1 ? "vez" : "veces"} (${rows.map((r) => `M${r.mission_id} ${pct(r) > 0 ? "+" : ""}${pct(r)} %`).join(", ")}); la última ${pct(last) > 0 ? "ganó" : pct(last) < 0 ? "perdió" : "quedó igual"}`;
 }
 
 async function openOrAdd(args: {

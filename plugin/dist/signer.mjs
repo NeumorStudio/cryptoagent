@@ -7652,6 +7652,20 @@ var init_migrations = __esm({
         version: 8,
         description: "Datos de decisi\xF3n en las posiciones antiguas (tama\xF1o, reentrada, promediar, tiempo que quedaba), sacados del diario",
         up: decisionBackfill
+      },
+      {
+        version: 9,
+        description: "Hora UTC de entrada en las posiciones antiguas (la actividad del mercado no se puede reconstruir)",
+        up: (db2) => {
+          const rows = db2.prepare("SELECT id, opened_at, research FROM positions").all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const r of rows) {
+            const research = JSON.parse(r.research ?? "{}");
+            if (research.hourUtc !== void 0) continue;
+            research.hourUtc = new Date(r.opened_at).getUTCHours();
+            update.run(JSON.stringify(research), r.id);
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -7848,7 +7862,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.31.1";
+    CODE_VERSION = "0.32.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9133,12 +9147,22 @@ var init_paths2 = __esm({
   }
 });
 
+// src/sim/market-state.ts
+var MAX_AGE_MS;
+var init_market_state = __esm({
+  "src/sim/market-state.ts"() {
+    "use strict";
+    MAX_AGE_MS = 20 * 6e4;
+  }
+});
+
 // src/sim/positions.ts
 var init_positions = __esm({
   "src/sim/positions.ts"() {
     "use strict";
     init_db();
     init_venues();
+    init_market_state();
   }
 });
 

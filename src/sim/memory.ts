@@ -80,6 +80,11 @@ export const CONDITION_FIELDS = [
   "lastPnlInTokenPct",
   "addedWhileDown",
   "minutesLeft",
+  // Cuándo y con qué mercado decidió: hora UTC y actividad del último escaneo (tokens de menos de 3 h y
+  // mediana de operadores en 5 min).
+  "hourUtc",
+  "marketYoungTokens",
+  "marketMedianTraders5m",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -101,6 +106,9 @@ const RESEARCH_FIELDS = new Set([
   "lastPnlInTokenPct",
   "addedWhileDown",
   "minutesLeft",
+  "hourUtc",
+  "marketYoungTokens",
+  "marketMedianTraders5m",
 ]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {

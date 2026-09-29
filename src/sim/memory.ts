@@ -53,6 +53,7 @@ export const CONDITION_FIELDS = [
   "pairPriceChange5mPct",
   "pairPriceChange1hPct",
   "volume1hJupiterVsDexRatio",
+  "creatorIsLaunchpadDeployer",
   "priceChange24hPct",
   "buyVolume5mUsd",
   "sellVolume5mUsd",
@@ -219,6 +220,19 @@ export function wilson(successes: number, n: number): { low: number; high: numbe
 
 /** Etapa de una creencia según cuántas operaciones decisivas la respaldan o la refutan. */
 export type BeliefStage = "hypothesis" | "provisional" | "rule";
+
+/**
+ * Qué dicen los datos de una creencia, con el mismo criterio que su evidencia (intervalo de Wilson al 95 %). Con
+ * solo la etapa ("hipótesis" por debajo de 10 casos), una creencia de 1 caso y otra de 4 de 4 parecían iguales y el
+ * trader se saltaba las dos (M6 y M7 de la v0.36).
+ */
+export type BeliefVerdict = "sin evidencia" | "sin confirmar" | "se sostiene" | "los datos la contradicen";
+export function beliefVerdict(decided: number, wilsonLow?: number, wilsonHigh?: number): BeliefVerdict {
+  if (decided < 3) return "sin evidencia";
+  if ((wilsonLow ?? 0) >= 50) return "se sostiene";
+  if ((wilsonHigh ?? 100) < 50) return "los datos la contradicen";
+  return "sin confirmar";
+}
 export const beliefStage = (decided: number): BeliefStage => (decided >= 30 ? "rule" : decided >= 10 ? "provisional" : "hypothesis");
 const STAGE_LABEL: Record<BeliefStage, string> = {
   hypothesis: "hipótesis (menos de 10 casos: puede ser suerte)",
@@ -410,10 +424,12 @@ export function beliefsFor(venue: string, entry: Record<string, unknown>, asset 
   // Con cuántos casos cuenta cada una: una creencia de 1-2 operaciones no descarta nada todavía, y sin verlo
   // al lado del id, el trader las usaba todas como filtros duros y dejó de explorar (M11-M17 de la v0.35).
   const closed = rows.length ? closedPositions() : [];
-  const cases: Record<number, { inFavor: number; against: number; stage: BeliefStage }> = {};
+  const cases: Record<number, { inFavor: number; against: number; stage: BeliefStage; verdict: BeliefVerdict }> = {};
   for (const b of rows) {
-    const t = beliefEvidence(b, closed).matchingTrades as { inFavor?: number; against?: number; stage?: BeliefStage } | undefined;
-    cases[b.id] = { inFavor: t?.inFavor ?? 0, against: t?.against ?? 0, stage: t?.stage ?? "hypothesis" };
+    const t = beliefEvidence(b, closed).matchingTrades as { inFavor?: number; against?: number; stage?: BeliefStage; wilsonLowPct?: number; wilsonHighPct?: number } | undefined;
+    const inFavor = t?.inFavor ?? 0;
+    const against = t?.against ?? 0;
+    cases[b.id] = { inFavor, against, stage: t?.stage ?? "hypothesis", verdict: beliefVerdict(inFavor + against, t?.wilsonLowPct, t?.wilsonHighPct) };
   }
   return {
     block: [...block],

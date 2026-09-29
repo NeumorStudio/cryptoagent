@@ -155,6 +155,21 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 10,
+    description: "Creador que en realidad es la plataforma de lanzamiento (5.000 tokens o más): sin datos de creador",
+    up: (db) => {
+      const rows = db.prepare("SELECT id, entry_features FROM positions").all() as Array<{ id: number; entry_features: string | null }>;
+      const update = db.prepare("UPDATE positions SET entry_features = ? WHERE id = ?");
+      for (const r of rows) {
+        const f = JSON.parse(r.entry_features ?? "{}") as Record<string, unknown>;
+        if (typeof f.creatorTokens !== "number" || f.creatorTokens < 5_000) continue;
+        for (const k of ["creator", "creatorTokens", "creatorGraduated", "creatorGraduationPct", "creatorTradesWithYou", "creatorWorstPnlWithYouPct"]) delete f[k];
+        f.creatorIsLaunchpadDeployer = true;
+        update.run(JSON.stringify(f), r.id);
+      }
+    },
+  },
 ];
 
 /**

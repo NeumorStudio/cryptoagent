@@ -7666,6 +7666,21 @@ var init_migrations = __esm({
             update.run(JSON.stringify(research), r.id);
           }
         }
+      },
+      {
+        version: 10,
+        description: "Creador que en realidad es la plataforma de lanzamiento (5.000 tokens o m\xE1s): sin datos de creador",
+        up: (db2) => {
+          const rows = db2.prepare("SELECT id, entry_features FROM positions").all();
+          const update = db2.prepare("UPDATE positions SET entry_features = ? WHERE id = ?");
+          for (const r of rows) {
+            const f = JSON.parse(r.entry_features ?? "{}");
+            if (typeof f.creatorTokens !== "number" || f.creatorTokens < 5e3) continue;
+            for (const k of ["creator", "creatorTokens", "creatorGraduated", "creatorGraduationPct", "creatorTradesWithYou", "creatorWorstPnlWithYouPct"]) delete f[k];
+            f.creatorIsLaunchpadDeployer = true;
+            update.run(JSON.stringify(f), r.id);
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -7862,7 +7877,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.36.2";
+    CODE_VERSION = "0.37.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8954,12 +8969,15 @@ async function entryFeatures(mint) {
   const round = (v, d = 2) => typeof v === "number" ? Number(v.toFixed(d)) : void 0;
   const mints = typeof t?.audit?.devMints === "number" ? t.audit.devMints : void 0;
   const migrations = typeof t?.audit?.devMigrations === "number" ? t.audit.devMigrations : void 0;
+  const sharedDeployer = typeof mints === "number" && mints >= LAUNCHPAD_DEPLOYER_MIN_TOKENS;
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
-    creator: t?.dev ?? rc?.creator ?? void 0,
-    creatorTokens: mints,
-    creatorGraduated: migrations,
-    creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0,
+    ...sharedDeployer ? { creatorIsLaunchpadDeployer: true } : {
+      creator: t?.dev ?? rc?.creator ?? void 0,
+      creatorTokens: mints,
+      creatorGraduated: migrations,
+      creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0
+    },
     devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
     insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : void 0,
     lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),
@@ -8993,7 +9011,7 @@ async function entryFeatures(mint) {
     rugcheckWarnRisks: risks ? risks.filter((r) => r.level === "warn").length : void 0
   };
 }
-var TOKEN_ACCOUNT_RENT_SOL, USDT_MINT2, CASH2, DUST2, SOL, USDC, solana;
+var TOKEN_ACCOUNT_RENT_SOL, USDT_MINT2, CASH2, DUST2, SOL, USDC, LAUNCHPAD_DEPLOYER_MIN_TOKENS, solana;
 var init_solana = __esm({
   "src/sim/venues/solana.ts"() {
     "use strict";
@@ -9008,6 +9026,7 @@ var init_solana = __esm({
     DUST2 = 1e-12;
     SOL = { address: SOL_MINT, symbol: "SOL", decimals: 9 };
     USDC = { address: USDC_MINT, symbol: "USDC", decimals: 6 };
+    LAUNCHPAD_DEPLOYER_MIN_TOKENS = 5e3;
     solana = {
       kind: "chain",
       id: "solana",

@@ -8047,6 +8047,21 @@ var init_migrations = __esm({
             update.run(JSON.stringify(research), r.id);
           }
         }
+      },
+      {
+        version: 10,
+        description: "Creador que en realidad es la plataforma de lanzamiento (5.000 tokens o m\xE1s): sin datos de creador",
+        up: (db2) => {
+          const rows = db2.prepare("SELECT id, entry_features FROM positions").all();
+          const update = db2.prepare("UPDATE positions SET entry_features = ? WHERE id = ?");
+          for (const r of rows) {
+            const f = JSON.parse(r.entry_features ?? "{}");
+            if (typeof f.creatorTokens !== "number" || f.creatorTokens < 5e3) continue;
+            for (const k of ["creator", "creatorTokens", "creatorGraduated", "creatorGraduationPct", "creatorTradesWithYou", "creatorWorstPnlWithYouPct"]) delete f[k];
+            f.creatorIsLaunchpadDeployer = true;
+            update.run(JSON.stringify(f), r.id);
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8279,7 +8294,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.36.2";
+    CODE_VERSION = "0.37.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9476,12 +9491,15 @@ async function entryFeatures(mint) {
   const round = (v, d = 2) => typeof v === "number" ? Number(v.toFixed(d)) : void 0;
   const mints = typeof t?.audit?.devMints === "number" ? t.audit.devMints : void 0;
   const migrations = typeof t?.audit?.devMigrations === "number" ? t.audit.devMigrations : void 0;
+  const sharedDeployer = typeof mints === "number" && mints >= LAUNCHPAD_DEPLOYER_MIN_TOKENS;
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
-    creator: t?.dev ?? rc?.creator ?? void 0,
-    creatorTokens: mints,
-    creatorGraduated: migrations,
-    creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0,
+    ...sharedDeployer ? { creatorIsLaunchpadDeployer: true } : {
+      creator: t?.dev ?? rc?.creator ?? void 0,
+      creatorTokens: mints,
+      creatorGraduated: migrations,
+      creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0
+    },
     devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
     insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : void 0,
     lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),
@@ -9515,7 +9533,7 @@ async function entryFeatures(mint) {
     rugcheckWarnRisks: risks ? risks.filter((r) => r.level === "warn").length : void 0
   };
 }
-var TOKEN_ACCOUNT_RENT_SOL, USDT_MINT2, CASH2, DUST3, SOL, USDC, solana;
+var TOKEN_ACCOUNT_RENT_SOL, USDT_MINT2, CASH2, DUST3, SOL, USDC, LAUNCHPAD_DEPLOYER_MIN_TOKENS, solana;
 var init_solana = __esm({
   "src/sim/venues/solana.ts"() {
     "use strict";
@@ -9530,6 +9548,7 @@ var init_solana = __esm({
     DUST3 = 1e-12;
     SOL = { address: SOL_MINT, symbol: "SOL", decimals: 9 };
     USDC = { address: USDC_MINT, symbol: "USDC", decimals: 6 };
+    LAUNCHPAD_DEPLOYER_MIN_TOKENS = 5e3;
     solana = {
       kind: "chain",
       id: "solana",
@@ -41810,6 +41829,7 @@ var CONDITION_FIELDS = [
   "pairPriceChange5mPct",
   "pairPriceChange1hPct",
   "volume1hJupiterVsDexRatio",
+  "creatorIsLaunchpadDeployer",
   "priceChange24hPct",
   "buyVolume5mUsd",
   "sellVolume5mUsd",
@@ -41926,6 +41946,12 @@ function wilson(successes, n3) {
   const center = (p + z2 * z2 / (2 * n3)) / denom;
   const half = z2 * Math.sqrt(p * (1 - p) / n3 + z2 * z2 / (4 * n3 * n3)) / denom;
   return { low: Math.round(Math.max(0, center - half) * 100), high: Math.round(Math.min(1, center + half) * 100) };
+}
+function beliefVerdict(decided2, wilsonLow, wilsonHigh) {
+  if (decided2 < 3) return "sin evidencia";
+  if ((wilsonLow ?? 0) >= 50) return "se sostiene";
+  if ((wilsonHigh ?? 100) < 50) return "los datos la contradicen";
+  return "sin confirmar";
 }
 var beliefStage = (decided2) => decided2 >= 30 ? "rule" : decided2 >= 10 ? "provisional" : "hypothesis";
 var STAGE_LABEL = {
@@ -42045,7 +42071,9 @@ function beliefsFor(venue, entry, asset2 = "", decision = {}) {
   const cases = {};
   for (const b of rows) {
     const t = beliefEvidence(b, closed).matchingTrades;
-    cases[b.id] = { inFavor: t?.inFavor ?? 0, against: t?.against ?? 0, stage: t?.stage ?? "hypothesis" };
+    const inFavor = t?.inFavor ?? 0;
+    const against = t?.against ?? 0;
+    cases[b.id] = { inFavor, against, stage: t?.stage ?? "hypothesis", verdict: beliefVerdict(inFavor + against, t?.wilsonLowPct, t?.wilsonHighPct) };
   }
   return {
     block: [...block],
@@ -42859,6 +42887,7 @@ function riskCheck(chain, token2, f) {
   recordFeatures(chain, token2, f);
   const change = (a, b) => a !== void 0 && b !== void 0 && a !== 0 ? Number(((b - a) / Math.abs(a) * 100).toFixed(1)) : void 0;
   return {
+    ...f.creatorIsLaunchpadDeployer ? { creatorIsLaunchpadDeployer: true } : {},
     creator: f.creator,
     creatorTokens: f.creatorTokens,
     creatorGraduated: f.creatorGraduated,
@@ -42883,6 +42912,7 @@ function riskCheck(chain, token2, f) {
 }
 function riskCell(rc) {
   return [
+    rc.creatorIsLaunchpadDeployer ? "creador: la direcci\xF3n de la plataforma (sin datos de creador)" : "",
     rc.creatorTokens !== void 0 ? `creador ${rc.creatorTokens} tokens/${rc.creatorGraduated ?? 0} graduados` : "",
     rc.creatorTradesWithYou ? `le operaste ${rc.creatorTradesWithYou} (peor ${rc.creatorWorstPnlWithYouPct} %)` : "",
     rc.devHoldingPct !== void 0 ? `dev ${rc.devHoldingPct} %` : "",
@@ -42967,7 +42997,7 @@ function memoryCell(chain, f, address, missionId = null) {
   const m = beliefsFor(chain, entry, address, decision);
   const ids = (list) => list.map((id) => {
     const c = m.cases[id];
-    return c ? `#${id} (${c.inFavor} a favor/${c.against} en contra${c.stage === "hypothesis" ? ", hip\xF3tesis" : c.stage === "provisional" ? ", provisional" : ""})` : `#${id}`;
+    return c ? `#${id} (${c.inFavor} a favor/${c.against} en contra: ${c.verdict})` : `#${id}`;
   }).join(", ");
   return [
     ...m.block.length ? [`frena #${m.block.join(", #")}`] : [],

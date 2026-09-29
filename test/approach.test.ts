@@ -55,3 +55,10 @@ test("el mapa de lo explorado cuenta las operaciones por zona y marca las que nu
   assert.equal(row[">1M"], "sin probar");
   assert.ok(map.byVenue.solana!.trades >= 1);
 });
+
+test("cada creencia llega con su veredicto: 1 caso no es lo mismo que 4 de 4", () => {
+  assert.equal(memory.beliefVerdict(1, 21, 100), "sin evidencia");
+  assert.equal(memory.beliefVerdict(4, 51, 100), "se sostiene");
+  assert.equal(memory.beliefVerdict(7, 49, 97), "sin confirmar");
+  assert.equal(memory.beliefVerdict(6, 0, 39), "los datos la contradicen");
+});

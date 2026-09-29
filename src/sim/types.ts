@@ -72,6 +72,11 @@ export interface Features {
   sellTaxPct?: number;
   honeypot?: boolean;
   mintable?: boolean;
+  /**
+   * El "creador" que da la fuente es la dirección de la plataforma de lanzamiento (miles de tokens), no una persona:
+   * entonces no hay datos de creador (ni dirección ni recuentos).
+   */
+  creatorIsLaunchpadDeployer?: boolean;
   /** Quién creó el token (dirección): con él se calcula tu historial con ese creador. */
   creator?: string;
   /** Cuántos tokens ha lanzado el creador y cuántos llegaron a graduarse (Solana, Jupiter). */

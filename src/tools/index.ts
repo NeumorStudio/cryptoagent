@@ -99,6 +99,7 @@ function riskCheck(chain: ChainId, token: string, f: Features) {
   recordFeatures(chain, token, f as unknown as Record<string, unknown>);
   const change = (a?: number, b?: number) => (a !== undefined && b !== undefined && a !== 0 ? Number((((b - a) / Math.abs(a)) * 100).toFixed(1)) : undefined);
   return {
+    ...(f.creatorIsLaunchpadDeployer ? { creatorIsLaunchpadDeployer: true } : {}),
     creator: f.creator,
     creatorTokens: f.creatorTokens,
     creatorGraduated: f.creatorGraduated,
@@ -127,6 +128,7 @@ function riskCheck(chain: ChainId, token: string, f: Features) {
 /** Los datos de riesgo en una celda de tabla (escaneo y fichas breves): solo los que hay, sin juicio. */
 function riskCell(rc: ReturnType<typeof riskCheck>): string {
   return [
+    rc.creatorIsLaunchpadDeployer ? "creador: la dirección de la plataforma (sin datos de creador)" : "",
     rc.creatorTokens !== undefined ? `creador ${rc.creatorTokens} tokens/${rc.creatorGraduated ?? 0} graduados` : "",
     rc.creatorTradesWithYou ? `le operaste ${rc.creatorTradesWithYou} (peor ${rc.creatorWorstPnlWithYouPct} %)` : "",
     rc.devHoldingPct !== undefined ? `dev ${rc.devHoldingPct} %` : "",
@@ -233,13 +235,13 @@ function memoryCell(chain: ChainId, f: Features, address: string, missionId: num
   const decision = missionId !== null ? positions.decisionContext(missionId, chain, address, 0, false) : {};
   const entry = { ...f, ...positions.creatorHistory(f.creator) } as unknown as Record<string, unknown>;
   const m = memory.beliefsFor(chain, entry, address, decision);
-  // Cada creencia con su evidencia al lado: "(2 a favor/1 en contra, hipótesis)". Menos de 10 casos es una
-  // hipótesis que puede ser suerte, no un filtro.
+  // Cada creencia con su evidencia al lado: "(4 a favor/0 en contra: se sostiene)". El veredicto usa el intervalo
+  // de Wilson, así una de 1 caso ("sin evidencia") no parece igual que una de 4 de 4.
   const ids = (list: number[]) =>
     list
       .map((id) => {
         const c = m.cases[id];
-        return c ? `#${id} (${c.inFavor} a favor/${c.against} en contra${c.stage === "hypothesis" ? ", hipótesis" : c.stage === "provisional" ? ", provisional" : ""})` : `#${id}`;
+        return c ? `#${id} (${c.inFavor} a favor/${c.against} en contra: ${c.verdict})` : `#${id}`;
       })
       .join(", ");
   return [

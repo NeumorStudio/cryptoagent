@@ -59,9 +59,12 @@ test("una orden condicional guardada con el formato anterior se ejecuta", async 
 
   assert.deepEqual(await checkOrders(), []);
   setPrice(MEME, 0.013);
+  const usdcBefore = bal(m, "solana", USDC_MINT);
   const log = await checkOrders();
   assert.match(log.join("\n"), /ejecutada/);
   assert.equal(bal(m, "solana", MEME), 0);
+  // Como una orden límite real: se llena al precio fijado (0.012), no al del pico (0.013).
+  assert.ok(Math.abs(bal(m, "solana", USDC_MINT) - usdcBefore - amount * 0.012) < 1e-6, String(bal(m, "solana", USDC_MINT) - usdcBefore));
   const p = listPositions(m).find((x) => x.asset === MEME)!;
   assert.equal(p.status, "closed");
   assert.ok(p.pnlUsd! > 0);

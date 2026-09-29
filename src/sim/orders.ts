@@ -257,7 +257,8 @@ export async function checkOrders(): Promise<string[]> {
 
 /**
  * Una toma de beneficio (vender el token vigilado cuando sube por encima de un precio, a un estable) se
- * ejecuta como una orden límite: nunca por debajo del precio fijado. Los stops (below) venden a mercado.
+ * ejecuta como una orden límite: nunca por debajo del precio fijado, y tampoco por encima (limitFill). Los stops
+ * (below) venden a mercado.
  */
 function takeProfitMinOut(order: OrderRow, action: SwapAction): number | undefined {
   if (order.condition !== "above" || action.input !== order.trigger_asset) return undefined;
@@ -267,6 +268,12 @@ function takeProfitMinOut(order: OrderRow, action: SwapAction): number | undefin
   if (!out) return undefined;
   const qty = action.sellAll ? (getHoldings(order.mission_id).find((h) => h.venue === order.venue && h.asset === order.trigger_asset)?.amount ?? 0) : action.amount;
   return qty > 0 ? qty * order.trigger_price : undefined;
+}
+
+/** Toma de beneficio: se llena exactamente al precio límite, como una orden límite real (el exceso del pico no es tuyo). */
+function limitFill(order: OrderRow, action: SwapAction) {
+  const minOut = takeProfitMinOut(order, action);
+  return minOut === undefined ? {} : { minOut, fillAtLimit: true };
 }
 
 /** Ejecuta una orden disparada (por precio o por tiempo). El reclamo atómico evita ejecutarla dos veces. */
@@ -283,7 +290,7 @@ async function execute(order: OrderRow, reasoning: string, price: number | null,
     };
     const result =
       getVenue(order.venue).kind === "chain"
-        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), minOut: takeProfitMinOut(order, action as SwapAction) })
+        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), ...limitFill(order, action as SwapAction) })
         : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
     close(order.id, "filled", { ...seen, ...result });
     log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);

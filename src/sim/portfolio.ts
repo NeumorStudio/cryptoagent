@@ -212,6 +212,11 @@ export async function swap(args: {
    * paga nada y se lanza LimitNotReached. Lo usan las tomas de beneficio de las órdenes condicionales.
    */
   minOut?: number;
+  /**
+   * Orden límite real (toma de beneficio): se llena exactamente a `minOut`, no al precio del pico. En las
+   * órdenes límite de Jupiter recibes lo que fijaste; lo que el mercado dé por encima se lo queda quien la ejecuta.
+   */
+  fillAtLimit?: boolean;
 }) {
   // Misión real: se ejecuta en la cadena con la cartera de la IA (firma el firmante, no este proceso).
   if (isLiveMission(args.missionId)) {
@@ -228,8 +233,12 @@ export async function swap(args: {
   if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input.symbol} en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
   if (amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${input.symbol} y quieres vender ${amount}`);
 
-  const quote = await chain.quote({ input, output, amountIn: amount, slippageBps: args.slippageBps });
+  let quote = await chain.quote({ input, output, amountIn: amount, slippageBps: args.slippageBps });
   if (args.minOut !== undefined && quote.amountOut < args.minOut) throw new LimitNotReached(quote.amountOut, args.minOut);
+  if (args.fillAtLimit && args.minOut !== undefined && quote.amountOut > args.minOut) {
+    const f = args.minOut / quote.amountOut;
+    quote = { ...quote, amountOut: args.minOut, grossOut: quote.grossOut * f };
+  }
   const settled = chain.settle(quote, {
     balance: (asset) => balance(m, chain.id, asset),
     approved: (asset) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset)),

@@ -863,8 +863,9 @@ export function recentApproach(count = 8) {
     const ps = listPositions(m.id).filter((p) => p.status !== "moved");
     const ages = ps.map((p) => p.entry.ageMinutes).filter((a): a is number => typeof a === "number").sort((a, b) => a - b);
     const orders = (db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id) as { n: number }).n;
-    // Minutos parado al final: desde la última operación hasta que acabó (sin haber llegado al objetivo).
-    const lastTrade = (db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(m.id) as { ts: string | null }).ts;
+    // Minutos parado al final: desde la última operación hasta que acabó (sin haber llegado al objetivo). Los
+    // futuros cuentan: en la M16 de la v0.35.6 un largo abierto a 7 min del final salía como "parado en efectivo".
+    const lastTrade = (db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'perp') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(m.id) as { ts: string | null }).ts;
     const end = new Date(m.ended_at ?? m.deadline).getTime();
     const durationMin = (new Date(m.deadline).getTime() - new Date(m.started_at ?? m.created_at).getTime()) / 60_000;
     const idleAtEndMinutes = m.status === "succeeded" || !lastTrade ? 0 : Math.max(0, Math.round((end - new Date(lastTrade).getTime()) / 60_000));

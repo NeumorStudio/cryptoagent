@@ -8279,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.35.6";
+    CODE_VERSION = "0.35.7";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42358,7 +42358,7 @@ function recentApproach(count = 8) {
     const ps = listPositions(m.id).filter((p) => p.status !== "moved");
     const ages = ps.map((p) => p.entry.ageMinutes).filter((a) => typeof a === "number").sort((a, b) => a - b);
     const orders = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ?").get(m.id).n;
-    const lastTrade = db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(m.id).ts;
+    const lastTrade = db.prepare("SELECT MAX(ts) AS ts FROM journal WHERE mission_id = ? AND kind IN ('swap', 'cex_order', 'transfer', 'perp') AND (reasoning IS NULL OR reasoning NOT LIKE 'Cierre %') AND (reasoning IS NULL OR reasoning NOT LIKE 'Parada %')").get(m.id).ts;
     const end = new Date(m.ended_at ?? m.deadline).getTime();
     const durationMin = (new Date(m.deadline).getTime() - new Date(m.started_at ?? m.created_at).getTime()) / 6e4;
     const idleAtEndMinutes = m.status === "succeeded" || !lastTrade ? 0 : Math.max(0, Math.round((end - new Date(lastTrade).getTime()) / 6e4));

@@ -8077,6 +8077,14 @@ function supersededBy() {
   if (!stored || !newer(stored, CODE_VERSION)) return null;
   return `Esta sesi\xF3n usa cryptoagent ${CODE_VERSION}, pero ya hay en marcha la versi\xF3n ${stored}. Para no estropear los datos, esta versi\xF3n ya no hace nada: abre una sesi\xF3n nueva de Claude Code.`;
 }
+function holdsTickLease() {
+  const nowMs = Date.now();
+  const r = db.prepare(
+    `INSERT INTO meta (key, value) VALUES ('tick_lease', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value
+       WHERE meta.value LIKE ? OR CAST(substr(meta.value, instr(meta.value, '@') + 1) AS INTEGER) < ?`
+  ).run(`${tickOwner}@${nowMs + TICK_LEASE_MS}`, `${tickOwner}@%`, nowMs);
+  return r.changes > 0;
+}
 function logActivity(entry) {
   db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?, ?)").run(
     now(),
@@ -8098,7 +8106,7 @@ function logJournal(entry) {
     entry.details === void 0 ? null : JSON.stringify(entry.details)
   );
 }
-var db, now, CODE_VERSION, semver, newer;
+var db, now, CODE_VERSION, semver, newer, TICK_LEASE_MS, tickOwner;
 var init_db = __esm({
   "src/db.ts"() {
     "use strict";
@@ -8271,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.35.2";
+    CODE_VERSION = "0.35.3";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8282,6 +8290,8 @@ var init_db = __esm({
       const stored = getMeta("code_version");
       if (!stored || newer(CODE_VERSION, stored)) setMeta("code_version", CODE_VERSION);
     }
+    TICK_LEASE_MS = 45e3;
+    tickOwner = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   }
 });
 
@@ -8374,6 +8384,9 @@ function fetchText(url2, opts = {}) {
     for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
   }
   return value;
+}
+function isTransientError(err) {
+  return /HTTP (408|429|5dd)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String(err?.message ?? err));
 }
 function isNoRouteError(err) {
   const msg = String(err?.message ?? err);
@@ -11572,6 +11585,16 @@ function resetPortfolio(missionId, holdings) {
     for (const h of holdings) adjust(missionId, h.venue, h.asset, h.symbol, h.decimals, h.amount);
   });
 }
+async function withRetries(fn, attempts = 4, waitMs = LIQUIDATION_RETRY_MS) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= attempts || !isTransientError(err)) throw err;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
 async function liquidateAll(missionId, sessionId, reasoning2, opts = {}) {
   const { closeAllPerps: closeAllPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
   const problems = opts.nativeOnly ? [] : await closeAllPerps2(missionId, reasoning2);
@@ -11580,14 +11603,14 @@ async function liquidateAll(missionId, sessionId, reasoning2, opts = {}) {
   for (const chain of allChains()) {
     const tokens = opts.nativeOnly ? [] : holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
     for (const h of tokens) {
-      await swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning: reasoning2, meta: meta3 }).catch(
+      await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning: reasoning2, meta: meta3 })).catch(
         (err) => problems.push(`${h.symbol} (${chain.label}): ${err.message}`)
       );
     }
     const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
     if (nativeLeft > 1e-6 && !isLiveMission(missionId) && !opts.keepNative) {
       const amount = Number(nativeLeft.toFixed(chain.native.decimals));
-      await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning: reasoning2, meta: meta3 }).catch(
+      await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning: reasoning2, meta: meta3 })).catch(
         (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${err.message}`)
       );
     }
@@ -11845,7 +11868,7 @@ async function valuation(missionId, recordSnapshot = false) {
     } : {}
   };
 }
-var DUST5, describeCosts, LimitNotReached, lastQuotes, QUOTE_TTL_MS, quoteKey, evmAddress;
+var DUST5, LIQUIDATION_RETRY_MS, describeCosts, LimitNotReached, lastQuotes, QUOTE_TTL_MS, quoteKey, evmAddress;
 var init_portfolio = __esm({
   "src/sim/portfolio.ts"() {
     "use strict";
@@ -11859,6 +11882,7 @@ var init_portfolio = __esm({
     init_binance2();
     init_venues();
     DUST5 = 1e-12;
+    LIQUIDATION_RETRY_MS = Number(process.env.LIQUIDATION_RETRY_MS ?? 2e4);
     describeCosts = (costs) => costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`);
     LimitNotReached = class extends Error {
       constructor(got, min) {
@@ -44228,7 +44252,8 @@ async function startDashboard(opts = {}) {
     server2.listen(port, "127.0.0.1", resolve);
   });
   const timers = [
-    setInterval(() => refreshValuation(log), 15e3),
+    // Cada 30 s: la valoración cotiza en Jupiter y comparte su límite de peticiones con el agente.
+    setInterval(() => refreshValuation(log), 3e4),
     // Con una misión real, más a menudo (para avisar de aprobaciones pendientes).
     setInterval(() => {
       const live = getActiveMission()?.mode === "live";
@@ -44650,12 +44675,12 @@ var send2 = transport.send.bind(transport);
 transport.send = (message) => send2(slimToolList(message));
 await server.connect(transport);
 setInterval(async () => {
-  if (supersededBy()) return;
+  if (supersededBy() || !holdsTickLease()) return;
   await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misi\xF3n: ${err.message}`));
 }, config2.watchIntervalSeconds * 1e3);
 setInterval(async () => {
-  if (supersededBy()) return;
+  if (supersededBy() || !holdsTickLease()) return;
   const open2 = db.prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1").get();
   if (open2) await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
 }, 15e3);

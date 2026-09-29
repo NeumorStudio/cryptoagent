@@ -7690,7 +7690,7 @@ function getMeta(key) {
 function setMeta(key, value) {
   db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
-var db, CODE_VERSION, semver, newer;
+var db, CODE_VERSION, semver, newer, tickOwner;
 var init_db = __esm({
   "src/db.ts"() {
     "use strict";
@@ -7862,7 +7862,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.35.2";
+    CODE_VERSION = "0.35.3";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -7873,6 +7873,7 @@ var init_db = __esm({
       const stored = getMeta("code_version");
       if (!stored || newer(CODE_VERSION, stored)) setMeta("code_version", CODE_VERSION);
     }
+    tickOwner = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   }
 });
 
@@ -9203,6 +9204,7 @@ var init_positions = __esm({
 });
 
 // src/sim/portfolio.ts
+var LIQUIDATION_RETRY_MS;
 var init_portfolio = __esm({
   "src/sim/portfolio.ts"() {
     "use strict";
@@ -9215,6 +9217,7 @@ var init_portfolio = __esm({
     init_types();
     init_binance2();
     init_venues();
+    LIQUIDATION_RETRY_MS = Number(process.env.LIQUIDATION_RETRY_MS ?? 2e4);
   }
 });
 

@@ -182,6 +182,7 @@ export const solana: ChainAdapter = {
     }
     try {
       // Valor de liquidación: cuánto USDC darían hoy vendiéndolo todo.
+      // Caché de 10 s: el panel, el tick de la misión y las herramientas valoran lo mismo varias veces seguidas.
       const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 10_000);
       return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidación Jupiter", reliable: true };
     } catch (err) {

@@ -185,6 +185,11 @@ export function fetchText(url: string, opts: RequestOpts = {}): Promise<{ status
  * ¿El agregador ha contestado que no hay ruta (el token no se puede vender), o solo ha fallado la red?
  * Lo primero es un dato: el token vale 0 ahora mismo. Lo segundo es transitorio.
  */
+/** Fallo de red o de límite de peticiones: vuelve a intentarlo más tarde y probablemente funcione. */
+export function isTransientError(err: unknown): boolean {
+  return /HTTP (408|429|5dd)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String((err as Error)?.message ?? err));
+}
+
 export function isNoRouteError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err);
   if (/HTTP (408|429|5\d\d)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND/i.test(msg)) return false;

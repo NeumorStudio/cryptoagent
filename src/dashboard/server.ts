@@ -192,7 +192,8 @@ export async function startDashboard(opts: { port?: number; log?: (msg: string) 
     server.listen(port, "127.0.0.1", resolve);
   });
   const timers = [
-    setInterval(() => refreshValuation(log), 15_000),
+    // Cada 30 s: la valoración cotiza en Jupiter y comparte su límite de peticiones con el agente.
+    setInterval(() => refreshValuation(log), 30_000),
     // Con una misión real, más a menudo (para avisar de aprobaciones pendientes).
     setInterval(() => {
       const live = (getActiveMission() as { mode?: string } | undefined)?.mode === "live";

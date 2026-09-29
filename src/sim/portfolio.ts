@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { db, logJournal, now } from "../db.js";
 import * as market from "../market/binance.js";
-import { fetchJson } from "../market/http.js";
+import { fetchJson, isTransientError } from "../market/http.js";
 import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
 import { recordTrade } from "./positions.js";
 import { VENUES, type Allocation, type ChainId, type Holding, type TradeMeta, type VenueId } from "./types.js";
@@ -127,6 +127,22 @@ export function resetPortfolio(missionId: number, holdings: Holding[]) {
  * Devuelve lo que no se pudo vender.
  */
 /**
+ * Una venta del cierre que falla por la red o por el límite de peticiones (429) se reintenta: en la M2 de la
+ * v0.35.2 un 429 dejó POND sin vender al acabar el plazo. Un fallo de otro tipo (sin ruta, saldo) no.
+ */
+async function withRetries<T>(fn: () => Promise<T>, attempts = 4, waitMs = LIQUIDATION_RETRY_MS): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= attempts || !isTransientError(err)) throw err;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
+const LIQUIDATION_RETRY_MS = Number(process.env.LIQUIDATION_RETRY_MS ?? 20_000);
+
+/**
  * Vende todo a estables. Con `nativeOnly`, solo el nativo que quede (segundo paso de un cierre por objetivo);
  * con `keepNative`, todo menos el nativo (primer paso: si al final no se cierra, sigue habiendo gas).
  */
@@ -145,7 +161,7 @@ export async function liquidateAll(
   for (const chain of allChains()) {
     const tokens = opts.nativeOnly ? [] : holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
     for (const h of tokens) {
-      await swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning, meta }).catch(
+      await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning, meta })).catch(
         (err) => problems.push(`${h.symbol} (${chain.label}): ${(err as Error).message}`),
       );
     }
@@ -154,7 +170,7 @@ export async function liquidateAll(
     const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
     if (nativeLeft > 0.000001 && !isLiveMission(missionId) && !opts.keepNative) {
       const amount = Number(nativeLeft.toFixed(chain.native.decimals));
-      await swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning, meta }).catch(
+      await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: chain.native.address, output: chain.cash.address, amount, slippageBps: 100, reasoning, meta })).catch(
         (err) => problems.push(`${chain.native.symbol} (${chain.label}): ${(err as Error).message}`),
       );
     }

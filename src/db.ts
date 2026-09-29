@@ -231,6 +231,26 @@ export function supersededBy(): string | null {
   );
 }
 
+// ─── Un solo proceso para el trabajo de fondo ──────────────────────────────
+// Claude Code, OpenCode y el watcher pueden tener cada uno su servidor abierto sobre la misma base de datos.
+// Si todos revisan órdenes y misiones, las cotizaciones se multiplican y Jupiter responde 429 (en la M2 de la
+// v0.35.2 el cierre de la misión esperó 14 minutos en la cola). Quien tiene el turno lo renueva en cada vuelta;
+// si deja de hacerlo (se cerró), a los 45 s lo toma otro.
+const TICK_LEASE_MS = 45_000;
+const tickOwner = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** true si este proceso tiene (o acaba de tomar) el turno del trabajo de fondo. */
+export function holdsTickLease(): boolean {
+  const nowMs = Date.now();
+  const r = db
+    .prepare(
+      `INSERT INTO meta (key, value) VALUES ('tick_lease', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value
+       WHERE meta.value LIKE ? OR CAST(substr(meta.value, instr(meta.value, '@') + 1) AS INTEGER) < ?`,
+    )
+    .run(`${tickOwner}@${nowMs + TICK_LEASE_MS}`, `${tickOwner}@%`, nowMs);
+  return r.changes > 0;
+}
+
 export function logActivity(entry: { missionId: number | null; sessionId: number | null; kind: string; title: string; body?: string }) {
   db.prepare("INSERT INTO activity (ts, mission_id, session_id, kind, title, body) VALUES (?, ?, ?, ?, ?, ?)").run(
     now(),

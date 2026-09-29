@@ -1368,7 +1368,15 @@ export async function runTool(
   const fail = (message: string) => {
     // Los errores se guardan para que el revisor detecte los que se repiten y escriba cómo evitarlos.
     memory.recordToolError({ missionId: ctx.missionId, sessionId: ctx.sessionId, tool: name, input: rawInput, message });
-    return { content: `Error: ${message}`, isError: true };
+    const howto = memory.howtoForError(message);
+    const steps = howto ? (howto.steps.length > 600 ? howto.steps.slice(0, 600) + "…" : howto.steps) : "";
+    return {
+      content: `Error: ${message}` + (howto ? `
+
+Tu memoria ya tiene un howto para este error: #${howto.id} «${howto.title}»
+${steps}` : ""),
+      isError: true,
+    };
   };
   const parsed = def.schema.safeParse(rawInput);
   if (!parsed.success) return fail(`Entrada no válida: ${parsed.error.message}`);

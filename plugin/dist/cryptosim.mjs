@@ -8271,7 +8271,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.33.0";
+    CODE_VERSION = "0.34.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9028,6 +9028,8 @@ function evmAdapter(cfg) {
         lpLockedPct: lpLocked !== void 0 && Number(raw.lp_total_supply ?? 0) > 1e-6 ? n(Math.min(100, lpLocked), 1) : void 0,
         venue: cfg.id,
         ageMinutes: ageMinutes(top?.pairCreatedAt),
+        // En EVM la edad ya es la del par principal.
+        pairAgeMinutes: ageMinutes(top?.pairCreatedAt),
         liquidityUsd: n(top?.liquidity?.usd, 0),
         mcapUsd: n(top?.marketCap ?? top?.fdv, 0),
         priceChange5mPct: n(top?.priceChange?.m5),
@@ -9443,10 +9445,12 @@ async function priceUsd(mints) {
   return prices;
 }
 async function entryFeatures(mint) {
-  const [jup, rug] = await Promise.allSettled([
+  const [jup, rug, dex] = await Promise.allSettled([
     fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8e3),
-    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8e3, ttlMs: 6e4 })
+    fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8e3, ttlMs: 6e4 }),
+    fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, 8e3)
   ]);
+  const pair = dex.status === "fulfilled" ? [...dex.value.pairs ?? []].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0] : void 0;
   const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : void 0;
   const rc = rug.status === "fulfilled" ? rug.value : void 0;
   const risks = rc ? rc.risks ?? [] : void 0;
@@ -9464,11 +9468,16 @@ async function entryFeatures(mint) {
     lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),
     venue: "solana",
     ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 6e4) : void 0,
+    // Edad de su pool actual: en un token graduado de pump.fun, desde la graduación (ageMinutes cuenta desde que se
+    // creó en la curva; en la M31 marcaba 838 min en uno graduado hacía ~48). Sin graduar, es la misma edad.
+    pairAgeMinutes: t?.graduatedAt ? Math.round((Date.now() - new Date(t.graduatedAt).getTime()) / 6e4) : t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 6e4) : void 0,
     liquidityUsd: round(t?.liquidity, 0),
     mcapUsd: round(t?.mcap, 0),
     priceChange5mPct: round(t?.stats5m?.priceChange),
     priceChange1hPct: round(t?.stats1h?.priceChange),
     priceChange24hPct: round(t?.stats24h?.priceChange),
+    pairPriceChange5mPct: round(pair?.priceChange?.m5),
+    pairPriceChange1hPct: round(pair?.priceChange?.h1),
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
     buySellRatio5m: t?.stats5m?.sellVolume > 0 ? round(t.stats5m.buyVolume / t.stats5m.sellVolume) : void 0,
@@ -41706,10 +41715,13 @@ var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${
 var CONDITION_FIELDS = [
   "venue",
   "ageMinutes",
+  "pairAgeMinutes",
   "liquidityUsd",
   "mcapUsd",
   "priceChange5mPct",
   "priceChange1hPct",
+  "pairPriceChange5mPct",
+  "pairPriceChange1hPct",
   "priceChange24hPct",
   "buyVolume5mUsd",
   "sellVolume5mUsd",
@@ -42475,6 +42487,10 @@ function resolveObservation(id, status, resolution) {
 }
 function errorClass(message) {
   return message.replace(/0x[0-9a-fA-F]{6,}/g, "<direcci\xF3n>").replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, "<direcci\xF3n>").replace(/\d+([.,]\d+)?(e-?\d+)?/g, "N").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+function howtoForError(message) {
+  const row = db.prepare("SELECT h.id, h.title, h.steps FROM tool_errors e JOIN howtos h ON h.id = e.howto_id WHERE substr(e.error_class, 1, 50) = ? AND h.status = 'active' ORDER BY e.id DESC LIMIT 1").get(errorClass(message).slice(0, 50));
+  return row;
 }
 function recordToolError(a) {
   const input2 = a.input ?? {};
@@ -43790,7 +43806,15 @@ async function runTool(name, rawInput, ctx, tools = SIM_TOOLS) {
   if (!def) return { content: `Herramienta desconocida: ${name}`, isError: true };
   const fail = (message) => {
     recordToolError({ missionId: ctx.missionId, sessionId: ctx.sessionId, tool: name, input: rawInput, message });
-    return { content: `Error: ${message}`, isError: true };
+    const howto = howtoForError(message);
+    const steps = howto ? howto.steps.length > 600 ? howto.steps.slice(0, 600) + "\u2026" : howto.steps : "";
+    return {
+      content: `Error: ${message}` + (howto ? `
+
+Tu memoria ya tiene un howto para este error: #${howto.id} \xAB${howto.title}\xBB
+${steps}` : ""),
+      isError: true
+    };
   };
   const parsed = def.schema.safeParse(rawInput);
   if (!parsed.success) return fail(`Entrada no v\xE1lida: ${parsed.error.message}`);

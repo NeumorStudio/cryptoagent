@@ -42,10 +42,15 @@ export interface TradeMeta {
 export interface Features {
   venue?: VenueId;
   ageMinutes?: number;
+  /** Edad del pool en el que se opera (en un token graduado de pump.fun, desde la graduación). */
+  pairAgeMinutes?: number;
   liquidityUsd?: number;
   mcapUsd?: number;
   priceChange5mPct?: number;
   priceChange1hPct?: number;
+  /** Subida del par principal (DexScreener), sin la curva anterior a la graduación. */
+  pairPriceChange5mPct?: number;
+  pairPriceChange1hPct?: number;
   priceChange24hPct?: number;
   /** Volumen de compras y de ventas en USD en los últimos 5 min, y su cociente (compras / ventas). */
   buyVolume5mUsd?: number;

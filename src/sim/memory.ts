@@ -45,10 +45,13 @@ type Pos = ReturnType<typeof listPositions>[number];
 export const CONDITION_FIELDS = [
   "venue",
   "ageMinutes",
+  "pairAgeMinutes",
   "liquidityUsd",
   "mcapUsd",
   "priceChange5mPct",
   "priceChange1hPct",
+  "pairPriceChange5mPct",
+  "pairPriceChange1hPct",
   "priceChange24hPct",
   "buyVolume5mUsd",
   "sellVolume5mUsd",
@@ -1169,6 +1172,19 @@ export function errorClass(message: string) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 160);
+}
+
+/**
+ * El howto que el revisor ya enlazó a este tipo de error (mismo error_class), si lo hay: se le enseña al agente en
+ * el momento en que el error se repite. Los howtos le llegan por título al empezar y no siempre los relee; en
+ * M32-M35 repitió cuatro veces un error que su howto #6 ya explicaba.
+ */
+export function howtoForError(message: string): { id: number; title: string; steps: string } | undefined {
+  const row = db
+    // Por el principio del mensaje: el resto lleva el símbolo del token y cambia de un error a otro del mismo tipo.
+    .prepare("SELECT h.id, h.title, h.steps FROM tool_errors e JOIN howtos h ON h.id = e.howto_id WHERE substr(e.error_class, 1, 50) = ? AND h.status = 'active' ORDER BY e.id DESC LIMIT 1")
+    .get(errorClass(message).slice(0, 50)) as { id: number; title: string; steps: string } | undefined;
+  return row;
 }
 
 export function recordToolError(a: { missionId: number | null; sessionId: number | null; tool: string; input: unknown; message: string }) {

@@ -152,3 +152,14 @@ test("write_briefing con append añade al briefing actual sin borrarlo", async (
   const t = memory.getBriefing(m5.id)!.text;
   assert.match(t, /^Base: la #5\.\n\nActualización \(\d\d:\d\d UTC\): Cuidado con el pico\.$/);
 });
+
+test("si un error se repite y el revisor ya le enlazó un howto, el agente lo ve en ese momento", async () => {
+  const memory = await import("../src/sim/memory.js");
+  const h = memory.writeHowto({ scope: "solana", topic: "slippage", title: "Slippage de entrada en tokens que se mueven rápido", steps: "Usa 8-15 %, nunca 3 %.", missionId: null });
+  const msg = (sym: string) => `El swap revierte: el precio se ha movido más que tu slippage. Cotizaste 1000 ${sym} y ahora saldrían 900 (10 % menos; tu límite era 3 %).`;
+  memory.recordToolError({ missionId: null, sessionId: null, tool: "simulate_swap", input: {}, message: msg("rock") });
+  const id = (db.prepare("SELECT MAX(id) AS id FROM tool_errors").get() as { id: number }).id;
+  db.prepare("UPDATE tool_errors SET howto_id = ? WHERE id = ?").run(h, id);
+  const found = memory.howtoForError(msg("POND"));
+  assert.equal(found?.id, h, "mismo tipo de error aunque cambie el token");
+});

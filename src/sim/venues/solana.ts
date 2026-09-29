@@ -70,10 +70,14 @@ async function priceUsd(mints: string[]): Promise<Record<string, number>> {
  * insiders y liquidez bloqueada).
  */
 async function entryFeatures(mint: string): Promise<Features> {
-  const [jup, rug] = await Promise.allSettled([
+  const [jup, rug, dex] = await Promise.allSettled([
     fetchJson<any[]>(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8000),
     fetchJson<any>(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8000, ttlMs: 60_000 }),
+    fetchJson<{ pairs?: any[] }>(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, 8000),
   ]);
+  // El par principal (el de más liquidez): en un token recién graduado, Jupiter mezcla la subida de la curva
+  // anterior a la graduación (en la M33, rock: 1h +2272 % en Jupiter, +300 % en su par).
+  const pair = dex.status === "fulfilled" ? [...(dex.value.pairs ?? [])].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0] : undefined;
   const t = jup.status === "fulfilled" ? jup.value.find((x) => x.id === mint) : undefined;
   const rc = rug.status === "fulfilled" ? rug.value : undefined;
   const risks = rc ? (rc.risks ?? []) : undefined;
@@ -91,11 +95,20 @@ async function entryFeatures(mint: string): Promise<Features> {
     lpLockedPct: lpLocked === undefined ? undefined : round(lpLocked, 1),
     venue: "solana",
     ageMinutes: t?.createdAt ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 60_000) : undefined,
+    // Edad de su pool actual: en un token graduado de pump.fun, desde la graduación (ageMinutes cuenta desde que se
+    // creó en la curva; en la M31 marcaba 838 min en uno graduado hacía ~48). Sin graduar, es la misma edad.
+    pairAgeMinutes: t?.graduatedAt
+      ? Math.round((Date.now() - new Date(t.graduatedAt).getTime()) / 60_000)
+      : t?.createdAt
+        ? Math.round((Date.now() - new Date(t.createdAt).getTime()) / 60_000)
+        : undefined,
     liquidityUsd: round(t?.liquidity, 0),
     mcapUsd: round(t?.mcap, 0),
     priceChange5mPct: round(t?.stats5m?.priceChange),
     priceChange1hPct: round(t?.stats1h?.priceChange),
     priceChange24hPct: round(t?.stats24h?.priceChange),
+    pairPriceChange5mPct: round(pair?.priceChange?.m5),
+    pairPriceChange1hPct: round(pair?.priceChange?.h1),
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
     buySellRatio5m: t?.stats5m?.sellVolume > 0 ? round(t.stats5m.buyVolume / t.stats5m.sellVolume) : undefined,

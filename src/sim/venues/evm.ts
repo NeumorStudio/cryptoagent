@@ -255,6 +255,8 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         lpLockedPct: lpLocked !== undefined && Number(raw.lp_total_supply ?? 0) > 1e-6 ? n(Math.min(100, lpLocked), 1) : undefined,
         venue: cfg.id,
         ageMinutes: ageMinutes(top?.pairCreatedAt),
+        // En EVM la edad ya es la del par principal.
+        pairAgeMinutes: ageMinutes(top?.pairCreatedAt),
         liquidityUsd: n(top?.liquidity?.usd, 0),
         mcapUsd: n(top?.marketCap ?? top?.fdv, 0),
         priceChange5mPct: n(top?.priceChange?.m5),

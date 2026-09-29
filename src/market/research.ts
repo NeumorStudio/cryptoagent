@@ -135,13 +135,7 @@ export async function scanMarket(limit = 25) {
     attempt("dexscreener_profiles", profiles),
   ]);
 
-  const all = [...merged.values()]
-    .map((c: any) =>
-      c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05
-        ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` }
-        : c,
-    )
-    .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  const all = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
   const candidates = all.slice(0, limit);
   // Los que salen en más fuentes van primero, y un token de minutos casi nunca sale en varias: los más recientes
   // que se han quedado fuera de la lista, aparte, para que se vean.

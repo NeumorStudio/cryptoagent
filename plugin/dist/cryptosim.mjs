@@ -8271,7 +8271,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.34.0";
+    CODE_VERSION = "0.35.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9086,7 +9086,7 @@ function evmAdapter(cfg) {
         const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
         const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
           const lp = launchpadOf(cfg.id, c.token);
-          return lp === "flap.sh" ? { ...c, launchpad: lp, warning: "token de Flap.sh (\u20267777): impuestos de venta din\xE1micos que pueden llegar al 100 %" } : lp ? { ...c, launchpad: lp } : c;
+          return lp ? { ...c, launchpad: lp } : c;
         }).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
         return {
           chain: cfg.id,
@@ -9295,9 +9295,7 @@ async function scanMarket(limit = 25) {
     attempt("geckoterminal_trending", gecko),
     attempt("dexscreener_profiles", profiles)
   ]);
-  const all = [...merged.values()].map(
-    (c) => c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05 ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` } : c
-  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  const all = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
   const candidates = all.slice(0, limit);
   const newest = all.slice(limit).filter((c) => c.ageMinutes !== void 0 && c.ageMinutes < 60).sort((a, b) => (a.ageMinutes ?? 0) - (b.ageMinutes ?? 0)).slice(0, 5);
   return {
@@ -9703,10 +9701,21 @@ function tokenHistory(venue, asset2) {
   const last = rows.at(-1);
   return `operado ${rows.length} ${rows.length === 1 ? "vez" : "veces"} (${rows.map((r) => `M${r.mission_id} ${pct4(r) > 0 ? "+" : ""}${pct4(r)} %`).join(", ")}); la \xFAltima ${pct4(last) > 0 ? "gan\xF3" : pct4(last) < 0 ? "perdi\xF3" : "qued\xF3 igual"}`;
 }
+function creatorHistory(creator) {
+  if (typeof creator !== "string" || !creator) return {};
+  const rows = db.prepare("SELECT realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE status = 'closed' AND json_extract(entry_features, '$.creator') = ?").all(creator);
+  if (!rows.length) return { creatorTradesWithYou: 0 };
+  const pnls = rows.filter((r) => r.c > 0).map((r) => Math.round((r.p / r.c - 1) * 100));
+  return { creatorTradesWithYou: rows.length, ...pnls.length ? { creatorWorstPnlWithYouPct: Math.min(...pnls) } : {} };
+}
 async function featuresAtDecision(venue, asset2) {
   const d = decidedFeatures(venue.id, asset2);
-  if (d) return { ...d.features, featuresSource: `lectura del agente, ${d.ageSeconds} s antes de comprar` };
-  return { ...await venue.entryFeatures(asset2), featuresSource: "le\xEDdos tras la compra" };
+  const f = d ? d.features : await venue.entryFeatures(asset2);
+  return {
+    ...f,
+    ...creatorHistory(f.creator),
+    featuresSource: d ? `lectura del agente, ${d.ageSeconds} s antes de comprar` : "le\xEDdos tras la compra"
+  };
 }
 async function fillVsPrice(venue, asset2, costUsd, qty) {
   try {
@@ -41744,6 +41753,9 @@ var CONDITION_FIELDS = [
   "creatorHoneypots",
   "insidersDetected",
   "lpLockedPct",
+  // Lo que lleva operado de tokens del mismo creador (antes, una lista negra fija; ahora, un dato que puede aprender).
+  "creatorTradesWithYou",
+  "creatorWorstPnlWithYouPct",
   "tokenReportBeforeBuying",
   "researchCallsSinceLastTrade",
   "minutesIntoMission",
@@ -41903,14 +41915,6 @@ function tradeStats(ps) {
 }
 var closedPositions = () => listPositions().filter((p) => p.status === "closed");
 var STRONG_NEGATIVE = { minDecided: 4, minWilsonLowPct: 50, maxAvgPnlPct: -15 };
-function creatorRugs(creator) {
-  if (!creator) return [];
-  return db.prepare(
-    `SELECT symbol, mission_id, (realized_proceeds_usd - realized_cost_usd) * 100.0 / realized_cost_usd AS pnl FROM positions
-       WHERE status = 'closed' AND realized_cost_usd > 0 AND lower(json_extract(entry_features, '$.creator')) = lower(?)
-         AND (realized_proceeds_usd - realized_cost_usd) / realized_cost_usd <= -0.8`
-  ).all(creator).map((r) => ({ symbol: r.symbol, missionId: r.mission_id, pnlPct: Math.round(r.pnl) }));
-}
 function blockingBeliefs(venue, entry, asset2 = "", decision = {}) {
   const closed = closedPositions();
   const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
@@ -42606,39 +42610,30 @@ async function estimateTokenLaunch(a) {
 // src/sim/guard.ts
 init_venues();
 init_positions();
-var CREATOR_BLACKLIST_ID = 0;
 async function checkBuyAgainstMemory(a) {
   const chain = getChain(a.chain);
   const out = await chain.resolveToken(a.output);
   if (chain.isCash(out.address) || out.address === chain.native.address) return [];
   if (!a.risksChecked || a.risksChecked.trim().length < 15) {
     throw new Error(
-      `Antes de comprar ${out.symbol}, rellena thesis.risks_checked: qu\xE9 creencias negativas de tu memoria podr\xEDan aplicar y qu\xE9 alarmas da riskCheck en token_report, y por qu\xE9 no descartan la compra.`
+      `Antes de comprar ${out.symbol}, rellena thesis.risks_checked: qu\xE9 creencias negativas de tu memoria podr\xEDan aplicar y qu\xE9 dicen los datos de riskCheck en token_report, y por qu\xE9 no descartan la compra.`
     );
   }
   const features = await chain.entryFeatures(out.address).catch(() => null);
   if (!features) return [];
-  if (features.honeypot === true) {
-    throw new Error(`${out.symbol} es un honeypot seg\xFAn GoPlus: se puede comprar pero no vender. No se compra.`);
-  }
   const overridden = new Map((a.overrides ?? []).map((o) => [o.id, o]));
   const reasons = [];
-  const rugs = creatorRugs(features.creator);
-  if (rugs.length && !overridden.has(CREATOR_BLACKLIST_ID)) {
-    reasons.push(
-      `- Lista negra: su creador (${features.creator}) ya lanz\xF3 ${rugs.map((r) => `${r.symbol} (${r.pnlPct} %${r.missionId ? `, misi\xF3n ${r.missionId}` : ""})`).join(", ")}. [id ${CREATOR_BLACKLIST_ID}]`
-    );
-  }
   let amountUsd = 0;
   if (a.input && a.amount) {
     const input2 = await chain.resolveToken(a.input).catch(() => null);
     if (input2 && chain.isCash(input2.address)) amountUsd = a.amount;
   }
   const decision = a.missionId !== void 0 ? decisionContext(a.missionId, chain.id, out.address, amountUsd, false) : {};
-  const blocking = blockingBeliefs(chain.id, features, out.address, decision);
+  const entry = { ...features, ...creatorHistory(features.creator) };
+  const blocking = blockingBeliefs(chain.id, entry, out.address, decision);
   for (const b of blocking.filter((x) => !overridden.has(x.id))) reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`);
   if (reasons.length) {
-    const ids = [...rugs.length && !overridden.has(CREATOR_BLACKLIST_ID) ? [CREATOR_BLACKLIST_ID] : [], ...blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id)];
+    const ids = blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id);
     throw new Error(
       `Tu memoria desaconseja esta compra de ${out.symbol}:
 ${reasons.join("\n")}
@@ -42722,7 +42717,7 @@ var thesis = external_exports.object({
   exit_plan: external_exports.string().min(1).describe("Cu\xE1ndo cerrar\xEDas con beneficio y cu\xE1ndo la dar\xEDas por fallida (en una venta: qu\xE9 har\xE1s despu\xE9s)"),
   beliefs_applied: external_exports.array(external_exports.number().int()).describe("Ids de las creencias que aplicas (vac\xEDo si ninguna); el simulador mide c\xF3mo le va a cada una"),
   memory_note: external_exports.string().min(1).describe("C\xF3mo aplicas tu memoria (creencias, howtos, briefing) o por qu\xE9 no aplica"),
-  risks_checked: external_exports.string().optional().describe("Obligatorio al comprar un token: qu\xE9 has comprobado en contra (creencias negativas, flags de riskCheck) y por qu\xE9 no la descartan"),
+  risks_checked: external_exports.string().optional().describe("Obligatorio al comprar un token: qu\xE9 has comprobado en contra (creencias negativas, datos de riskCheck) y por qu\xE9 no la descartan"),
   overrides: external_exports.array(external_exports.object({ id: external_exports.number().int(), reason: external_exports.string().min(10) })).optional().describe("Solo si el simulador rechaz\xF3 la compra por tu memoria: creencias que ignoras a sabiendas, con el motivo concreto; cuentan igual como evidencia")
 }).describe("Tesis de la operaci\xF3n (queda en el diario y en el panel)");
 var formatThesis = (t) => `Por qu\xE9: ${t.why}
@@ -42740,26 +42735,19 @@ function riskCheck(chain, token2, f) {
   lastReads.set(key, { at: Date.now(), f });
   recordRead(chain, token2, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
   recordFeatures(chain, token2, f);
-  const rugs = creatorRugs(f.creator);
   const change = (a, b) => a !== void 0 && b !== void 0 && a !== 0 ? Number(((b - a) / Math.abs(a) * 100).toFixed(1)) : void 0;
-  const flags = [];
-  if (rugs.length) flags.push(`creador en tu lista negra (${rugs.map((r) => `${r.symbol} ${r.pnlPct} %`).join(", ")})`);
-  if (f.creatorTokens !== void 0 && f.creatorTokens >= 5 && (f.creatorGraduationPct ?? 0) < 5) flags.push(`creador en serie: ${f.creatorTokens} tokens lanzados, ${f.creatorGraduated ?? 0} graduados`);
-  if ((f.devHoldingPct ?? 0) > 5) flags.push(`el creador conserva el ${f.devHoldingPct} %`);
-  if ((f.insidersDetected ?? 0) > 0) flags.push(`${f.insidersDetected} redes de insiders detectadas`);
-  if (f.creatorHoneypots) flags.push("el creador ha desplegado otros honeypots");
-  if (f.launchpad === "flap.sh") flags.push("token de Flap.sh (\u20267777): impuestos de venta din\xE1micos que pueden llegar al 100 %");
-  if (f.honeypot) flags.push("honeypot: no se puede vender");
-  if (f.mcapUsd !== void 0 && f.liquidityUsd !== void 0 && f.mcapUsd <= f.liquidityUsd) flags.push("mcap \u2264 liquidez: casi todo el supply est\xE1 en el pool (perfil t\xEDpico de rug)");
   return {
     creator: f.creator,
     creatorTokens: f.creatorTokens,
     creatorGraduated: f.creatorGraduated,
+    ...creatorHistory(f.creator),
     devHoldingPct: f.devHoldingPct,
+    creatorHoneypots: f.creatorHoneypots,
     insidersDetected: f.insidersDetected,
     lpLockedPct: f.lpLockedPct,
     launchpad: f.launchpad,
-    flags: flags.length ? flags : ["ninguna se\xF1al de alarma en los datos disponibles"],
+    honeypot: f.honeypot,
+    mcapToLiquidity: f.mcapUsd !== void 0 && f.liquidityUsd ? Number((f.mcapUsd / f.liquidityUsd).toFixed(2)) : void 0,
     ...prev ? {
       sinceLastRead: {
         minutesAgo: Number(((Date.now() - prev.at) / 6e4).toFixed(1)),
@@ -42768,8 +42756,20 @@ function riskCheck(chain, token2, f) {
         holders: prev.f.holders !== void 0 && f.holders !== void 0 ? `${prev.f.holders} \u2192 ${f.holders}` : void 0,
         netBuyers5m: prev.f.netBuyers5m !== void 0 && f.netBuyers5m !== void 0 ? `${prev.f.netBuyers5m} \u2192 ${f.netBuyers5m}` : void 0
       }
-    } : { sinceLastRead: "primera lectura: vuelve a leerlo en 2-3 minutos para ver si aguanta" }
+    } : { sinceLastRead: "primera lectura" }
   };
+}
+function riskCell(rc) {
+  return [
+    rc.creatorTokens !== void 0 ? `creador ${rc.creatorTokens} tokens/${rc.creatorGraduated ?? 0} graduados` : "",
+    rc.creatorTradesWithYou ? `le operaste ${rc.creatorTradesWithYou} (peor ${rc.creatorWorstPnlWithYouPct} %)` : "",
+    rc.devHoldingPct !== void 0 ? `dev ${rc.devHoldingPct} %` : "",
+    rc.insidersDetected !== void 0 ? `insiders ${rc.insidersDetected}` : "",
+    rc.lpLockedPct !== void 0 ? `LP bloqueada ${rc.lpLockedPct} %` : "",
+    rc.creatorHoneypots ? "creador con otros honeypots" : "",
+    rc.honeypot !== void 0 ? `honeypot ${rc.honeypot ? "s\xED" : "no"}` : "",
+    rc.mcapToLiquidity !== void 0 ? `mcap/liq ${rc.mcapToLiquidity}` : ""
+  ].filter(Boolean).join(" \xB7 ");
 }
 var SOURCE_CODE = {
   jupiter_trending_5m: "jup5m",
@@ -42841,10 +42841,9 @@ async function mapLimit(items, limit, fn) {
 }
 function memoryCell(chain, f, address, missionId = null) {
   const decision = missionId !== null ? decisionContext(missionId, chain, address, 0, false) : {};
-  const m = beliefsFor(chain, f, address, decision);
-  const rugs = creatorRugs(f.creator).length ? ["frena: creador en lista negra"] : [];
+  const entry = { ...f, ...creatorHistory(f.creator) };
+  const m = beliefsFor(chain, entry, address, decision);
   return [
-    ...rugs,
     ...m.block.length ? [`frena #${m.block.join(", #")}`] : [],
     ...m.caution.length ? [`avisa #${m.caution.join(", #")}`] : [],
     ...m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []
@@ -42855,11 +42854,9 @@ async function screenCandidates(chain, candidates, n3, missionId = null) {
   const checked = await mapLimit(candidates.slice(0, n3), 3, async (cand) => {
     const address = String(cand.mint ?? cand.token ?? "");
     const f = address ? await c.entryFeatures(address).catch(() => null) : null;
-    if (!f) return { ...cand, alarms: "sin datos de riesgo" };
+    if (!f) return { ...cand, risk: "sin datos" };
     const rc = riskCheck(chain, address, f);
-    const flags = rc.flags.filter((x) => !x.startsWith("ninguna se\xF1al"));
-    const { warning: _w, ...rest } = cand;
-    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId), yourHistory: tokenHistory(chain, address) };
+    return { ...cand, risk: riskCell(rc), memory: memoryCell(chain, f, address, missionId), yourHistory: tokenHistory(chain, address) };
   });
   return [...checked, ...candidates.slice(n3)];
 }
@@ -42870,7 +42867,6 @@ async function briefReports(chain, tokens, missionId = null) {
     const f = t ? await c.entryFeatures(t.address).catch(() => null) : null;
     if (!t || !f) return { token: token2, symbol: t?.symbol, error: "sin datos (direcci\xF3n desconocida o APIs ca\xEDdas)" };
     const rc = riskCheck(chain, token2, f);
-    const flags = rc.flags.filter((x) => !x.startsWith("ninguna se\xF1al"));
     const since = rc.sinceLastRead;
     return {
       token: token2,
@@ -42886,7 +42882,7 @@ async function briefReports(chain, tokens, missionId = null) {
       topHoldersPct: f.topHoldersPct,
       taxes: f.buyTaxPct !== void 0 || f.sellTaxPct !== void 0 ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : void 0,
       launchpad: f.launchpad,
-      alarms: flags.length ? flags.join("; ") : "ninguna",
+      risk: riskCell(rc),
       memory: memoryCell(chain, f, t.address, missionId),
       yourHistory: tokenHistory(chain, t.address) ?? "nunca",
       sinceLastRead: typeof since === "string" ? "primera lectura" : [
@@ -42955,7 +42951,7 @@ var SIM_TOOLS = [
     schema: external_exports.object({
       chain: chainParam,
       limit: external_exports.number().int().min(5).max(60).default(15),
-      check_top: external_exports.number().int().min(0).max(8).default(5).describe("A los N primeros les pasa ya el chequeo de riesgo (alarmas de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no")
+      check_top: external_exports.number().int().min(0).max(8).default(5).describe("A los N primeros les a\xF1ade los datos de riesgo (los de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no")
     }),
     run: async ({ chain, limit, check_top }, ctx) => {
       const scan = compactScan(await getChain(chain).research.scan(limit));
@@ -42969,7 +42965,7 @@ var SIM_TOOLS = [
     kind: "research",
     deliversNews: true,
     researchTarget: (i) => i.tokens?.length ? i.tokens : i.token,
-    description: "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, variaci\xF3n, compradores, holders, impuestos, alarmas de riesgo, qu\xE9 dice tu memoria y qu\xE9 ha cambiado desde la \xFAltima lectura. Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`: el historial del creador (tokens lanzados y graduados, si est\xE1 en tu lista negra), lo que conserva, insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores): la mayor\xEDa de los rugs ocurre en los primeros ~15 minutos, as\xED que comprobar que aguanta entre dos lecturas es la mejor defensa.",
+    description: "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, variaci\xF3n, compradores, holders, impuestos, datos de riesgo, qu\xE9 dice tu memoria y qu\xE9 ha cambiado desde la \xFAltima lectura. Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`, solo datos: el creador (tokens lanzados y graduados, y los suyos que has operado t\xFA), lo que conserva, insiders, liquidez bloqueada, launchpad, honeypot y mcap/liquidez. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores).",
     schema: external_exports.object({
       chain: chainParam,
       token: external_exports.string().optional().describe("Direcci\xF3n del token (en Solana, su mint): ficha completa"),

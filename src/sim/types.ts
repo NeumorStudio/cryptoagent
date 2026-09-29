@@ -42,6 +42,9 @@ export interface TradeMeta {
 export interface Features {
   venue?: VenueId;
   ageMinutes?: number;
+  /** Tokens del mismo creador que ha operado el agente y el peor resultado. */
+  creatorTradesWithYou?: number;
+  creatorWorstPnlWithYouPct?: number;
   /** Edad del pool en el que se opera (en un token graduado de pump.fun, desde la graduación). */
   pairAgeMinutes?: number;
   liquidityUsd?: number;
@@ -67,7 +70,7 @@ export interface Features {
   sellTaxPct?: number;
   honeypot?: boolean;
   mintable?: boolean;
-  /** Quién creó el token (dirección). Sirve para la lista negra de creadores. */
+  /** Quién creó el token (dirección): con él se calcula tu historial con ese creador. */
   creator?: string;
   /** Cuántos tokens ha lanzado el creador y cuántos llegaron a graduarse (Solana, Jupiter). */
   creatorTokens?: number;

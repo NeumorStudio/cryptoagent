@@ -92,13 +92,31 @@ export function tokenHistory(venue: string, asset: string) {
 }
 
 /**
+ * Lo que el agente lleva operado de tokens del mismo creador: cuántos y el peor resultado. Es un dato, no una
+ * lista negra: si importa, lo aprenderá una creencia con condición sobre estos campos.
+ */
+export function creatorHistory(creator: unknown): { creatorTradesWithYou?: number; creatorWorstPnlWithYouPct?: number } {
+  if (typeof creator !== "string" || !creator) return {};
+  const rows = db
+    .prepare("SELECT realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE status = 'closed' AND json_extract(entry_features, '$.creator') = ?")
+    .all(creator) as Array<{ c: number; p: number }>;
+  if (!rows.length) return { creatorTradesWithYou: 0 };
+  const pnls = rows.filter((r) => r.c > 0).map((r) => Math.round((r.p / r.c - 1) * 100));
+  return { creatorTradesWithYou: rows.length, ...(pnls.length ? { creatorWorstPnlWithYouPct: Math.min(...pnls) } : {}) };
+}
+
+/**
  * Los datos del token que usó el agente al decidir (su última lectura, si tiene menos de 5 minutos); si no la
  * hay, se leen ahora. `featuresSource` dice cuál fue.
  */
 async function featuresAtDecision(venue: { id: string; entryFeatures(asset: string): Promise<Features> }, asset: string): Promise<Features> {
   const d = decidedFeatures(venue.id, asset);
-  if (d) return { ...(d.features as Features), featuresSource: `lectura del agente, ${d.ageSeconds} s antes de comprar` } as Features;
-  return { ...(await venue.entryFeatures(asset)), featuresSource: "leídos tras la compra" } as Features;
+  const f = d ? (d.features as Features) : await venue.entryFeatures(asset);
+  return {
+    ...f,
+    ...creatorHistory(f.creator),
+    featuresSource: d ? `lectura del agente, ${d.ageSeconds} s antes de comprar` : "leídos tras la compra",
+  } as Features;
 }
 
 /**

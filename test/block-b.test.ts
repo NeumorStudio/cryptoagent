@@ -12,19 +12,20 @@ installFakeMarket();
 const mission = await createMission(1000, 1200, 60, undefined, { solana: 100 });
 const ctx = { sessionId: 1, missionId: mission.id };
 
-test("token_report con tokens: fichas breves, con alarmas y la segunda lectura", async () => {
+test("token_report con tokens: fichas breves, con datos de riesgo y la segunda lectura", async () => {
   const first = await runTool("token_report", { chain: "solana", tokens: [MEME, "SOL"] }, ctx);
   assert.ok(!first.isError, String(first.content));
   const text = String(first.content);
   assert.match(text, /\[2\] token\|symbol/);
-  assert.match(text, /creador en serie: 40 tokens lanzados/);
+  assert.match(text, /creador 40 tokens.0 graduados/);
+  assert.doesNotMatch(text, /creador en serie/);
   assert.match(text, /primera lectura/);
   const second = String((await runTool("token_report", { chain: "solana", tokens: [MEME] }, ctx)).content);
   assert.match(second, /hace \d/);
   assert.equal((await runTool("token_report", { chain: "solana" }, ctx)).isError, true);
 });
 
-test("el escaneo marca en los primeros candidatos las alarmas y lo que dice la memoria", async () => {
+test("el escaneo añade a los primeros candidatos sus datos de riesgo y lo que dice la memoria", async () => {
   const b = memory.writeBelief({
     statement: "Los tokens de creadores con muchos lanzamientos suelen acabar mal",
     appliesTo: "Solana",
@@ -32,11 +33,10 @@ test("el escaneo marca en los primeros candidatos las alarmas y lo que dice la m
     condition: { all: [{ f: "creatorTokens", op: ">=", v: 30 }] },
     missionId: null,
   });
-  const rows = await screenCandidates("solana", [{ mint: MEME, symbol: "MEME", warning: "creador en serie" }, { mint: "otro", symbol: "X" }], 1);
-  assert.match(String(rows[0]!.alarms), /creador en serie/);
-  assert.equal(rows[0]!.warning, undefined);
+  const rows = await screenCandidates("solana", [{ mint: MEME, symbol: "MEME" }, { mint: "otro", symbol: "X" }], 1);
+  assert.match(String(rows[0]!.risk), /creador 40 tokens/);
   assert.match(String(rows[0]!.memory), new RegExp(`avisa #${b.id}\\b`));
-  assert.equal(rows[1]!.alarms, undefined, "solo los N primeros");
+  assert.equal(rows[1]!.risk, undefined, "solo los N primeros");
 });
 
 test("la espera resume cómo se han movido las posiciones, también las nuevas y las cerradas", () => {

@@ -7862,7 +7862,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.34.0";
+    CODE_VERSION = "0.35.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8576,7 +8576,7 @@ function evmAdapter(cfg) {
         const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
         const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
           const lp = launchpadOf(cfg.id, c.token);
-          return lp === "flap.sh" ? { ...c, launchpad: lp, warning: "token de Flap.sh (\u20267777): impuestos de venta din\xE1micos que pueden llegar al 100 %" } : lp ? { ...c, launchpad: lp } : c;
+          return lp ? { ...c, launchpad: lp } : c;
         }).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
         return {
           chain: cfg.id,
@@ -8785,9 +8785,7 @@ async function scanMarket(limit = 25) {
     attempt("geckoterminal_trending", gecko),
     attempt("dexscreener_profiles", profiles)
   ]);
-  const all = [...merged.values()].map(
-    (c) => c.creatorTokens >= 5 && (c.creatorGraduated ?? 0) / c.creatorTokens < 0.05 ? { ...c, warning: `creador en serie: ${c.creatorTokens} tokens lanzados, ${c.creatorGraduated ?? 0} graduados` } : c
-  ).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  const all = [...merged.values()].sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
   const candidates = all.slice(0, limit);
   const newest = all.slice(limit).filter((c) => c.ageMinutes !== void 0 && c.ageMinutes < 60).sort((a, b) => (a.ageMinutes ?? 0) - (b.ageMinutes ?? 0)).slice(0, 5);
   return {

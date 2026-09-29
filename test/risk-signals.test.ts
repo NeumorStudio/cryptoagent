@@ -1,5 +1,5 @@
-// Bloque A: señales de riesgo del creador y del token, lista negra de creadores, segunda lectura en
-// token_report y launchpad de BNB Chain deducido de la dirección.
+// Datos de riesgo del creador y del token (sin veredictos ni frenos fijos), historial con el creador,
+// segunda lectura en token_report y launchpad de BNB Chain deducido de la dirección.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { db, now } from "../src/db.js";
@@ -38,27 +38,32 @@ test("una creencia sobre flap.sh tiene evidencia con las operaciones antiguas (q
   assert.equal(b.evidence.matchingTrades?.trades, 2);
 });
 
-test("token_report avisa del creador en serie y, en la segunda lectura, dice qué ha cambiado", async () => {
+test("token_report da los datos del creador sin veredicto y, en la segunda lectura, dice qué ha cambiado", async () => {
   const first = String((await runTool("token_report", { chain: "solana", token: MEME }, ctx)).content);
-  assert.match(first, /creador en serie: 40 tokens lanzados, 0 graduados/);
+  const rc = JSON.parse(first).riskCheck;
+  assert.equal(rc.creatorTokens, 40);
+  assert.equal(rc.creatorGraduated, 0);
+  assert.equal(rc.flags, undefined);
+  assert.doesNotMatch(first, /creador en serie|warning/);
   assert.match(first, /primera lectura/);
   const second = String((await runTool("token_report", { chain: "solana", token: MEME }, ctx)).content);
   assert.match(second, /minutesAgo/);
 });
 
-test("lista negra: si un token del mismo creador ya costó un 80 % o más, se frena la compra (se puede saltar con id 0)", async () => {
+test("un creador que ya costó mucho no frena la compra: queda como dato, y una creencia aprendida sobre él sí frena", async () => {
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, closed_at, status, qty_open, cost_open_usd, realized_cost_usd, realized_proceeds_usd, entry_features, research)
      VALUES (?, 'solana', 'OldRug', 'OLDRUG', ?, ?, 'closed', 0, 0, 20, 0.5, ?, '{}')`,
   ).run(mission.id, now(), now(), JSON.stringify({ venue: "solana", creator: MEME_DEV }));
   const buy = { chain: "solana", input: "USDC", output: MEME, amount: 10, slippage_bps: 100 };
-  const blocked = await runTool("simulate_swap", { ...buy, thesis }, ctx);
-  assert.equal(blocked.isError, true);
-  assert.match(String(blocked.content), /Lista negra.*OLDRUG.*id: 0/s);
-  const ok = await runTool("simulate_swap", { ...buy, thesis: { ...thesis, overrides: [{ id: 0, reason: "quiero ver si este creador ha cambiado" }] } }, ctx);
+  const report = JSON.parse(String((await runTool("token_report", { chain: "solana", token: MEME }, ctx)).content));
+  assert.equal(report.riskCheck.creatorTradesWithYou, 1);
+  assert.ok(report.riskCheck.creatorWorstPnlWithYouPct <= -90);
+  const ok = await runTool("simulate_swap", { ...buy, thesis }, ctx);
   assert.ok(!ok.isError, String(ok.content));
-  // La posición guarda el creador y su historial.
+  // La posición guarda el creador y su historial, para que una creencia pueda aprenderlo.
   const p = db.prepare("SELECT entry_features FROM positions WHERE mission_id = ? AND asset = ? ORDER BY id DESC LIMIT 1").get(mission.id, MEME) as { entry_features: string };
   const f = JSON.parse(p.entry_features);
-  assert.deepEqual([f.creator, f.creatorTokens, f.creatorGraduated, f.creatorGraduationPct], [MEME_DEV, 40, 0, 0]);
+  assert.deepEqual([f.creator, f.creatorTokens, f.creatorGraduated, f.creatorGraduationPct, f.creatorTradesWithYou], [MEME_DEV, 40, 0, 0, 1]);
+  assert.ok(f.creatorWorstPnlWithYouPct <= -90);
 });

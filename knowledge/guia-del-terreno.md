@@ -153,14 +153,14 @@ de GoPlus). Para cualquier otra consulta, usa estas APIs con `http_get`. Todas d
 
 Webs como DexScreener pueden mostrar controles anti-bot en el navegador; sus APIs sí responden.
 
-## 5. Señales de riesgo de un token nuevo (datos de 2026)
+## 5. Datos de riesgo de un token (`riskCheck`)
 
-- **Cuándo pasan los rugs.** Un estudio de 2026 sobre Solana da una vida mediana de unos 14 minutos para un token que acaba en rug (el 75 % dura menos de 86). Los primeros 5 minutos de trading ya predicen bastante bien el rug de la primera hora: dinámica de la liquidez, cociente compras/ventas, número de operaciones y caída máxima. Leer un token dos veces separadas por 2-3 minutos y comprobar que la liquidez y los compradores aguantan es la defensa más barata. `token_report` lo hace (`riskCheck.sinceLastRead`).
-- **El creador.** Hay grupos que lanzan decenas de tokens cada uno. Jupiter da, para cada token, cuántos ha lanzado su creador (`creatorTokens`) y cuántos llegaron a graduarse (`creatorGraduated`). RugCheck da las redes de insiders y la liquidez bloqueada. GoPlus (EVM) da el creador, lo que conserva y si tiene otros honeypots. Con todo eso, `token_report` añade `riskCheck.flags`.
-- **Lista negra.** Si un token de un creador ya te costó un 80 % o más, el simulador frena la compra de otros tokens suyos. Puedes saltártelo a sabiendas con `thesis.overrides` e `id: 0`.
-- **BNB Chain por la dirección.** …7777 = Flap.sh, con impuestos de venta dinámicos que pueden llegar al 100 %. …4444 o …ffff = four.meme. El simulador lo pone en `launchpad`, también en tus operaciones antiguas.
-- **Graduación en pump.fun.** Se gradúa entre el 1 y el 3 % de los tokens. Tras migrar suele haber un pico y luego un volcado: comprar justo en la migración suele salir mal.
-- **Condiciones para tus creencias.** Todos estos datos se pueden usar en las condiciones: `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
+Solo datos, sin veredicto: qué significan para tus resultados lo decides tú con tus misiones y lo apuntan tus creencias.
+
+- **Creador.** `creatorTokens` (tokens que ha lanzado) y `creatorGraduated` (cuántos se graduaron), de Jupiter en Solana; en EVM, GoPlus da el creador, lo que conserva (`devHoldingPct`) y sus otros honeypots (`creatorHoneypots`). `creatorTradesWithYou` y `creatorWorstPnlWithYouPct`: cuántos tokens suyos has operado tú y el peor resultado que te dieron.
+- **Token.** `insidersDetected` y `lpLockedPct` (RugCheck), `honeypot` e impuestos (GoPlus), `mcapToLiquidity` y `launchpad`. En BNB Chain el launchpad sale de la dirección: …7777 = Flap.sh, …4444 o …ffff = four.meme, también en tus operaciones antiguas.
+- **Entre lecturas.** Si lees un token dos veces, `riskCheck.sinceLastRead` dice cuánto cambiaron la liquidez, el precio y los compradores. Al comprar se guardan `readsBeforeBuy`, `minutesBetweenReads`, `liquidityTrendPct` y `netBuyersTrend`.
+- **Condiciones para tus creencias.** Todos se pueden usar: `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
 
 ## 6. Futuros perpetuos (simulados con datos de Hyperliquid)
 

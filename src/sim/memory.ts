@@ -74,6 +74,9 @@ export const CONDITION_FIELDS = [
   "creatorHoneypots",
   "insidersDetected",
   "lpLockedPct",
+  // Lo que lleva operado de tokens del mismo creador (antes, una lista negra fija; ahora, un dato que puede aprender).
+  "creatorTradesWithYou",
+  "creatorWorstPnlWithYouPct",
   "tokenReportBeforeBuying",
   "researchCallsSinceLastTrade",
   "minutesIntoMission",

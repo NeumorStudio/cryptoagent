@@ -65,7 +65,7 @@ const thesis = z
     risks_checked: z
       .string()
       .optional()
-      .describe("Obligatorio al comprar un token: qué has comprobado en contra (creencias negativas, flags de riskCheck) y por qué no la descartan"),
+      .describe("Obligatorio al comprar un token: qué has comprobado en contra (creencias negativas, datos de riskCheck) y por qué no la descartan"),
     overrides: z
       .array(z.object({ id: z.number().int(), reason: z.string().min(10) }))
       .optional()
@@ -86,32 +86,30 @@ const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), les
 /** Última lectura de cada token (en este proceso), para decir qué ha cambiado en la siguiente. */
 const lastReads = new Map<string, { at: number; f: Features }>();
 
+/**
+ * Datos de riesgo del token y de su creador, sin juicio: qué significan lo decide la memoria del agente
+ * (creencias con condición sobre estos mismos campos). Antes eran "alarmas" puestas por nosotros, y los
+ * datos del agente llegaron a desmentir alguna (creadores en serie: 10 de 11 ganadas).
+ */
 function riskCheck(chain: ChainId, token: string, f: Features) {
   const key = `${chain}:${token.toLowerCase()}`;
   const prev = lastReads.get(key);
   lastReads.set(key, { at: Date.now(), f });
   recordRead(chain, token, { liquidityUsd: f.liquidityUsd, netBuyers5m: f.netBuyers5m });
   recordFeatures(chain, token, f as unknown as Record<string, unknown>);
-  const rugs = memory.creatorRugs(f.creator);
   const change = (a?: number, b?: number) => (a !== undefined && b !== undefined && a !== 0 ? Number((((b - a) / Math.abs(a)) * 100).toFixed(1)) : undefined);
-  const flags: string[] = [];
-  if (rugs.length) flags.push(`creador en tu lista negra (${rugs.map((r) => `${r.symbol} ${r.pnlPct} %`).join(", ")})`);
-  if (f.creatorTokens !== undefined && f.creatorTokens >= 5 && (f.creatorGraduationPct ?? 0) < 5) flags.push(`creador en serie: ${f.creatorTokens} tokens lanzados, ${f.creatorGraduated ?? 0} graduados`);
-  if ((f.devHoldingPct ?? 0) > 5) flags.push(`el creador conserva el ${f.devHoldingPct} %`);
-  if ((f.insidersDetected ?? 0) > 0) flags.push(`${f.insidersDetected} redes de insiders detectadas`);
-  if (f.creatorHoneypots) flags.push("el creador ha desplegado otros honeypots");
-  if (f.launchpad === "flap.sh") flags.push("token de Flap.sh (…7777): impuestos de venta dinámicos que pueden llegar al 100 %");
-  if (f.honeypot) flags.push("honeypot: no se puede vender");
-  if (f.mcapUsd !== undefined && f.liquidityUsd !== undefined && f.mcapUsd <= f.liquidityUsd) flags.push("mcap ≤ liquidez: casi todo el supply está en el pool (perfil típico de rug)");
   return {
     creator: f.creator,
     creatorTokens: f.creatorTokens,
     creatorGraduated: f.creatorGraduated,
+    ...positions.creatorHistory(f.creator),
     devHoldingPct: f.devHoldingPct,
+    creatorHoneypots: f.creatorHoneypots,
     insidersDetected: f.insidersDetected,
     lpLockedPct: f.lpLockedPct,
     launchpad: f.launchpad,
-    flags: flags.length ? flags : ["ninguna señal de alarma en los datos disponibles"],
+    honeypot: f.honeypot,
+    mcapToLiquidity: f.mcapUsd !== undefined && f.liquidityUsd ? Number((f.mcapUsd / f.liquidityUsd).toFixed(2)) : undefined,
     ...(prev
       ? {
           sinceLastRead: {
@@ -122,8 +120,24 @@ function riskCheck(chain: ChainId, token: string, f: Features) {
             netBuyers5m: prev.f.netBuyers5m !== undefined && f.netBuyers5m !== undefined ? `${prev.f.netBuyers5m} → ${f.netBuyers5m}` : undefined,
           },
         }
-      : { sinceLastRead: "primera lectura: vuelve a leerlo en 2-3 minutos para ver si aguanta" }),
+      : { sinceLastRead: "primera lectura" }),
   };
+}
+
+/** Los datos de riesgo en una celda de tabla (escaneo y fichas breves): solo los que hay, sin juicio. */
+function riskCell(rc: ReturnType<typeof riskCheck>): string {
+  return [
+    rc.creatorTokens !== undefined ? `creador ${rc.creatorTokens} tokens/${rc.creatorGraduated ?? 0} graduados` : "",
+    rc.creatorTradesWithYou ? `le operaste ${rc.creatorTradesWithYou} (peor ${rc.creatorWorstPnlWithYouPct} %)` : "",
+    rc.devHoldingPct !== undefined ? `dev ${rc.devHoldingPct} %` : "",
+    rc.insidersDetected !== undefined ? `insiders ${rc.insidersDetected}` : "",
+    rc.lpLockedPct !== undefined ? `LP bloqueada ${rc.lpLockedPct} %` : "",
+    rc.creatorHoneypots ? "creador con otros honeypots" : "",
+    rc.honeypot !== undefined ? `honeypot ${rc.honeypot ? "sí" : "no"}` : "",
+    rc.mcapToLiquidity !== undefined ? `mcap/liq ${rc.mcapToLiquidity}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 // ─── Respuestas de investigación compactas ─────────────────────────────────
@@ -217,10 +231,9 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
 function memoryCell(chain: ChainId, f: Features, address: string, missionId: number | null = null): string {
   // Con la misión, también cuentan las creencias sobre cómo decide: si ya operó este token y cuánto queda.
   const decision = missionId !== null ? positions.decisionContext(missionId, chain, address, 0, false) : {};
-  const m = memory.beliefsFor(chain, f as unknown as Record<string, unknown>, address, decision);
-  const rugs = memory.creatorRugs(f.creator).length ? ["frena: creador en lista negra"] : [];
+  const entry = { ...f, ...positions.creatorHistory(f.creator) } as unknown as Record<string, unknown>;
+  const m = memory.beliefsFor(chain, entry, address, decision);
   return [
-    ...rugs,
     ...(m.block.length ? [`frena #${m.block.join(", #")}`] : []),
     ...(m.caution.length ? [`avisa #${m.caution.join(", #")}`] : []),
     ...(m.favor.length ? [`apoya #${m.favor.join(", #")}`] : []),
@@ -228,7 +241,7 @@ function memoryCell(chain: ChainId, f: Features, address: string, missionId: num
 }
 
 /**
- * Chequeo previo de los primeros candidatos de un escaneo, dentro de la misma llamada: sus alarmas de
+ * Chequeo previo de los primeros candidatos de un escaneo, dentro de la misma llamada: sus datos de
  * riesgo y qué dice la memoria. Ahorra una ronda de token_report por candidato solo para descartarlo.
  * Cuenta como primera lectura: el siguiente token_report de ese token trae sinceLastRead.
  */
@@ -237,12 +250,9 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
   const checked = await mapLimit(candidates.slice(0, n), 3, async (cand) => {
     const address = String(cand.mint ?? cand.token ?? "");
     const f = address ? await c.entryFeatures(address).catch(() => null) : null;
-    if (!f) return { ...cand, alarms: "sin datos de riesgo" };
+    if (!f) return { ...cand, risk: "sin datos" };
     const rc = riskCheck(chain, address, f);
-    const flags = rc.flags.filter((x) => !x.startsWith("ninguna señal"));
-    // El aviso del escaneo (creador en serie, Flap.sh) ya sale entre las alarmas.
-    const { warning: _w, ...rest } = cand;
-    return { ...rest, alarms: flags.length ? flags.join("; ") : "ninguna", memory: memoryCell(chain, f, address, missionId), yourHistory: positions.tokenHistory(chain, address) };
+    return { ...cand, risk: riskCell(rc), memory: memoryCell(chain, f, address, missionId), yourHistory: positions.tokenHistory(chain, address) };
   });
   return [...checked, ...candidates.slice(n)];
 }
@@ -255,7 +265,6 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
     const f = t ? await c.entryFeatures(t.address).catch(() => null) : null;
     if (!t || !f) return { token, symbol: t?.symbol, error: "sin datos (dirección desconocida o APIs caídas)" };
     const rc = riskCheck(chain, token, f);
-    const flags = rc.flags.filter((x) => !x.startsWith("ninguna señal"));
     const since = rc.sinceLastRead;
     return {
       token,
@@ -271,7 +280,7 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
       topHoldersPct: f.topHoldersPct,
       taxes: f.buyTaxPct !== undefined || f.sellTaxPct !== undefined ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : undefined,
       launchpad: f.launchpad,
-      alarms: flags.length ? flags.join("; ") : "ninguna",
+      risk: riskCell(rc),
       memory: memoryCell(chain, f, t.address, missionId),
       yourHistory: positions.tokenHistory(chain, t.address) ?? "nunca",
       sinceLastRead:
@@ -365,7 +374,7 @@ export const SIM_TOOLS = [
         .min(0)
         .max(8)
         .default(5)
-        .describe("A los N primeros les pasa ya el chequeo de riesgo (alarmas de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no"),
+        .describe("A los N primeros les añade los datos de riesgo (los de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no"),
     }),
     run: async ({ chain, limit, check_top }, ctx) => {
       const scan = compactScan(await getChain(chain).research.scan(limit)) as { candidates?: Array<Record<string, unknown>> };
@@ -382,14 +391,13 @@ export const SIM_TOOLS = [
     researchTarget: (i) => (i.tokens?.length ? i.tokens : i.token),
     description:
       "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, " +
-      "variación, compradores, holders, impuestos, alarmas de riesgo, qué dice tu memoria y qué ha cambiado desde la última lectura. " +
+      "variación, compradores, holders, impuestos, datos de riesgo, qué dice tu memoria y qué ha cambiado desde la última lectura. " +
       "Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
       "auditoría y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de " +
       "los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripción, comentarios y máximo histórico. " +
-      "Siempre añade `riskCheck`: el historial del creador (tokens lanzados y graduados, si está en tu lista negra), lo que conserva, " +
-      "insiders, liquidez bloqueada y launchpad. Si repites token_report sobre el mismo token, `sinceLastRead` dice qué ha cambiado " +
-      "desde la lectura anterior (liquidez, precio, compradores): la mayoría de los rugs ocurre en los primeros ~15 minutos, así que " +
-      "comprobar que aguanta entre dos lecturas es la mejor defensa.",
+      "Siempre añade `riskCheck`, solo datos: el creador (tokens lanzados y graduados, y los suyos que has operado tú), lo que conserva, " +
+      "insiders, liquidez bloqueada, launchpad, honeypot y mcap/liquidez. Si repites token_report sobre el mismo token, `sinceLastRead` " +
+      "dice qué ha cambiado desde la lectura anterior (liquidez, precio, compradores).",
     schema: z.object({
       chain: chainParam,
       token: z.string().optional().describe("Dirección del token (en Solana, su mint): ficha completa"),

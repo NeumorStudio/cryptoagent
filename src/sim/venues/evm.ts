@@ -317,7 +317,7 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
           .filter((c) => !skip.has(c.token))
           .map((c) => {
             const lp = launchpadOf(cfg.id, c.token);
-            return lp === "flap.sh" ? { ...c, launchpad: lp, warning: "token de Flap.sh (…7777): impuestos de venta dinámicos que pueden llegar al 100 %" } : lp ? { ...c, launchpad: lp } : c;
+            return lp ? { ...c, launchpad: lp } : c;
           })
           .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
           .slice(0, limit);

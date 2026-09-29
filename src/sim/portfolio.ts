@@ -179,6 +179,13 @@ export async function liquidateAll(missionId: number, sessionId: number | null, 
 
 const describeCosts = (costs: CostLine[]) => costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`);
 
+/** Una orden límite no se llena: el precio de ese momento no llega al fijado (no se ha enviado nada). */
+export class LimitNotReached extends Error {
+  constructor(readonly got: number, readonly min: number) {
+    super(`El precio no llega al límite: saldrían ${got}, el límite pide ${min}`);
+  }
+}
+
 export async function swap(args: {
   missionId: number;
   sessionId: number | null;
@@ -191,6 +198,11 @@ export async function swap(args: {
   slippageBps: number;
   reasoning: string;
   meta?: TradeMeta;
+  /**
+   * Mínimo que debe dar el swap (orden límite): si la cotización del momento da menos, no se ejecuta ni se
+   * paga nada y se lanza LimitNotReached. Lo usan las tomas de beneficio de las órdenes condicionales.
+   */
+  minOut?: number;
 }) {
   // Misión real: se ejecuta en la cadena con la cartera de la IA (firma el firmante, no este proceso).
   if (isLiveMission(args.missionId)) {
@@ -208,6 +220,7 @@ export async function swap(args: {
   if (amount > have + DUST) throw new Error(`Saldo insuficiente: tienes ${have} ${input.symbol} y quieres vender ${amount}`);
 
   const quote = await chain.quote({ input, output, amountIn: amount, slippageBps: args.slippageBps });
+  if (args.minOut !== undefined && quote.amountOut < args.minOut) throw new LimitNotReached(quote.amountOut, args.minOut);
   const settled = chain.settle(quote, {
     balance: (asset) => balance(m, chain.id, asset),
     approved: (asset) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset)),

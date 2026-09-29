@@ -8257,7 +8257,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.31.0";
+    CODE_VERSION = "0.31.1";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -11469,6 +11469,7 @@ async function swap(args) {
   if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input2.symbol} en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
   if (amount > have + DUST5) throw new Error(`Saldo insuficiente: tienes ${have} ${input2.symbol} y quieres vender ${amount}`);
   const quote2 = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps: args.slippageBps });
+  if (args.minOut !== void 0 && quote2.amountOut < args.minOut) throw new LimitNotReached(quote2.amountOut, args.minOut);
   const settled = chain.settle(quote2, {
     balance: (asset2) => balance(m, chain.id, asset2),
     approved: (asset2) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset2))
@@ -11682,7 +11683,7 @@ async function valuation(missionId, recordSnapshot = false) {
     } : {}
   };
 }
-var DUST5, describeCosts, lastQuotes, QUOTE_TTL_MS, quoteKey, evmAddress;
+var DUST5, describeCosts, LimitNotReached, lastQuotes, QUOTE_TTL_MS, quoteKey, evmAddress;
 var init_portfolio = __esm({
   "src/sim/portfolio.ts"() {
     "use strict";
@@ -11697,6 +11698,15 @@ var init_portfolio = __esm({
     init_venues();
     DUST5 = 1e-12;
     describeCosts = (costs) => costs.map((c) => `${c.kind}: ${Number(c.amount.toPrecision(6))} ${c.symbol}`);
+    LimitNotReached = class extends Error {
+      constructor(got, min) {
+        super(`El precio no llega al l\xEDmite: saldr\xEDan ${got}, el l\xEDmite pide ${min}`);
+        this.got = got;
+        this.min = min;
+      }
+      got;
+      min;
+    };
     lastQuotes = /* @__PURE__ */ new Map();
     QUOTE_TTL_MS = 6e4;
     quoteKey = (missionId, chain, input2, output2) => `${missionId}:${chain}:${input2}:${output2}`;
@@ -41492,6 +41502,15 @@ async function checkOrders() {
   }
   return log;
 }
+function takeProfitMinOut(order, action) {
+  if (order.condition !== "above" || action.input !== order.trigger_asset) return void 0;
+  const v = getVenue(order.venue);
+  if (v.kind !== "chain") return void 0;
+  const out = v.stables.find((s) => s.address === action.output || s.symbol === action.output);
+  if (!out) return void 0;
+  const qty = action.sellAll ? getHoldings(order.mission_id).find((h) => h.venue === order.venue && h.asset === order.trigger_asset)?.amount ?? 0 : action.amount;
+  return qty > 0 ? qty * order.trigger_price : void 0;
+}
 async function execute(order, reasoning2, price, log) {
   if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) return;
   const seen = price === null ? { executedAt: now() } : { triggerPriceSeen: price };
@@ -41503,10 +41522,15 @@ async function execute(order, reasoning2, price, log) {
       reasoning: reasoning2,
       meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
     };
-    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action }) : await binanceMarketOrder({ ...base2, ...action });
+    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action, minOut: takeProfitMinOut(order, action) }) : await binanceMarketOrder({ ...base2, ...action });
     close(order.id, "filled", { ...seen, ...result });
     log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
   } catch (err) {
+    if (err instanceof LimitNotReached) {
+      db.prepare("UPDATE orders SET status = 'open' WHERE id = ? AND status = 'executing'").run(order.id);
+      log.push(`Orden #${order.id}: el precio ya no llega al l\xEDmite; sigue abierta`);
+      return;
+    }
     const message = err.message;
     close(order.id, "failed", { ...seen, error: message });
     logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero fall\xF3: ${message}` });
@@ -43100,7 +43124,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
-    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotizaci\xF3n de vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da as\xED al crearla). Funciona aunque no est\xE9s en sesi\xF3n. Se comprueba cada 15 s, as\xED que un pico de pocos segundos puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cancela la que sobre cuando se ejecute la otra.',
+    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotizaci\xF3n de vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da as\xED al crearla). Una toma de beneficios (above, vendiendo a un estable) es una orden l\xEDmite: se llena a ese precio o mejor; si al ir a vender el precio ya ha bajado, no se llena y sigue esperando. Un stop (below) vende a mercado, al precio que haya. Funciona aunque no est\xE9s en sesi\xF3n. Se comprueba cada 15 s, as\xED que un pico de pocos segundos puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cancela la que sobre cuando se ejecute la otra.',
     schema: external_exports.object({
       chain: chainParam,
       trigger_asset: external_exports.string().optional().describe(`Direcci\xF3n del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),

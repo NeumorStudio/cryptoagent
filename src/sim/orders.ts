@@ -4,7 +4,7 @@
 // periódico (watcher.ts y el servidor MCP mientras está activo).
 import { db, logJournal, now } from "../db.js";
 import * as binance from "../market/binance.js";
-import { assertSimulated, binanceMarketOrder, getHoldings, swap } from "./portfolio.js";
+import { assertSimulated, binanceMarketOrder, getHoldings, LimitNotReached, swap } from "./portfolio.js";
 import type { ChainId, VenueId } from "./types.js";
 import { settleTransfers } from "./transfers.js";
 import { getVenue } from "./venues/index.js";
@@ -255,6 +255,20 @@ export async function checkOrders(): Promise<string[]> {
   return log;
 }
 
+/**
+ * Una toma de beneficio (vender el token vigilado cuando sube por encima de un precio, a un estable) se
+ * ejecuta como una orden límite: nunca por debajo del precio fijado. Los stops (below) venden a mercado.
+ */
+function takeProfitMinOut(order: OrderRow, action: SwapAction): number | undefined {
+  if (order.condition !== "above" || action.input !== order.trigger_asset) return undefined;
+  const v = getVenue(order.venue);
+  if (v.kind !== "chain") return undefined;
+  const out = v.stables.find((s) => s.address === action.output || s.symbol === action.output);
+  if (!out) return undefined;
+  const qty = action.sellAll ? (getHoldings(order.mission_id).find((h) => h.venue === order.venue && h.asset === order.trigger_asset)?.amount ?? 0) : action.amount;
+  return qty > 0 ? qty * order.trigger_price : undefined;
+}
+
 /** Ejecuta una orden disparada (por precio o por tiempo). El reclamo atómico evita ejecutarla dos veces. */
 async function execute(order: OrderRow, reasoning: string, price: number | null, log: string[]) {
   if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) return;
@@ -269,11 +283,18 @@ async function execute(order: OrderRow, reasoning: string, price: number | null,
     };
     const result =
       getVenue(order.venue).kind === "chain"
-        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction) })
+        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), minOut: takeProfitMinOut(order, action as SwapAction) })
         : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
     close(order.id, "filled", { ...seen, ...result });
     log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
   } catch (err) {
+    // Toma de beneficio que ya no llega al precio (se movió entre la comprobación y la venta): como una orden
+    // límite real, no se llena y sigue esperando.
+    if (err instanceof LimitNotReached) {
+      db.prepare("UPDATE orders SET status = 'open' WHERE id = ? AND status = 'executing'").run(order.id);
+      log.push(`Orden #${order.id}: el precio ya no llega al límite; sigue abierta`);
+      return;
+    }
     const message = (err as Error).message;
     close(order.id, "failed", { ...seen, error: message });
     logJournal({ missionId: order.mission_id, sessionId: order.session_id, kind: "order_failed", summary: `Orden #${order.id} disparada pero falló: ${message}` });

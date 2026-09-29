@@ -773,6 +773,8 @@ export const SIM_TOOLS = [
       "below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotización real de ese instante. " +
       "Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotización de " +
       "vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da así al crearla). " +
+      "Una toma de beneficios (above, vendiendo a un estable) es una orden límite: se llena a ese precio o mejor; si al ir a vender " +
+      "el precio ya ha bajado, no se llena y sigue esperando. Un stop (below) vende a mercado, al precio que haya. " +
       "Funciona aunque no estés en sesión. Se comprueba cada 15 s, así que un pico de pocos segundos puede no dispararla. " +
       "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. " +
       "Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan " +

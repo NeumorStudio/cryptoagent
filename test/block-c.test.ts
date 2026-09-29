@@ -123,3 +123,22 @@ test("el revisor corrige solo los campos de una retrospectiva que indique", asyn
   assert.deepEqual({ ...row }, { what_was_tried: "probar", what_happened: "7 de 15 en total", next_time: "seguir" });
   assert.equal((await runTool("revise_mission_review", { mission_id: m3.id, reason: "nada" }, { sessionId: 1, missionId: m3.id })).isError, true);
 });
+
+test("una toma de beneficio es una orden límite: si al vender el precio no llega, no se llena ni cobra nada", async () => {
+  const { tokens, setPrice } = await import("./fake-market.js");
+  const { swap, getHoldings, LimitNotReached } = await import("../src/sim/portfolio.js");
+  const m4 = await createMission(1000, 1100, 30, undefined, { solana: 100 });
+  const mint = Object.keys(tokens).find((m) => tokens[m]!.symbol !== "USDC" && tokens[m]!.symbol !== "SOL")!;
+  setPrice(mint, 2);
+  await swap({ missionId: m4.id, sessionId: null, chain: "solana", input: "USDC", output: mint, amount: 20, slippageBps: 100, reasoning: "test" });
+  const before = JSON.stringify(getHoldings(m4.id));
+  const qty = getHoldings(m4.id).find((h) => h.asset === mint)!.amount;
+  // Vender da 2 × (1 − 0,3 %) por unidad: un límite de 2,1 por unidad no se alcanza.
+  await assert.rejects(
+    swap({ missionId: m4.id, sessionId: null, chain: "solana", input: mint, output: "USDC", sellAll: true, slippageBps: 100, reasoning: "tp", minOut: qty * 2.1 }),
+    (e: unknown) => e instanceof LimitNotReached,
+  );
+  assert.equal(JSON.stringify(getHoldings(m4.id)), before, "sin cambios en la cartera");
+  await swap({ missionId: m4.id, sessionId: null, chain: "solana", input: mint, output: "USDC", sellAll: true, slippageBps: 100, reasoning: "tp", minOut: qty * 1.9 });
+  assert.equal(getHoldings(m4.id).find((h) => h.asset === mint)?.amount ?? 0, 0);
+});

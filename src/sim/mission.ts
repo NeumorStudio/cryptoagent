@@ -366,7 +366,15 @@ async function checkOne(mission: Mission): Promise<string[]> {
   const v = await valuation(mission.id);
   const value = v.totalUsd;
   // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido.
-  const reached = value >= mission.target_usd && v.reliable;
+  let reached = value >= mission.target_usd && v.reliable;
+  // Antes de venderlo todo por haber llegado, se confirma con cotizaciones del momento: la valoración puede venir
+  // de una cotización de hace unos segundos, y en un token que se mueve un 40 % por minuto ya no vale. En la M4 de
+  // la v0.36.1 se dio por alcanzado con 57,46 $, la venta dio 47,46 y se llevó por delante la toma de beneficio.
+  if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
+    const fresh = await valuation(mission.id, false, { fresh: true });
+    reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
+    if (!reached) return [];
+  }
   // Misión real: al llegar a la pérdida máxima se para sola (se vende a estables y se cierra).
   const floor = lossFloor(mission);
   const lossHit = !reached && floor !== null && v.reliable && value < floor;

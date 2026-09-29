@@ -175,7 +175,7 @@ export const solana: ChainAdapter = {
 
   settle: settleSolanaSwap,
 
-  async liquidationValue(h) {
+  async liquidationValue(h, opts) {
     if (CASH.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
     if (h.asset === SOL_MINT) {
       // El SOL se valora con el libro de Binance: igual de líquido y no gasta turnos de Jupiter.
@@ -189,7 +189,8 @@ export const solana: ChainAdapter = {
     try {
       // Valor de liquidación: cuánto USDC darían hoy vendiéndolo todo.
       // Caché de 10 s: el panel, el tick de la misión y las herramientas valoran lo mismo varias veces seguidas.
-      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 10_000);
+      // Con `fresh` (antes de dar por alcanzado el objetivo), la cotización del momento.
+      const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, opts?.fresh ? 1 : 10_000);
       return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidación Jupiter", reliable: true };
     } catch (err) {
       // Sin ruta de venta: no se puede cobrar, así que vale 0 (si vuelve a haber ruta, volverá a valer).

@@ -8279,7 +8279,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.36.1";
+    CODE_VERSION = "0.36.2";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9571,7 +9571,7 @@ var init_solana = __esm({
         };
       },
       settle: settleSolanaSwap,
-      async liquidationValue(h) {
+      async liquidationValue(h, opts) {
         if (CASH2.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
         if (h.asset === SOL_MINT) {
           try {
@@ -9581,7 +9581,7 @@ var init_solana = __esm({
           }
         }
         try {
-          const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 1e4);
+          const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, opts?.fresh ? 1 : 1e4);
           return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter", reliable: true };
         } catch (err) {
           if (isNoRouteError(err)) return { usd: 0, method: "sin ruta de venta: ahora no se puede vender", reliable: true };
@@ -11227,7 +11227,12 @@ async function checkOne(mission) {
   }
   const v = await valuation(mission.id);
   const value = v.totalUsd;
-  const reached = value >= mission.target_usd && v.reliable;
+  let reached = value >= mission.target_usd && v.reliable;
+  if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
+    const fresh = await valuation(mission.id, false, { fresh: true });
+    reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
+    if (!reached) return [];
+  }
   const floor = lossFloor(mission);
   const lossHit = !reached && floor !== null && v.reliable && value < floor;
   const bust = !reached && v.reliable && value < bustFloor(mission);
@@ -11822,7 +11827,7 @@ async function binanceMarketOrder(args) {
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
-async function valuation(missionId, recordSnapshot = false) {
+async function valuation(missionId, recordSnapshot = false, opts = {}) {
   let holdings = [];
   let pending = [];
   applyAtomically(() => {
@@ -11834,7 +11839,7 @@ async function valuation(missionId, recordSnapshot = false) {
     }
     pending = pending.filter((t) => t.amount_in > 0);
   });
-  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h) })));
+  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...await getVenue(h.venue).liquidationValue(h, opts) })));
   const transit = await Promise.all(
     pending.map(async (t) => ({
       ...t,

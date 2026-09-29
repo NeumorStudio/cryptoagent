@@ -82,7 +82,8 @@ interface VenueBase {
   /** Activos que cuentan como efectivo (stablecoins): no abren posición. */
   isCash(asset: string): boolean;
   /** Valor de liquidación de un saldo: cuánto se obtendría vendiéndolo ahora. */
-  liquidationValue(h: Holding): Promise<Valued>;
+  /** Valor si se vendiera ahora. Con `fresh`, sin reutilizar cotizaciones recientes de la caché. */
+  liquidationValue(h: Holding, opts?: { fresh?: boolean }): Promise<Valued>;
   /** Precio que vigilan las órdenes condicionales (USD en cadenas; precio del par en exchanges). */
   triggerPrice(asset: string): Promise<number>;
 }

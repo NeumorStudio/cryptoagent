@@ -7862,7 +7862,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.36.1";
+    CODE_VERSION = "0.36.2";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9049,7 +9049,7 @@ var init_solana = __esm({
         };
       },
       settle: settleSolanaSwap,
-      async liquidationValue(h) {
+      async liquidationValue(h, opts) {
         if (CASH2.has(h.asset)) return { usd: h.amount, method: "stable", reliable: true };
         if (h.asset === SOL_MINT) {
           try {
@@ -9059,7 +9059,7 @@ var init_solana = __esm({
           }
         }
         try {
-          const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, 1e4);
+          const q = await getQuote(h.asset, USDC_MINT, toBaseUnits(h.amount, h.decimals), 100, opts?.fresh ? 1 : 1e4);
           return { usd: fromBaseUnits(q.outAmount, 6), method: "liquidaci\xF3n Jupiter", reliable: true };
         } catch (err) {
           if (isNoRouteError(err)) return { usd: 0, method: "sin ruta de venta: ahora no se puede vender", reliable: true };

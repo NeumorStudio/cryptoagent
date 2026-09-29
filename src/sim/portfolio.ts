@@ -440,7 +440,7 @@ export const evmAddress = (missionId: number) => `0x${createHash("sha256").updat
 
 // ─── Valoración a precio de mercado ─────────────────────────────────────────
 
-export async function valuation(missionId: number, recordSnapshot = false) {
+export async function valuation(missionId: number, recordSnapshot = false, opts: { fresh?: boolean } = {}) {
   // Saldos y tránsito se leen en la misma instantánea: si otro proceso abona una transferencia entre
   // las dos lecturas, se contaría dos veces (en la cartera y en tránsito).
   let holdings: Holding[] = [];
@@ -459,7 +459,7 @@ export async function valuation(missionId: number, recordSnapshot = false) {
     }
     pending = pending.filter((t) => t.amount_in > 0);
   });
-  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
+  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h, opts)) })));
   const transit = await Promise.all(
     pending.map(async (t) => ({
       ...t,

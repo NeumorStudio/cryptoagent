@@ -8257,7 +8257,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.30.1";
+    CODE_VERSION = "0.31.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42032,6 +42032,21 @@ function writeMissionReview(a) {
   logActivity({ missionId: a.missionId, sessionId: null, kind: "review", title: `Retrospectiva de la misi\xF3n #${a.missionId}`, body: a.nextTime });
   return missionStats(a.missionId);
 }
+function reviseMissionReview(a) {
+  const r = db.prepare("SELECT * FROM mission_reviews WHERE mission_id = ?").get(a.missionId);
+  if (!r) throw new Error(`La misi\xF3n #${a.missionId} no tiene retrospectiva: escr\xEDbela con write_mission_review`);
+  const changed = ["whatWasTried", "whatHappened", "surprises", "nextTime"].filter((k) => a[k] !== void 0);
+  if (!changed.length) throw new Error("Indica al menos un campo que corregir (what_was_tried, what_happened, surprises o next_time)");
+  db.prepare("UPDATE mission_reviews SET what_was_tried = ?, what_happened = ?, surprises = ?, next_time = ? WHERE mission_id = ?").run(
+    a.whatWasTried ?? r.what_was_tried,
+    a.whatHappened ?? r.what_happened,
+    a.surprises ?? r.surprises,
+    a.nextTime ?? r.next_time,
+    a.missionId
+  );
+  logActivity({ missionId: a.missionId, sessionId: null, kind: "lesson", title: `Corrige la retrospectiva de la misi\xF3n #${a.missionId}: ${a.reason}` });
+  return { missionId: a.missionId, corrected: changed };
+}
 function markReviewed(missionId) {
   db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
 }
@@ -43443,6 +43458,31 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       next_time: external_exports.string().min(1)
     }),
     run: async (i) => json2(writeMissionReview({ missionId: i.mission_id, whatWasTried: i.what_was_tried, whatHappened: i.what_happened, surprises: i.surprises, nextTime: i.next_time }))
+  }),
+  tool({
+    name: "revise_mission_review",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description: "Corrige una retrospectiva ya escrita: solo los campos que indiques (el resto se queda igual), con el motivo. Para cifras equivocadas, conclusiones que los datos posteriores desmienten o lo que falt\xF3 decir.",
+    schema: external_exports.object({
+      mission_id: external_exports.number().int(),
+      what_was_tried: external_exports.string().min(1).optional(),
+      what_happened: external_exports.string().min(1).optional(),
+      surprises: external_exports.string().min(1).optional(),
+      next_time: external_exports.string().min(1).optional(),
+      reason: external_exports.string().min(1).describe("Qu\xE9 corriges y por qu\xE9")
+    }),
+    run: async (i) => json2(
+      reviseMissionReview({
+        missionId: i.mission_id,
+        whatWasTried: i.what_was_tried,
+        whatHappened: i.what_happened,
+        surprises: i.surprises,
+        nextTime: i.next_time,
+        reason: i.reason
+      })
+    )
   }),
   tool({
     name: "mark_mission_reviewed",

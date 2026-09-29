@@ -765,6 +765,25 @@ export function writeMissionReview(a: { missionId: number; whatWasTried: string;
   return missionStats(a.missionId);
 }
 
+/** Corrige campos de una retrospectiva ya escrita (solo los que se indiquen), con el motivo. */
+export function reviseMissionReview(a: { missionId: number; whatWasTried?: string; whatHappened?: string; surprises?: string; nextTime?: string; reason: string }) {
+  const r = db.prepare("SELECT * FROM mission_reviews WHERE mission_id = ?").get(a.missionId) as
+    | { what_was_tried: string; what_happened: string; surprises: string | null; next_time: string }
+    | undefined;
+  if (!r) throw new Error(`La misión #${a.missionId} no tiene retrospectiva: escríbela con write_mission_review`);
+  const changed = (["whatWasTried", "whatHappened", "surprises", "nextTime"] as const).filter((k) => a[k] !== undefined);
+  if (!changed.length) throw new Error("Indica al menos un campo que corregir (what_was_tried, what_happened, surprises o next_time)");
+  db.prepare("UPDATE mission_reviews SET what_was_tried = ?, what_happened = ?, surprises = ?, next_time = ? WHERE mission_id = ?").run(
+    a.whatWasTried ?? r.what_was_tried,
+    a.whatHappened ?? r.what_happened,
+    a.surprises ?? r.surprises,
+    a.nextTime ?? r.next_time,
+    a.missionId,
+  );
+  logActivity({ missionId: a.missionId, sessionId: null, kind: "lesson", title: `Corrige la retrospectiva de la misión #${a.missionId}: ${a.reason}` });
+  return { missionId: a.missionId, corrected: changed };
+}
+
 export function markReviewed(missionId: number) {
   db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
 }

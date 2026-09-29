@@ -1198,6 +1198,34 @@ export const SIM_TOOLS = [
       json(memory.writeMissionReview({ missionId: i.mission_id, whatWasTried: i.what_was_tried, whatHappened: i.what_happened, surprises: i.surprises, nextTime: i.next_time })),
   }),
   tool({
+    name: "revise_mission_review",
+    kind: "memory",
+    role: "reviewer",
+    journaled: true,
+    description:
+      "Corrige una retrospectiva ya escrita: solo los campos que indiques (el resto se queda igual), con el motivo. Para cifras " +
+      "equivocadas, conclusiones que los datos posteriores desmienten o lo que faltó decir.",
+    schema: z.object({
+      mission_id: z.number().int(),
+      what_was_tried: z.string().min(1).optional(),
+      what_happened: z.string().min(1).optional(),
+      surprises: z.string().min(1).optional(),
+      next_time: z.string().min(1).optional(),
+      reason: z.string().min(1).describe("Qué corriges y por qué"),
+    }),
+    run: async (i) =>
+      json(
+        memory.reviseMissionReview({
+          missionId: i.mission_id,
+          whatWasTried: i.what_was_tried,
+          whatHappened: i.what_happened,
+          surprises: i.surprises,
+          nextTime: i.next_time,
+          reason: i.reason,
+        }),
+      ),
+  }),
+  tool({
     name: "mark_mission_reviewed",
     kind: "memory",
     role: "reviewer",

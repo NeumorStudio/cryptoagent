@@ -39,7 +39,7 @@ Haz una sola llamada a AskUserQuestion con estas cuatro preguntas:
 
 El usuario puede escribir otro valor con "Other". Interpreta respuestas libres ("500", "2.500 $", "llegar a 1.300", "+20 %", "90 minutos", "2 días"). Un objetivo en porcentaje se aplica sobre el capital; una cifra absoluta es el valor final que debe alcanzar la cartera. Si algo no tiene sentido (cantidades no positivas, objetivo igual o menor que el capital), vuelve a preguntar solo eso.
 
-Después, en otra llamada a AskUserQuestion, haz dos preguntas:
+Después, en otra llamada a AskUserQuestion, haz tres preguntas:
 
 1. **Instrucciones para el agente** (header "Enfoque"):
    - "Modo libre (Recommended)": sin instrucciones, el agente decide todo.
@@ -51,8 +51,11 @@ Después, en otra llamada a AskUserQuestion, haz dos preguntas:
    - "Solo cadenas, sin Binance": Solana 40 %, Base 30 %, BNB Chain 30 % (`{"solana":40,"base":30,"bsc":30}`).
    - Con "Other" el usuario puede dar su propio reparto ("mitad Base, mitad Solana"): conviértelo a porcentajes que sumen 100.
    Marca como recomendada "Repartido" si el capital es de 100 $ o más, y "Todo en Solana" si es menor: repartido quedarían saldos de pocos dólares por sitio, y Binance exige unos 5 $ por orden.
+3. **Qué pasa al llegar al objetivo** (header "Al objetivo"):
+   - "Seguir hasta el final (Recommended)": la misión dura todo el plazo y cuenta como conseguida si al final vale el objetivo o más. Si llega antes, el agente decide si protege la ganancia o sigue operando, y hace más operaciones de las que aprender (`close_on_target: false`).
+   - "Terminar la misión": al llegar al objetivo se vende todo y la misión termina conseguida (`close_on_target: true`).
 
-Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes`, `allocation` con el reparto elegido e `instructions` si las hay; en modo libre no lo envíes).
+Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes`, `allocation` con el reparto elegido, `close_on_target` según la respuesta e `instructions` si las hay; en modo libre no lo envíes).
 
 ### 3B. Misión real
 
@@ -92,7 +95,7 @@ No añadas nada más a los prompts: ni ideas, ni estrategias, ni contexto de est
 
 ## 6. Avisar al usuario
 
-Resume en pocas líneas: si es una misión REAL (y su aprobación y límites), capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al acabarse el tiempo (y, salvo que se haya creado con `close_on_target: false`, también al alcanzar el objetivo). Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
+Resume en pocas líneas: si es una misión REAL (y su aprobación y límites), capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al acabarse el tiempo y, si eligió "Terminar la misión", también al alcanzar el objetivo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
 
 ## 7. Mientras dura la misión
 

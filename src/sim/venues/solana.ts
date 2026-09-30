@@ -128,6 +128,7 @@ async function entryFeatures(mint: string): Promise<Features> {
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
     buySellRatio5m: t?.stats5m?.sellVolume > 0 ? round(t.stats5m.buyVolume / t.stats5m.sellVolume) : undefined,
+    buySellCountRatio5m: t?.stats5m?.numSells > 0 ? round(t.stats5m.numBuys / t.stats5m.numSells) : undefined,
     holders: t?.holderCount,
     topHoldersPct: round(t?.audit?.topHoldersPercentage, 1),
     netBuyers5m: t?.stats5m?.numNetBuyers,

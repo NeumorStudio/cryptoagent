@@ -10,6 +10,7 @@ import { recordTrade } from "./positions.js";
 import { VENUES, type Allocation, type ChainId, type Holding, type TradeMeta, type VenueId } from "./types.js";
 import { fillMarketOrder } from "./venues/binance.js";
 import { allChains, binance, getChain, getVenue, type CostLine, type Delta } from "./venues/index.js";
+import type { TokenRef } from "./venues/types.js";
 
 export type Venue = VenueId;
 export type { Holding };
@@ -357,7 +358,70 @@ export async function swap(args: {
     valueUsd,
     meta: args.meta,
   }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
-  return result;
+  const exit = await sellNow(m, chain, output, quote.amountOut, valueUsd, chain.isCash(input.address) || input.address === chain.native.address);
+  const cancelled = await cancelOrdersForSoldOut(m, chain.id, input);
+  return { ...result, ...(exit ?? {}), ...(cancelled.length ? { ordersCancelled: cancelled } : {}) };
+}
+
+/**
+ * Si ya no queda nada de un token, sus órdenes que venderían todo el saldo sobran: se cancelan en el momento de
+ * la venta, las de precio y las de tiempo. Antes se cancelaban en la siguiente revisión (hasta 15 s después, y
+ * list_orders las seguía dando por abiertas) y las de tiempo no: se disparaban y fallaban por falta de saldo
+ * (M3 de la v0.38.1, el trader las cancelaba a mano). La orden que ha hecho la venta está 'executing': no se toca.
+ */
+export async function cancelOrdersForSoldOut(missionId: number, venue: ChainId, token: TokenRef): Promise<string[]> {
+  if (balance(missionId, venue, token.address) > DUST) return [];
+  const chain = getChain(venue);
+  const open = db.prepare("SELECT id, action, trigger_label FROM orders WHERE mission_id = ? AND venue = ? AND status = 'open'").all(missionId, venue) as Array<{
+    id: number;
+    action: string;
+    trigger_label: string | null;
+  }>;
+  const cancelled: string[] = [];
+  for (const o of open) {
+    const action = JSON.parse(o.action) as { input?: string; sellAll?: boolean };
+    if (!action.sellAll || !action.input) continue;
+    const input = await chain.resolveToken(action.input).catch(() => null);
+    if (input?.address !== token.address) continue;
+    if (!db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), o.id).changes) continue;
+    const summary = `Orden #${o.id} cancelada: ya no te queda ${token.symbol}`;
+    logJournal({ missionId, sessionId: null, kind: "order_cancelled", summary });
+    cancelled.push(summary);
+  }
+  return cancelled;
+}
+
+/**
+ * Tras comprar un token, cuánto darían venderlo en ese mismo instante: el coste de entrar y salir (comisiones y
+ * diferencia entre compra y venta), separado de lo que se mueva el precio después. En la tanda de la v0.38.1 el
+ * agente veía la venta unos segundos más tarde un 8 % por debajo y lo guardó en su memoria como "diferencial de
+ * pump.fun", cuando la ida y vuelta era de un 2-3 % y el resto era el precio moviéndose. Se guarda en la posición
+ * (roundTripAtEntryPct) para que las creencias puedan medirlo.
+ */
+async function sellNow(missionId: number, chain: ReturnType<typeof getChain>, token: TokenRef, qty: number, paidUsd: number, isBuy: boolean) {
+  if (!isBuy || chain.isCash(token.address) || token.address === chain.native.address || !(paidUsd > 0) || !(qty > 0)) return null;
+  try {
+    const q = await chain.quote({ input: token, output: chain.cash, amountIn: qty, slippageBps: 100 });
+    const roundTripPct = Number(((1 - q.amountOut / paidUsd) * 100).toFixed(1));
+    const pos = db.prepare("SELECT id, research FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open' ORDER BY id DESC LIMIT 1").get(missionId, chain.id, token.address) as
+      | { id: number; research: string | null }
+      | undefined;
+    if (pos) {
+      const research = JSON.parse(pos.research ?? "{}") as Record<string, unknown>;
+      // Al añadir a una posición se queda la de la primera compra, la de la entrada.
+      if (research.roundTripAtEntryPct === undefined) {
+        research.roundTripAtEntryPct = roundTripPct;
+        db.prepare("UPDATE positions SET research = ? WHERE id = ?").run(JSON.stringify(research), pos.id);
+      }
+    }
+    return {
+      sellNowUsd: Number(q.amountOut.toFixed(4)),
+      roundTripNowPct: roundTripPct,
+      sellNowNote: "Lo que darías vendiéndolo ahora mismo: la diferencia con lo pagado es el coste de entrar y salir. Lo que cambie a partir de aquí es el precio moviéndose.",
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Última cotización de cada swap por misión: al ejecutar ese mismo swap poco después, el slippage se mide contra ella.

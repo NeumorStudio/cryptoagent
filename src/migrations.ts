@@ -177,6 +177,29 @@ export const MIGRATIONS: Migration[] = [
       db.exec("ALTER TABLE missions ADD COLUMN close_on_target INTEGER NOT NULL DEFAULT 1");
     },
   },
+  {
+    version: 12,
+    description: "Datos de decisión en las posiciones de futuros ya guardadas: cuánto quedaba de misión, en qué minuto y a qué hora",
+    up: (db) => {
+      const rows = db
+        .prepare(
+          "SELECT p.id, p.opened_at, m.created_at, m.deadline FROM positions p JOIN missions m ON m.id = p.mission_id WHERE p.venue = 'hyperliquid' AND (p.research IS NULL OR p.research = '{}')",
+        )
+        .all() as Array<{ id: number; opened_at: string; created_at: string; deadline: string }>;
+      const update = db.prepare("UPDATE positions SET research = ? WHERE id = ?");
+      for (const r of rows) {
+        const at = new Date(r.opened_at).getTime();
+        update.run(
+          JSON.stringify({
+            minutesIntoMission: Math.round((at - new Date(r.created_at).getTime()) / 60_000),
+            minutesLeft: Math.max(0, Math.round((new Date(r.deadline).getTime() - at) / 60_000)),
+            hourUtc: new Date(at).getUTCHours(),
+          }),
+          r.id,
+        );
+      }
+    },
+  },
 ];
 
 /**

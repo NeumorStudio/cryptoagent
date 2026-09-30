@@ -77,3 +77,19 @@ test("las salidas se pueden poner después de abrir, con el precio de entrada re
   const row = db.prepare("SELECT status FROM perp_positions WHERE id = ?").get(r.perpId) as { status: string };
   assert.equal(row.status, "closed");
 });
+
+test("un futuro guarda los mismos datos de decisión que un swap, y una creencia puede acotarlos", async () => {
+  const mm = (await createMission(1000, 5000, 60, undefined, { solana: 100 })).id;
+  await openPerp({ missionId: mm, sessionId: null, coin: "SOL", side: "long", leverage: 20, marginUsd: 100, reasoning: "test" });
+  const p = listPositions(mm).find((x) => x.venue === "hyperliquid")!;
+  const r = p.research as Record<string, number>;
+  assert.ok(r.minutesLeft >= 59 && r.minutesLeft <= 60, String(r.minutesLeft));
+  assert.ok(r.portfolioPct >= 9 && r.portfolioPct <= 11, String(r.portfolioPct));
+  assert.equal(typeof r.hourUtc, "number");
+  // Cuenta los largos de SOL ya cerrados en los tests anteriores: volver a la misma moneda y sentido se mide.
+  const before = db.prepare("SELECT COUNT(*) AS n FROM positions WHERE venue = 'hyperliquid' AND asset = 'SOL-PERP-long' AND status = 'closed'").get() as { n: number };
+  assert.equal(r.previousTradesInToken, before.n);
+  const memory = await import("../src/sim/memory.js");
+  assert.ok(memory.matches({ all: [{ f: "venue", op: "=", v: "hyperliquid" }, { f: "leverage", op: ">=", v: 20 }, { f: "minutesLeft", op: ">", v: 12 }] }, p));
+  assert.ok(!memory.matches({ all: [{ f: "venue", op: "=", v: "hyperliquid" }, { f: "minutesLeft", op: "<=", v: 12 }] }, p));
+});

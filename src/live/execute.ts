@@ -7,7 +7,7 @@ import { EVM_CHAINS, NATIVE, rpcBatch, type EvmChainId } from "../market/evm.js"
 import { fetchJson } from "../market/http.js";
 import { SOL_MINT, fromBaseUnits, getQuote, toBaseUnits } from "../market/jupiter.js";
 import { getMission, isLive } from "../sim/mission.js";
-import { balance, LimitNotReached } from "../sim/portfolio.js";
+import { balance, cancelOrdersForSoldOut, LimitNotReached } from "../sim/portfolio.js";
 import { recordTrade } from "../sim/positions.js";
 import type { ChainId, TradeMeta } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
@@ -236,7 +236,8 @@ export async function liveSwap(args: LiveSwapArgs) {
     meta: args.meta,
   }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
   await syncHoldings(m, evmChain ? { [evmChain]: [output].filter((t) => t.address !== NATIVE) } : {}).catch(() => undefined);
-  return result;
+  const cancelled = await cancelOrdersForSoldOut(m, chain.id, input).catch(() => []);
+  return cancelled.length ? { ...result, ordersCancelled: cancelled } : result;
 }
 
 /** Holgura de SOL por transacción: comisión, prioridad (≤ 0,001) y la renta de un par de cuentas nuevas. */

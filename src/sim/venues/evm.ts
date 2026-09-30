@@ -265,6 +265,7 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : undefined,
+        buySellCountRatio5m: m5 && m5.sells > 0 ? n(m5.buys / m5.sells) : undefined,
         launchpad: launchpadOf(cfg.id, asset, top?.dexId),
         buyTaxPct: sec.buyTaxPct,
         sellTaxPct: sec.sellTaxPct,

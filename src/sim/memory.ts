@@ -44,6 +44,10 @@ type Pos = ReturnType<typeof listPositions>[number];
 /** Datos de cada posición sobre los que puede definirse una condición. */
 export const CONDITION_FIELDS = [
   "venue",
+  // Futuros (Hyperliquid): moneda, sentido y apalancamiento.
+  "coin",
+  "side",
+  "leverage",
   "ageMinutes",
   "pairAgeMinutes",
   "liquidityUsd",
@@ -58,6 +62,7 @@ export const CONDITION_FIELDS = [
   "buyVolume5mUsd",
   "sellVolume5mUsd",
   "buySellRatio5m",
+  "buySellCountRatio5m",
   "holders",
   "topHoldersPct",
   "netBuyers5m",
@@ -101,6 +106,7 @@ export const CONDITION_FIELDS = [
   "liquidityTrendPct",
   "netBuyersTrend",
   "fillVsPricePct",
+  "roundTripAtEntryPct",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -132,6 +138,7 @@ const RESEARCH_FIELDS = new Set([
   "liquidityTrendPct",
   "netBuyersTrend",
   "fillVsPricePct",
+  "roundTripAtEntryPct",
 ]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {

@@ -21,7 +21,7 @@ interface PositionRow {
 }
 
 /** Cuánto investigó el agente antes de esta entrada (solo herramientas del simulador). */
-function researchSnapshot(missionId: number, mint: string) {
+export function researchSnapshot(missionId: number, mint: string) {
   const mission = db.prepare("SELECT created_at FROM missions WHERE id = ?").get(missionId) as { created_at: string };
   const lastTrade = db
     .prepare("SELECT MAX(COALESCE(closed_at, opened_at)) AS ts FROM positions WHERE mission_id = ?")

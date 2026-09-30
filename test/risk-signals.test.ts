@@ -88,3 +88,14 @@ test("un creador con miles de lanzamientos se marca como probable plataforma, pe
   const pos = { venue: "solana", asset: STONK, entry: { creatorTokens: 6612, creatorGraduationPct: 1.9 }, research: {} } as unknown as Parameters<typeof memory.matches>[1];
   assert.ok(memory.matches({ all: [{ f: "creatorTokens", op: ">=", v: 500 }, { f: "creatorGraduationPct", op: "<", v: 5 }] }, pos));
 });
+
+test("token_report trae los valores que usa la memoria, con el cociente de compras/ventas por volumen y por número", async () => {
+  const r = JSON.parse(String((await runTool("token_report", { chain: "solana", token: STONK }, ctx)).content));
+  assert.equal(r.memoryData.buySellRatio5m, 1.15);
+  assert.equal(r.memoryData.buySellCountRatio5m, 1.35);
+  assert.equal(r.memoryData.netBuyers5m, 200);
+  assert.match(r.memoryData.note, /por volumen.*por número/);
+  const pos = { venue: "solana", asset: STONK, entry: { buySellRatio5m: 1.15, buySellCountRatio5m: 1.35 }, research: {} } as unknown as Parameters<typeof memory.matches>[1];
+  assert.ok(!memory.matches({ all: [{ f: "buySellRatio5m", op: ">=", v: 1.3 }] }, pos));
+  assert.ok(memory.matches({ all: [{ f: "buySellCountRatio5m", op: ">=", v: 1.3 }] }, pos));
+});

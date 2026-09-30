@@ -8069,6 +8069,27 @@ var init_migrations = __esm({
         up: (db2) => {
           db2.exec("ALTER TABLE missions ADD COLUMN close_on_target INTEGER NOT NULL DEFAULT 1");
         }
+      },
+      {
+        version: 12,
+        description: "Datos de decisi\xF3n en las posiciones de futuros ya guardadas: cu\xE1nto quedaba de misi\xF3n, en qu\xE9 minuto y a qu\xE9 hora",
+        up: (db2) => {
+          const rows = db2.prepare(
+            "SELECT p.id, p.opened_at, m.created_at, m.deadline FROM positions p JOIN missions m ON m.id = p.mission_id WHERE p.venue = 'hyperliquid' AND (p.research IS NULL OR p.research = '{}')"
+          ).all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const r of rows) {
+            const at = new Date(r.opened_at).getTime();
+            update.run(
+              JSON.stringify({
+                minutesIntoMission: Math.round((at - new Date(r.created_at).getTime()) / 6e4),
+                minutesLeft: Math.max(0, Math.round((new Date(r.deadline).getTime() - at) / 6e4)),
+                hourUtc: new Date(at).getUTCHours()
+              }),
+              r.id
+            );
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8301,7 +8322,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.38.1";
+    CODE_VERSION = "0.39.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9090,6 +9111,7 @@ function evmAdapter(cfg) {
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : void 0,
+        buySellCountRatio5m: m5 && m5.sells > 0 ? n(m5.buys / m5.sells) : void 0,
         launchpad: launchpadOf(cfg.id, asset2, top?.dexId),
         buyTaxPct: sec.buyTaxPct,
         sellTaxPct: sec.sellTaxPct,
@@ -9557,6 +9579,7 @@ async function entryFeatures(mint) {
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
     buySellRatio5m: t?.stats5m?.sellVolume > 0 ? round(t.stats5m.buyVolume / t.stats5m.sellVolume) : void 0,
+    buySellCountRatio5m: t?.stats5m?.numSells > 0 ? round(t.stats5m.numBuys / t.stats5m.numSells) : void 0,
     holders: t?.holderCount,
     topHoldersPct: round(t?.audit?.topHoldersPercentage, 1),
     netBuyers5m: t?.stats5m?.numNetBuyers,
@@ -10036,7 +10059,7 @@ async function openPerp(a) {
   const positionId = Number(
     db.prepare(
       `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
-         VALUES (?, 'hyperliquid', ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)`
+         VALUES (?, 'hyperliquid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       a.missionId,
       `${m.coin}-PERP-${a.side}`,
@@ -10045,6 +10068,10 @@ async function openPerp(a) {
       size,
       a.marginUsd + PERP_DEPOSIT_FEE_USD,
       JSON.stringify({ venue: "hyperliquid", strategy: "perp", coin: m.coin, side: a.side, leverage: a.leverage, fundingHourlyPct: m.fundingHourly * 100 }),
+      // Los mismos datos de decisión que en un swap (cuánto quedaba, qué parte del capital, si volvía a la misma
+      // moneda…): sin ellos una creencia sobre futuros solo podía decir "venue = hyperliquid" (petición #1 del
+      // revisor, v0.38.1). El margen ya ha salido del efectivo.
+      JSON.stringify({ ...researchSnapshot(a.missionId, `${m.coin}-PERP-${a.side}`), ...decisionContext(a.missionId, "hyperliquid", `${m.coin}-PERP-${a.side}`, debit, true) }),
       a.meta?.thesis ?? null,
       a.meta?.lessonsApplied ?? null,
       a.meta?.beliefsApplied?.length ? JSON.stringify(a.meta.beliefsApplied) : null
@@ -10205,6 +10232,7 @@ var init_perps = __esm({
     init_db();
     init_hyperliquid();
     init_portfolio();
+    init_positions();
     init_venues();
     PERP_TAKER_FEE = 45e-5;
     PERP_DEPOSIT_FEE_USD = 0.3;
@@ -11212,6 +11240,7 @@ async function missionStatus(missionId) {
     initialUsd: mission.initial_usd,
     targetUsd: mission.target_usd,
     currentUsd: Number(v.totalUsd.toFixed(2)),
+    currentUsdNote: "Valor de liquidaci\xF3n con cotizaciones de hasta 10 s: en tokens que se mueven r\xE1pido, vender puede dar algo distinto.",
     missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
     progressPct: Number(((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd) * 100).toFixed(1)),
     now: (/* @__PURE__ */ new Date()).toISOString(),
@@ -11555,7 +11584,8 @@ async function liveSwap(args) {
     meta: args.meta
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   await syncHoldings(m, evmChain ? { [evmChain]: [output2].filter((t) => t.address !== NATIVE) } : {}).catch(() => void 0);
-  return result;
+  const cancelled = await cancelOrdersForSoldOut(m, chain.id, input2).catch(() => []);
+  return cancelled.length ? { ...result, ordersCancelled: cancelled } : result;
 }
 function solanaBudget(input2, amountIn, extraLamports = 0n) {
   const isSol = input2.address === SOL_MINT;
@@ -11862,7 +11892,48 @@ async function swap(args) {
     valueUsd,
     meta: args.meta
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
-  return result;
+  const exit = await sellNow(m, chain, output2, quote2.amountOut, valueUsd, chain.isCash(input2.address) || input2.address === chain.native.address);
+  const cancelled = await cancelOrdersForSoldOut(m, chain.id, input2);
+  return { ...result, ...exit ?? {}, ...cancelled.length ? { ordersCancelled: cancelled } : {} };
+}
+async function cancelOrdersForSoldOut(missionId, venue, token2) {
+  if (balance(missionId, venue, token2.address) > DUST5) return [];
+  const chain = getChain(venue);
+  const open2 = db.prepare("SELECT id, action, trigger_label FROM orders WHERE mission_id = ? AND venue = ? AND status = 'open'").all(missionId, venue);
+  const cancelled = [];
+  for (const o of open2) {
+    const action = JSON.parse(o.action);
+    if (!action.sellAll || !action.input) continue;
+    const input2 = await chain.resolveToken(action.input).catch(() => null);
+    if (input2?.address !== token2.address) continue;
+    if (!db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), o.id).changes) continue;
+    const summary = `Orden #${o.id} cancelada: ya no te queda ${token2.symbol}`;
+    logJournal({ missionId, sessionId: null, kind: "order_cancelled", summary });
+    cancelled.push(summary);
+  }
+  return cancelled;
+}
+async function sellNow(missionId, chain, token2, qty, paidUsd, isBuy) {
+  if (!isBuy || chain.isCash(token2.address) || token2.address === chain.native.address || !(paidUsd > 0) || !(qty > 0)) return null;
+  try {
+    const q = await chain.quote({ input: token2, output: chain.cash, amountIn: qty, slippageBps: 100 });
+    const roundTripPct = Number(((1 - q.amountOut / paidUsd) * 100).toFixed(1));
+    const pos = db.prepare("SELECT id, research FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open' ORDER BY id DESC LIMIT 1").get(missionId, chain.id, token2.address);
+    if (pos) {
+      const research = JSON.parse(pos.research ?? "{}");
+      if (research.roundTripAtEntryPct === void 0) {
+        research.roundTripAtEntryPct = roundTripPct;
+        db.prepare("UPDATE positions SET research = ? WHERE id = ?").run(JSON.stringify(research), pos.id);
+      }
+    }
+    return {
+      sellNowUsd: Number(q.amountOut.toFixed(4)),
+      roundTripNowPct: roundTripPct,
+      sellNowNote: "Lo que dar\xEDas vendi\xE9ndolo ahora mismo: la diferencia con lo pagado es el coste de entrar y salir. Lo que cambie a partir de aqu\xED es el precio movi\xE9ndose."
+    };
+  } catch {
+    return null;
+  }
 }
 async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50, missionId) {
   const chain = getChain(chainId);
@@ -41918,6 +41989,10 @@ var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" :
 var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
 var CONDITION_FIELDS = [
   "venue",
+  // Futuros (Hyperliquid): moneda, sentido y apalancamiento.
+  "coin",
+  "side",
+  "leverage",
   "ageMinutes",
   "pairAgeMinutes",
   "liquidityUsd",
@@ -41932,6 +42007,7 @@ var CONDITION_FIELDS = [
   "buyVolume5mUsd",
   "sellVolume5mUsd",
   "buySellRatio5m",
+  "buySellCountRatio5m",
   "holders",
   "topHoldersPct",
   "netBuyers5m",
@@ -41974,7 +42050,8 @@ var CONDITION_FIELDS = [
   "minutesBetweenReads",
   "liquidityTrendPct",
   "netBuyersTrend",
-  "fillVsPricePct"
+  "fillVsPricePct",
+  "roundTripAtEntryPct"
 ];
 var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
 var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
@@ -41995,7 +42072,8 @@ var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
   "minutesBetweenReads",
   "liquidityTrendPct",
   "netBuyersTrend",
-  "fillVsPricePct"
+  "fillVsPricePct",
+  "roundTripAtEntryPct"
 ]);
 function fieldValue(p, f) {
   if (f === "venue") return p.entry.venue ?? p.venue;
@@ -43137,6 +43215,22 @@ async function screenCandidates(chain, candidates, n3, missionId = null) {
   });
   return [...checked, ...candidates.slice(n3)];
 }
+function memoryData(f) {
+  return {
+    note: "Son los valores con los que se eval\xFAan las condiciones de tus creencias. buySellRatio5m es por volumen en USD; buySellCountRatio5m, por n\xFAmero de operaciones.",
+    ageMinutes: f.ageMinutes,
+    pairAgeMinutes: f.pairAgeMinutes,
+    liquidityUsd: f.liquidityUsd,
+    mcapUsd: f.mcapUsd,
+    priceChange5mPct: f.priceChange5mPct,
+    pairPriceChange5mPct: f.pairPriceChange5mPct,
+    priceChange1hPct: f.priceChange1hPct,
+    netBuyers5m: f.netBuyers5m,
+    buySellRatio5m: f.buySellRatio5m,
+    buySellCountRatio5m: f.buySellCountRatio5m
+  };
+}
+var VALUATION_NOTE = "Valor de liquidaci\xF3n: lo que dar\xEDan vender cada posici\xF3n, con cotizaciones de hasta 10 s. En tokens que se mueven r\xE1pido, la venta real puede salir distinta (en la M3 de la v0.38.1, un 4,5 % menos); para el precio exacto de vender, quote_swap.";
 async function briefReports(chain, tokens, missionId = null) {
   const c = getChain(chain);
   const rows = await mapLimit([...new Set(tokens.map((t) => t.trim()))], 3, async (token2) => {
@@ -43155,6 +43249,7 @@ async function briefReports(chain, tokens, missionId = null) {
       priceChange1hPct: f.priceChange1hPct,
       netBuyers5m: f.netBuyers5m,
       buySellRatio5m: f.buySellRatio5m,
+      buySellCountRatio5m: f.buySellCountRatio5m,
       holders: f.holders,
       topHoldersPct: f.topHoldersPct,
       taxes: f.buyTaxPct !== void 0 || f.sellTaxPct !== void 0 ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : void 0,
@@ -43242,7 +43337,7 @@ var SIM_TOOLS = [
     kind: "research",
     deliversNews: true,
     researchTarget: (i) => i.tokens?.length ? i.tokens : i.token,
-    description: "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, variaci\xF3n, compradores, holders, impuestos, datos de riesgo, qu\xE9 dice tu memoria y qu\xE9 ha cambiado desde la \xFAltima lectura. Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Siempre a\xF1ade `riskCheck`, solo datos: el creador (tokens lanzados y graduados, y los suyos que has operado t\xFA), lo que conserva, insiders, liquidez bloqueada, launchpad, honeypot y mcap/liquidez. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores).",
+    description: "Con tokens (hasta 5), una ficha breve de cada uno en una tabla, para comparar o releerlos de una vez: liquidez, mcap, variaci\xF3n, compradores, holders, impuestos, datos de riesgo, qu\xE9 dice tu memoria y qu\xE9 ha cambiado desde la \xFAltima lectura. Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, auditor\xEDa y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripci\xF3n, comentarios y m\xE1ximo hist\xF3rico. Con token tambi\xE9n trae `memoryData`: los valores con los que se eval\xFAan las condiciones de tus creencias, ya calculados. Siempre a\xF1ade `riskCheck`, solo datos: el creador (tokens lanzados y graduados, y los suyos que has operado t\xFA), lo que conserva, insiders, liquidez bloqueada, launchpad, honeypot y mcap/liquidez. Si repites token_report sobre el mismo token, `sinceLastRead` dice qu\xE9 ha cambiado desde la lectura anterior (liquidez, precio, compradores).",
     schema: external_exports.object({
       chain: chainParam,
       token: external_exports.string().optional().describe("Direcci\xF3n del token (en Solana, su mint): ficha completa"),
@@ -43262,7 +43357,7 @@ var SIM_TOOLS = [
       const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => void 0) : void 0;
       return json2({
         ...compactReport(report),
-        ...features ? { riskCheck: riskCheck(chain, token2.trim(), features, ctx.missionId) } : {},
+        ...features ? { memoryData: memoryData(features), riskCheck: riskCheck(chain, token2.trim(), features, ctx.missionId) } : {},
         yourHistory: history ?? "nunca lo has operado",
         ...roundTrip ? { roundTrip } : {}
       });
@@ -43376,9 +43471,9 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "portfolio",
     kind: "misc",
     deliversNews: true,
-    description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n real ahora mismo, el PnL desde el inicio, la direcci\xF3n de tu monedero EVM y una referencia: lo que valdr\xEDa tu cartera inicial si no hubieras operado.",
+    description: "Muestra tu cartera simulada y su valor en USD a precio de liquidaci\xF3n (con cotizaciones de hasta 10 s), el PnL desde el inicio, la direcci\xF3n de tu monedero EVM y una referencia: lo que valdr\xEDa tu cartera inicial si no hubieras operado.",
     schema: external_exports.object({}),
-    run: async (_i, ctx) => json2(await valuation(mid(ctx)))
+    run: async (_i, ctx) => json2({ ...await valuation(mid(ctx)), valuationNote: VALUATION_NOTE })
   }),
   tool({
     name: "quote_swap",
@@ -43622,7 +43717,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
-    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotizaci\xF3n de vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da as\xED al crearla). Una toma de beneficios (above, vendiendo a un estable) es una orden l\xEDmite: se llena exactamente a ese precio (como en Jupiter, aunque el mercado est\xE9 por encima); si al ir a vender el precio ya ha bajado, no se llena y sigue esperando. Un stop (below) vende a mercado, al precio que haya. Funciona aunque no est\xE9s en sesi\xF3n. Se comprueba cada 15 s, as\xED que un pico de pocos segundos puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cancela la que sobre cuando se ejecute la otra.',
+    description: 'Deja una orden condicional en una cadena: cuando el precio en USD de trigger_asset cruce trigger_price (above = sube hasta o por encima, below = baja hasta o por debajo), se ejecuta el swap indicado a mercado con la cotizaci\xF3n real de ese instante. Si la orden vende trigger_asset (toma de beneficios o stop), el precio que se vigila es el de venderlo de verdad: la cotizaci\xF3n de vender esa cantidad a un estable, ya con el impacto de precio (currentPrice te lo da as\xED al crearla). Una toma de beneficios (above, vendiendo a un estable) es una orden l\xEDmite: se llena exactamente a ese precio (como en Jupiter, aunque el mercado est\xE9 por encima); si al ir a vender el precio ya ha bajado, no se llena y sigue esperando. Un stop (below) vende a mercado, al precio que haya. Funciona aunque no est\xE9s en sesi\xF3n. Se comprueba cada 15 s, as\xED que un pico de pocos segundos puede no dispararla. El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan ("si a los 3 min no ha saltado la toma de beneficio, vendo") aunque no est\xE9s pendiente. Cuando ya no te queda nada de un token (lo vendes a mano o salta otra orden), sus \xF3rdenes que venden todo el saldo, de precio y de tiempo, se cancelan solas en ese momento (lo ver\xE1s en ordersCancelled). Las dem\xE1s, canc\xE9lalas t\xFA.',
     schema: external_exports.object({
       chain: chainParam,
       trigger_asset: external_exports.string().optional().describe(`Direcci\xF3n del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),

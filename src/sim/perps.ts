@@ -11,6 +11,7 @@
 import { db, logJournal, now } from "../db.js";
 import { perpMarket, perpMarkets } from "../market/hyperliquid.js";
 import { applyDeltas, assertSimulated, balance } from "./portfolio.js";
+import { decisionContext, researchSnapshot } from "./positions.js";
 import type { ChainId, TradeMeta } from "./types.js";
 import { allChains, getChain } from "./venues/index.js";
 
@@ -98,7 +99,7 @@ export async function openPerp(a: {
     db
       .prepare(
         `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
-         VALUES (?, 'hyperliquid', ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?)`,
+         VALUES (?, 'hyperliquid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         a.missionId,
@@ -108,6 +109,10 @@ export async function openPerp(a: {
         size,
         a.marginUsd + PERP_DEPOSIT_FEE_USD,
         JSON.stringify({ venue: "hyperliquid", strategy: "perp", coin: m.coin, side: a.side, leverage: a.leverage, fundingHourlyPct: m.fundingHourly * 100 }),
+        // Los mismos datos de decisión que en un swap (cuánto quedaba, qué parte del capital, si volvía a la misma
+        // moneda…): sin ellos una creencia sobre futuros solo podía decir "venue = hyperliquid" (petición #1 del
+        // revisor, v0.38.1). El margen ya ha salido del efectivo.
+        JSON.stringify({ ...researchSnapshot(a.missionId, `${m.coin}-PERP-${a.side}`), ...decisionContext(a.missionId, "hyperliquid", `${m.coin}-PERP-${a.side}`, debit, true) }),
         a.meta?.thesis ?? null,
         a.meta?.lessonsApplied ?? null,
         a.meta?.beliefsApplied?.length ? JSON.stringify(a.meta.beliefsApplied) : null,

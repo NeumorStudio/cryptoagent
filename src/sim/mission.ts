@@ -268,6 +268,7 @@ export async function missionStatus(missionId?: number) {
     initialUsd: mission.initial_usd,
     targetUsd: mission.target_usd,
     currentUsd: Number(v.totalUsd.toFixed(2)),
+    currentUsdNote: "Valor de liquidación con cotizaciones de hasta 10 s: en tokens que se mueven rápido, vender puede dar algo distinto.",
     missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
     progressPct: Number((((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd)) * 100).toFixed(1)),
     now: new Date().toISOString(),

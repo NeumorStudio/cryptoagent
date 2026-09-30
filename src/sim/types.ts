@@ -57,10 +57,16 @@ export interface Features {
   /** Volumen de 1 h según Jupiter dividido entre el de todos los pares de DexScreener. */
   volume1hJupiterVsDexRatio?: number;
   priceChange24hPct?: number;
-  /** Volumen de compras y de ventas en USD en los últimos 5 min, y su cociente (compras / ventas). */
+  /** Volumen de compras y de ventas en USD en los últimos 5 min, y su cociente (compras / ventas, por volumen). */
   buyVolume5mUsd?: number;
   sellVolume5mUsd?: number;
   buySellRatio5m?: number;
+  /**
+   * Número de compras / número de ventas en 5 min. No es lo mismo que buySellRatio5m: muchas compras pequeñas
+   * frente a pocas ventas grandes dan un cociente alto por número y bajo por volumen (CROOK, M7 de la v0.38.1:
+   * 1,35 por número, 1,15 por volumen; el agente comprobaba su creencia con uno y se evaluaba con el otro).
+   */
+  buySellCountRatio5m?: number;
   holders?: number;
   topHoldersPct?: number;
   netBuyers5m?: number;

@@ -7688,6 +7688,27 @@ var init_migrations = __esm({
         up: (db2) => {
           db2.exec("ALTER TABLE missions ADD COLUMN close_on_target INTEGER NOT NULL DEFAULT 1");
         }
+      },
+      {
+        version: 12,
+        description: "Datos de decisi\xF3n en las posiciones de futuros ya guardadas: cu\xE1nto quedaba de misi\xF3n, en qu\xE9 minuto y a qu\xE9 hora",
+        up: (db2) => {
+          const rows = db2.prepare(
+            "SELECT p.id, p.opened_at, m.created_at, m.deadline FROM positions p JOIN missions m ON m.id = p.mission_id WHERE p.venue = 'hyperliquid' AND (p.research IS NULL OR p.research = '{}')"
+          ).all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const r of rows) {
+            const at = new Date(r.opened_at).getTime();
+            update.run(
+              JSON.stringify({
+                minutesIntoMission: Math.round((at - new Date(r.created_at).getTime()) / 6e4),
+                minutesLeft: Math.max(0, Math.round((new Date(r.deadline).getTime() - at) / 6e4)),
+                hourUtc: new Date(at).getUTCHours()
+              }),
+              r.id
+            );
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -7884,7 +7905,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.38.1";
+    CODE_VERSION = "0.39.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8571,6 +8592,7 @@ function evmAdapter(cfg) {
         holders: sec.holders,
         topHoldersPct: sec.topHoldersPct,
         netBuyers5m: m5 ? m5.buys - m5.sells : void 0,
+        buySellCountRatio5m: m5 && m5.sells > 0 ? n(m5.buys / m5.sells) : void 0,
         launchpad: launchpadOf(cfg.id, asset, top?.dexId),
         buyTaxPct: sec.buyTaxPct,
         sellTaxPct: sec.sellTaxPct,
@@ -9038,6 +9060,7 @@ async function entryFeatures(mint) {
     buyVolume5mUsd: round(t?.stats5m?.buyVolume, 0),
     sellVolume5mUsd: round(t?.stats5m?.sellVolume, 0),
     buySellRatio5m: t?.stats5m?.sellVolume > 0 ? round(t.stats5m.buyVolume / t.stats5m.sellVolume) : void 0,
+    buySellCountRatio5m: t?.stats5m?.numSells > 0 ? round(t.stats5m.numBuys / t.stats5m.numSells) : void 0,
     holders: t?.holderCount,
     topHoldersPct: round(t?.audit?.topHoldersPercentage, 1),
     netBuyers5m: t?.stats5m?.numNetBuyers,

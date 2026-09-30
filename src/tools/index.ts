@@ -268,6 +268,31 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
   return [...checked, ...candidates.slice(n)];
 }
 
+/**
+ * Los valores con los que se evalúan las condiciones de las creencias, tal cual. En la ficha completa el agente
+ * calculaba sus propios cocientes con los datos en bruto y comprobaba sus creencias con otra medida que la que usa
+ * la memoria (CROOK, M7 de la v0.38.1).
+ */
+function memoryData(f: Features) {
+  return {
+    note: "Son los valores con los que se evalúan las condiciones de tus creencias. buySellRatio5m es por volumen en USD; buySellCountRatio5m, por número de operaciones.",
+    ageMinutes: f.ageMinutes,
+    pairAgeMinutes: f.pairAgeMinutes,
+    liquidityUsd: f.liquidityUsd,
+    mcapUsd: f.mcapUsd,
+    priceChange5mPct: f.priceChange5mPct,
+    pairPriceChange5mPct: f.pairPriceChange5mPct,
+    priceChange1hPct: f.priceChange1hPct,
+    netBuyers5m: f.netBuyers5m,
+    buySellRatio5m: f.buySellRatio5m,
+    buySellCountRatio5m: f.buySellCountRatio5m,
+  };
+}
+
+/** El valor de la cartera no es un precio garantizado de venta: las cotizaciones de la valoración tienen hasta 10 s. */
+export const VALUATION_NOTE =
+  "Valor de liquidación: lo que darían vender cada posición, con cotizaciones de hasta 10 s. En tokens que se mueven rápido, la venta real puede salir distinta (en la M3 de la v0.38.1, un 4,5 % menos); para el precio exacto de vender, quote_swap.";
+
 /** Fichas breves de varios tokens en una tabla, con los mismos datos en todas las cadenas (los de entrada). */
 export async function briefReports(chain: ChainId, tokens: string[], missionId: number | null = null): Promise<string> {
   const c = getChain(chain);
@@ -287,6 +312,7 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
       priceChange1hPct: f.priceChange1hPct,
       netBuyers5m: f.netBuyers5m,
       buySellRatio5m: f.buySellRatio5m,
+      buySellCountRatio5m: f.buySellCountRatio5m,
       holders: f.holders,
       topHoldersPct: f.topHoldersPct,
       taxes: f.buyTaxPct !== undefined || f.sellTaxPct !== undefined ? `${f.buyTaxPct ?? "?"}/${f.sellTaxPct ?? "?"} %` : undefined,
@@ -406,6 +432,7 @@ export const SIM_TOOLS = [
       "Con token, la ficha completa en una sola llamada: actividad de compras y ventas (5 min, 1 h, 24 h), holders, liquidez, " +
       "auditoría y riesgos, webs y redes sociales del proyecto. En Solana incluye las autoridades de mint y freeze, el % del creador y de " +
       "los mayores holders, los riesgos de RugCheck y, si es de pump.fun, su descripción, comentarios y máximo histórico. " +
+      "Con token también trae `memoryData`: los valores con los que se evalúan las condiciones de tus creencias, ya calculados. " +
       "Siempre añade `riskCheck`, solo datos: el creador (tokens lanzados y graduados, y los suyos que has operado tú), lo que conserva, " +
       "insiders, liquidez bloqueada, launchpad, honeypot y mcap/liquidez. Si repites token_report sobre el mismo token, `sinceLastRead` " +
       "dice qué ha cambiado desde la lectura anterior (liquidez, precio, compradores).",
@@ -428,7 +455,7 @@ export const SIM_TOOLS = [
       const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => undefined) : undefined;
       return json({
         ...compactReport(report),
-        ...(features ? { riskCheck: riskCheck(chain, token.trim(), features, ctx.missionId) } : {}),
+        ...(features ? { memoryData: memoryData(features), riskCheck: riskCheck(chain, token.trim(), features, ctx.missionId) } : {}),
         yourHistory: history ?? "nunca lo has operado",
         ...(roundTrip ? { roundTrip } : {}),
       });
@@ -556,10 +583,10 @@ export const SIM_TOOLS = [
     kind: "misc",
     deliversNews: true,
     description:
-      "Muestra tu cartera simulada y su valor en USD a precio de liquidación real ahora mismo, " +
+      "Muestra tu cartera simulada y su valor en USD a precio de liquidación (con cotizaciones de hasta 10 s), " +
       "el PnL desde el inicio, la dirección de tu monedero EVM y una referencia: lo que valdría tu cartera inicial si no hubieras operado.",
     schema: z.object({}),
-    run: async (_i, ctx) => json(await sim.valuation(mid(ctx))),
+    run: async (_i, ctx) => json({ ...(await sim.valuation(mid(ctx))), valuationNote: VALUATION_NOTE }),
   }),
   tool({
     name: "quote_swap",
@@ -854,7 +881,8 @@ export const SIM_TOOLS = [
       "Funciona aunque no estés en sesión. Se comprueba cada 15 s, así que un pico de pocos segundos puede no dispararla. " +
       "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. " +
       "Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan " +
-      "(\"si a los 3 min no ha saltado la toma de beneficio, vendo\") aunque no estés pendiente. Cancela la que sobre cuando se ejecute la otra.",
+      "(\"si a los 3 min no ha saltado la toma de beneficio, vendo\") aunque no estés pendiente. Cuando ya no te queda nada de un token (lo vendes a mano o salta otra orden), sus órdenes que venden " +
+      "todo el saldo, de precio y de tiempo, se cancelan solas en ese momento (lo verás en ordersCancelled). Las demás, cancélalas tú.",
     schema: z.object({
       chain: chainParam,
       trigger_asset: z.string().optional().describe(`Dirección del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),

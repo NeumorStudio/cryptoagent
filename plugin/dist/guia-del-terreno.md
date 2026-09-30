@@ -63,6 +63,9 @@ BNB Chain.
   ejecutas en menos de 60 s con un importe parecido (hasta un 25 % distinto; se compara en proporción), y el precio se ha movido más que tu `slippage_bps`, el swap revierte y
   solo pagas la red. Si ejecutas sin cotizar antes, se ejecuta al precio de ese momento (y el slippage no tiene contra qué medirse).
   Las comisiones de los pools (incluida la de pump.fun) ya van dentro de la cotización.
+- **Tras comprar un token**, el resultado trae `sellNowUsd` y `roundTripNowPct`: lo que darías vendiéndolo en ese mismo
+  instante. Es el coste de entrar y salir. En memecoins que se mueven un 5-10 % en segundos, lo que veas unos segundos
+  después ya incluye el movimiento del precio: no es un coste. Se guarda en la posición como `roundTripAtEntryPct`.
 - Se cobran además: la fee de red de Solana (fija, configurable) y la renta de la cuenta de token
   (0,00203928 SOL al recibir un token nuevo; se recupera al vaciar esa cuenta). Sin SOL no puedes operar en Solana.
 - Base y BNB Chain (EVM), como en MetaMask:
@@ -166,6 +169,10 @@ Solo datos, sin veredicto: qué significan para tus resultados lo decides tú co
 - **Token.** `insidersDetected` y `lpLockedPct` (RugCheck), `honeypot` e impuestos (GoPlus), `mcapToLiquidity` y `launchpad`. En BNB Chain el launchpad sale de la dirección: …7777 = Flap.sh, …4444 o …ffff = four.meme, también en tus operaciones antiguas.
 - **Volumen según cada fuente.** `token_report` trae `volumeCheck`: el volumen de 1 h según Jupiter, el de todos los pares de DexScreener y su cociente (`volume1hJupiterVsDexRatio`, también en los datos de cada posición).
 - **Entre lecturas.** Si lees un token dos veces, `riskCheck.sinceLastRead` dice cuánto cambiaron la liquidez, el precio y los compradores. Al comprar se guardan `readsBeforeBuy`, `minutesBetweenReads`, `liquidityTrendPct` y `netBuyersTrend`.
+- **Compras frente a ventas en 5 min.** Hay dos cocientes y no dicen lo mismo: `buySellRatio5m` es por volumen (USD
+  comprados / USD vendidos) y `buySellCountRatio5m` por número de operaciones (compras / ventas). Muchas compras pequeñas
+  frente a pocas ventas grandes dan un número alto y un volumen bajo. `token_report` con un token trae `memoryData`: los
+  valores exactos con los que se evalúan las condiciones de tus creencias; no hace falta calcularlos a mano.
 - **Condiciones para tus creencias.** Todos se pueden usar: `volume1hJupiterVsDexRatio`, `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `creatorIsLaunchpadDeployer`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
 
 ## 6. Futuros perpetuos (simulados con datos de Hyperliquid)

@@ -79,7 +79,13 @@ export function handle(url: URL, body?: unknown): Response {
         id === MEME
           ? { dev: MEME_DEV, audit: { devMints: 40, devMigrations: 0, devBalancePercentage: 8 } }
           : id === STONK
-            ? { dev: STONK_DEV, launchpad: "stonkfun", audit: { devMints: 6612, devMigrations: 127 } }
+            ? {
+                dev: STONK_DEV,
+                launchpad: "stonkfun",
+                audit: { devMints: 6612, devMigrations: 127 },
+                // Como CROOK (M7 de la v0.38.1): 1,35 por número de operaciones, 1,15 por volumen.
+                stats5m: { numBuys: 361, numSells: 267, buyVolume: 27613, sellVolume: 23908, numNetBuyers: 200 },
+              }
             : {};
       return json(t ? [{ id, symbol: t.symbol, name: t.symbol, decimals: t.decimals, usdPrice: t.price, ...creator }] : []);
     }

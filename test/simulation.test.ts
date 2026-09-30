@@ -189,3 +189,31 @@ test("slippage: la cotización protege también si compras algo más o menos de 
   await swap({ ...base, amount: 20, slippageBps: 100 });
   await swap({ ...base, input: MEME, output: "USDC", sellAll: true, slippageBps: 500 });
 });
+
+test("al comprar, el resultado dice cuánto darían venderlo en ese instante y se guarda en la posición", async () => {
+  setPrice(MEME, 0.01);
+  const mm = (await createMission(1000, 5000, 60, undefined, { solana: 100 })).id;
+  const r = (await swap({ missionId: mm, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 100, slippageBps: 100, reasoning: "test" })) as Record<string, unknown>;
+  // Una comisión del pool al comprar y otra al vender: algo menos de un 0,6 % de ida y vuelta.
+  close(Number(r.sellNowUsd), 100 * (1 - POOL_FEE) ** 2, 1e-3);
+  assert.equal(r.roundTripNowPct, 0.6);
+  assert.match(String(r.sellNowNote), /coste de entrar y salir/);
+  const p = listPositions(mm).find((x) => x.asset === MEME)!;
+  assert.equal((p.research as Record<string, unknown>).roundTripAtEntryPct, 0.6);
+  // Vender no lo añade.
+  const s = (await swap({ missionId: mm, sessionId: null, chain: "solana", input: MEME, output: "USDC", sellAll: true, slippageBps: 100, reasoning: "test" })) as Record<string, unknown>;
+  assert.equal(s.sellNowUsd, undefined);
+});
+
+test("al venderlo todo, sus órdenes de precio y de tiempo se cancelan en el acto", async () => {
+  setPrice(MEME, 0.01);
+  const mm = (await createMission(1000, 5000, 60, undefined, { solana: 100 })).id;
+  await swap({ missionId: mm, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 20, slippageBps: 100, reasoning: "test" });
+  const sellAll = { input: MEME, output: "USDC", amount: 0, sellAll: true, slippageBps: 300 };
+  const tp = await placeOrder({ missionId: mm, sessionId: null, venue: "solana", triggerAsset: MEME, condition: "above", triggerPrice: 0.05, action: sellAll, reasoning: "tp" });
+  const byTime = await placeOrder({ missionId: mm, sessionId: null, venue: "solana", condition: "time", inMinutes: 10, action: sellAll, reasoning: "salida por tiempo" });
+  const r = (await swap({ missionId: mm, sessionId: null, chain: "solana", input: MEME, output: "USDC", sellAll: true, slippageBps: 300, reasoning: "vendo a mano" })) as Record<string, unknown>;
+  assert.deepEqual(r.ordersCancelled, [`Orden #${tp.id} cancelada: ya no te queda MEME`, `Orden #${byTime.id} cancelada: ya no te queda MEME`]);
+  const open = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE mission_id = ? AND status = 'open'").get(mm) as { n: number };
+  assert.equal(open.n, 0, "list_orders ya no las da por abiertas");
+});

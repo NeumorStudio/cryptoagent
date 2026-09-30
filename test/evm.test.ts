@@ -9,7 +9,7 @@ import { getHoldings, liquidateAll, planPortfolio, swap, valuation } from "../sr
 import { listPositions } from "../src/sim/positions.js";
 import { settleEvmSwap, type EvmQuoteExtra } from "../src/sim/venues/evm.js";
 import type { SwapQuote, TokenRef } from "../src/sim/venues/types.js";
-import { BASE_USDC, BSC_USDT, CAKE, HONEY, installFakeMarket, NATIVE, TAXED } from "./fake-market.js";
+import { BASE_USDC, BSC_USDT, CAKE, EMPTY_V4, HONEY, installFakeMarket, NATIVE, TAXED } from "./fake-market.js";
 
 installFakeMarket();
 
@@ -175,4 +175,12 @@ test("liquidar: todo a stablecoins salvo lo invendible", async () => {
   assert.ok(bal("base", NATIVE) <= 0.00003);
   assert.ok(bal("bsc", NATIVE) <= 0.0002);
   assert.equal(bal("bsc", BSC_USDT) > 0, true);
+});
+
+test("Base: sin ruta porque el pool de Uniswap v4 no tiene liquidez propia, y el error lo dice", async () => {
+  const m = await createMission(100, 200, 60, undefined, { base: 100 });
+  await assert.rejects(
+    swap({ missionId: m.id, sessionId: null, chain: "base", input: "USDC", output: EMPTY_V4, amount: 10, slippageBps: 300, reasoning: "test" }),
+    /Sin ruta de swap en base.*no tiene liquidez propia \(0 fuera de los swaps, aunque DexScreener le calcule 22750 USD\)/,
+  );
 });

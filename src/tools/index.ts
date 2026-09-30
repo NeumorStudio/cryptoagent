@@ -128,7 +128,7 @@ function riskCheck(chain: ChainId, token: string, f: Features, missionId: number
 /** Los datos de riesgo en una celda de tabla (escaneo y fichas breves): solo los que hay, sin juicio. */
 function riskCell(rc: ReturnType<typeof riskCheck>): string {
   return [
-    rc.creatorIsLaunchpadDeployer ? "creador: la dirección de la plataforma (sin datos de creador)" : "",
+    rc.creatorIsLaunchpadDeployer ? "creador: 5.000+ tokens, probablemente la plataforma" : "",
     rc.creatorTokens !== undefined ? `creador ${rc.creatorTokens} tokens/${rc.creatorGraduated ?? 0} graduados` : "",
     rc.creatorTradesWithYou ? `le operaste ${rc.creatorTradesWithYou} (peor ${rc.creatorWorstPnlWithYouPct} %)` : "",
     rc.devHoldingPct !== undefined ? `dev ${rc.devHoldingPct} %` : "",
@@ -480,7 +480,7 @@ export const SIM_TOOLS = [
     // quedaba (marcándolas como vistas) antes de que llegaran al trader. Le llegan con el resto de sus herramientas.
     description:
       "Estado de tu misión: capital inicial, objetivo, valor actual de la cartera, cuánto falta y tiempo restante. " +
-      "La misión termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
+      "La misión termina sola al acabarse el plazo y, si closesOnTarget lo dice, también al alcanzar el objetivo; entonces se cierran todas las posiciones a mercado.",
     schema: z.object({}),
     run: async (_i, ctx) => json(await mission.missionStatus(ctx.missionId ?? undefined)),
   }),
@@ -587,7 +587,7 @@ export const SIM_TOOLS = [
       "En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). " +
       `Necesitas el token nativo de la cadena para pagar la red. input/output: dirección del token o un alias (${TOKEN_ALIASES}). ` +
       "Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token. " +
-      "slippage_bps protege la cotización que acabas de ver: si cotizaste este mismo swap con quote_swap hace menos de 60 s y el precio se ha movido " +
+      "slippage_bps protege la cotización que acabas de ver: si cotizaste este mismo swap con quote_swap hace menos de 60 s (con una cantidad que no difiera más de un 25 %; se compara en proporción) y el precio se ha movido " +
       "más que tu slippage, el swap revierte (pagas solo la red). Sin cotización previa, se ejecuta al precio del momento.",
     schema: z.object({
       chain: chainParam,
@@ -1291,7 +1291,8 @@ export const SIM_TOOLS = [
     role: "reviewer",
     journaled: true,
     description:
-      "Corrige una retrospectiva ya escrita: solo los campos que indiques (el resto se queda igual), con el motivo. Para cifras " +
+      "Corrige una retrospectiva ya escrita: solo los campos que indiques (el resto se queda igual), con el motivo. Cada campo que " +
+      "indiques se sustituye entero, así que incluye lo que quieras conservar; la respuesta trae el texto anterior (previous). Para cifras " +
       "equivocadas, conclusiones que los datos posteriores desmienten o lo que faltó decir.",
     schema: z.object({
       mission_id: z.number().int(),

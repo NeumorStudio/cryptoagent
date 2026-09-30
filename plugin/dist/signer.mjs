@@ -7681,6 +7681,13 @@ var init_migrations = __esm({
             update.run(JSON.stringify(f), r.id);
           }
         }
+      },
+      {
+        version: 11,
+        description: "Misiones que no se cierran al tocar el objetivo: se comprueba al final del plazo",
+        up: (db2) => {
+          db2.exec("ALTER TABLE missions ADD COLUMN close_on_target INTEGER NOT NULL DEFAULT 1");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -7877,7 +7884,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.37.3";
+    CODE_VERSION = "0.38.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -7981,6 +7988,9 @@ function fetchText(url, opts = {}) {
     for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
   }
   return value;
+}
+function isTransientError(err) {
+  return /HTTP (408|429|5\d\d)|timeout|timed out|aborted|fetch failed|ECONN|ENOTFOUND|Rate limit/i.test(String(err?.message ?? err));
 }
 function isNoRouteError(err) {
   const msg = String(err?.message ?? err);
@@ -8094,17 +8104,20 @@ var init_jupiter = __esm({
 // src/market/evm.ts
 async function rpcBatch(chain2, calls) {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
-  const res = await fetchJson(EVM_CHAINS[chain2].rpc, {
-    method: "POST",
-    body,
-    ttlMs: 1e4
-  });
-  const byId = new Map(res.map((r) => [r.id, r]));
-  return body.map((b) => {
-    const r = byId.get(b.id);
-    if (!r || r.error) throw new Error(`RPC de ${chain2}: ${r?.error?.message ?? "sin respuesta"}`);
-    return r.result;
-  });
+  const urls = [EVM_CHAINS[chain2].rpc, ...EVM_CHAINS[chain2].fallbackRpcs];
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs: 1e4 });
+      const byId = new Map(res.map((r) => [r.id, r]));
+      return body.map((b) => {
+        const r = byId.get(b.id);
+        if (!r || r.error) throw new Error(`RPC de ${chain2}: ${r?.error?.message ?? "sin respuesta"}`);
+        return r.result;
+      });
+    } catch (err) {
+      if (i + 1 >= urls.length || !isTransientError(err)) throw err;
+    }
+  }
 }
 function decodeString(hex) {
   const data = hex.replace(/^0x/, "");
@@ -8177,6 +8190,17 @@ async function paraswapQuote(chain2, tokenIn, tokenOut, amountIn) {
     source: "ParaSwap"
   };
 }
+async function emptyV4Pool(chain2, token2) {
+  const view = UNISWAP_V4_STATE_VIEW[chain2];
+  if (!view) return null;
+  const pools = ((await dexPairs(chain2, [token2])).get(token2.toLowerCase()) ?? []).filter((p) => p.dexId === "uniswap" && (p.labels ?? []).includes("v4"));
+  if (!pools.length) return null;
+  const liquidity = await rpcBatch(chain2, pools.map((p) => ({ method: "eth_call", params: [{ to: view, data: `0xfa6793d5${p.pairAddress.slice(2)}` }, "latest"] })));
+  if (liquidity.some((l) => BigInt(l || "0x0") > 0n)) return null;
+  const shown = pools.reduce((sum, p) => sum + (p.liquidity?.usd ?? 0), 0);
+  const aside = shown ? `, aunque DexScreener le calcule ${Math.round(shown)} USD` : "";
+  return `Su pool de Uniswap v4 no tiene liquidez propia (0 fuera de los swaps${aside}): solo la pone un contrato dentro de sus propias operaciones, as\xED que nadie m\xE1s puede comprar ni vender en \xE9l`;
+}
 async function quote(chain2, tokenIn, tokenOut, amountIn) {
   try {
     return await kyberQuote(chain2, tokenIn.address, tokenOut.address, amountIn);
@@ -8184,7 +8208,9 @@ async function quote(chain2, tokenIn, tokenOut, amountIn) {
     try {
       return await paraswapQuote(chain2, tokenIn, tokenOut, amountIn);
     } catch (paraErr) {
-      throw new Error(`Sin ruta de swap en ${chain2}: ${kyberErr.message}; ${paraErr.message}`);
+      let why = null;
+      for (const t of [tokenOut, tokenIn]) if (!why && t.address !== NATIVE) why = await emptyV4Pool(chain2, t.address).catch(() => null);
+      throw new Error(`Sin ruta de swap en ${chain2}: ${kyberErr.message}; ${paraErr.message}${why ? `. ${why}` : ""}`);
     }
   }
 }
@@ -8223,7 +8249,7 @@ async function dexPairs(chain2, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8231,10 +8257,11 @@ var init_evm = __esm({
     init_http();
     NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     EVM_CHAINS = {
-      base: { chainId: 8453, rpc: "https://mainnet.base.org", kyber: "base", dexscreener: "base", gecko: "base" },
-      bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
+      base: { chainId: 8453, rpc: "https://mainnet.base.org", fallbackRpcs: ["https://base-rpc.publicnode.com", "https://base.drpc.org"], kyber: "base", dexscreener: "base", gecko: "base" },
+      bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
     };
     isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
+    UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
   }
@@ -8708,11 +8735,19 @@ async function attempt(label, fn) {
 }
 async function scanMarket(limit = 25) {
   const merged = /* @__PURE__ */ new Map();
+  const jupiterFirst = /* @__PURE__ */ new Set(["liquidityUsd", "priceChange5mPct", "priceChange1hPct"]);
   const add2 = (mint, source, data) => {
     if (!mint) return;
     const c = merged.get(mint) ?? { mint, sources: [] };
     if (!c.sources.includes(source)) c.sources.push(source);
-    for (const [k, v] of Object.entries(data)) if (v !== void 0 && c[k] === void 0) c[k] = v;
+    const replace = source.startsWith("jupiter") && !c.liquiditySource?.startsWith("jupiter");
+    for (const [k, v] of Object.entries(data)) {
+      if (v === void 0) continue;
+      const override = replace && jupiterFirst.has(k);
+      if (c[k] !== void 0 && !override) continue;
+      c[k] = v;
+      if (k === "liquidityUsd") c.liquiditySource = source;
+    }
     merged.set(mint, c);
   };
   const jup = async (interval) => {
@@ -8858,6 +8893,7 @@ async function tokenReport(mint) {
         mainDex: top.dexId,
         pairAgeMinutes: ageMinutes2(top.pairCreatedAt),
         liquidityUsd: n2(top.liquidity?.usd, 0),
+        liquidityNote: "DexScreener suma los dos lados del pool (el token y el SOL o la estable): suele salir cerca del doble que la liquidez de Jupiter, que es la que usan riskCheck y la memoria. Su priceChangePct es el de este par; el de Jupiter (stats5m) agrega todos los pools.",
         volumeUsd: top.volume,
         volume1hAllPairsUsd: n2(pairs.reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0), 0),
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
@@ -8972,14 +9008,12 @@ async function entryFeatures(mint) {
   const sharedDeployer = typeof mints === "number" && mints >= LAUNCHPAD_DEPLOYER_MIN_TOKENS;
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
-    ...sharedDeployer ? { creatorIsLaunchpadDeployer: true } : {
-      // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
-      creatorIsLaunchpadDeployer: mints === void 0 ? void 0 : false,
-      creator: t?.dev ?? rc?.creator ?? void 0,
-      creatorTokens: mints,
-      creatorGraduated: migrations,
-      creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0
-    },
+    // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
+    creatorIsLaunchpadDeployer: mints === void 0 ? void 0 : sharedDeployer,
+    creator: t?.dev ?? rc?.creator ?? void 0,
+    creatorTokens: mints,
+    creatorGraduated: migrations,
+    creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0,
     devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
     insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : void 0,
     lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),

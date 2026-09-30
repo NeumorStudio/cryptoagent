@@ -69,7 +69,7 @@ async function priceUsd(mints: string[]): Promise<Record<string, number>> {
  * cuántos tokens ha lanzado y cuántos se graduaron) y el informe completo de RugCheck (riesgos, redes de
  * insiders y liquidez bloqueada).
  */
-/** Con tantos tokens "lanzados", la dirección es la de una plataforma, no la de una persona. */
+/** Con tantos tokens "lanzados", la dirección es probablemente la de una plataforma, no la de una persona. */
 export const LAUNCHPAD_DEPLOYER_MIN_TOKENS = 5_000;
 
 async function entryFeatures(mint: string): Promise<Features> {
@@ -87,21 +87,19 @@ async function entryFeatures(mint: string): Promise<Features> {
   const round = (v: unknown, d = 2) => (typeof v === "number" ? Number(v.toFixed(d)) : undefined);
   const mints = typeof t?.audit?.devMints === "number" ? t.audit.devMints : undefined;
   const migrations = typeof t?.audit?.devMigrations === "number" ? t.audit.devMigrations : undefined;
-  // En algunos launchpads (stonkfun) el "dev" es la dirección de la plataforma: 166.608 tokens "lanzados" (SIF, M7
-  // de la v0.36.2). Contarlo como creador en serie mezclaba personas con plataformas.
+  // En algunos launchpads (stonkfun) el "dev" es probablemente la dirección de la plataforma: 166.608 tokens
+  // "lanzados" (SIF, M7 de la v0.36.2). Se marca, pero los recuentos se dan siempre: quitarlos por encima de un
+  // corte nuestro trataba distinto a direcciones casi iguales (en la noche de la v0.37.3, el creador de POTUS, con
+  // 6.612 tokens, quedaba sin datos y el de "us", con 3.265, no). Qué hacer con ello lo decide la memoria.
   const sharedDeployer = typeof mints === "number" && mints >= LAUNCHPAD_DEPLOYER_MIN_TOKENS;
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m: any) => Number(m.lp?.lpLockedPct ?? 0))) : undefined;
   return {
-    ...(sharedDeployer
-      ? { creatorIsLaunchpadDeployer: true }
-      : {
-          // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
-          creatorIsLaunchpadDeployer: mints === undefined ? undefined : false,
-          creator: t?.dev ?? rc?.creator ?? undefined,
-          creatorTokens: mints,
-          creatorGraduated: migrations,
-          creatorGraduationPct: mints ? round(((migrations ?? 0) / mints) * 100, 1) : undefined,
-        }),
+    // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
+    creatorIsLaunchpadDeployer: mints === undefined ? undefined : sharedDeployer,
+    creator: t?.dev ?? rc?.creator ?? undefined,
+    creatorTokens: mints,
+    creatorGraduated: migrations,
+    creatorGraduationPct: mints ? round(((migrations ?? 0) / mints) * 100, 1) : undefined,
     devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
     insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : undefined,
     lpLockedPct: lpLocked === undefined ? undefined : round(lpLocked, 1),

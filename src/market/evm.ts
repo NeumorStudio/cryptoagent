@@ -4,7 +4,7 @@
 // - GoPlus: seguridad del token (honeypot, impuestos de compra y venta, holders).
 // - DexScreener: precio, liquidez y actividad de los pares.
 import { db } from "../db.js";
-import { fetchJson } from "./http.js";
+import { fetchJson, isTransientError } from "./http.js";
 
 export type EvmChainId = "base" | "bsc";
 
@@ -13,6 +13,8 @@ export const NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 export interface EvmChainInfo {
   chainId: number;
   rpc: string;
+  /** RPC públicos de reserva: el principal limita pronto las peticiones (en Base, "over rate limit"). */
+  fallbackRpcs: string[];
   /** Nombre de la cadena en la URL de KyberSwap, DexScreener y GeckoTerminal. */
   kyber: string;
   dexscreener: string;
@@ -20,8 +22,8 @@ export interface EvmChainInfo {
 }
 
 export const EVM_CHAINS: Record<EvmChainId, EvmChainInfo> = {
-  base: { chainId: 8453, rpc: "https://mainnet.base.org", kyber: "base", dexscreener: "base", gecko: "base" },
-  bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", kyber: "bsc", dexscreener: "bsc", gecko: "bsc" },
+  base: { chainId: 8453, rpc: "https://mainnet.base.org", fallbackRpcs: ["https://base-rpc.publicnode.com", "https://base.drpc.org"], kyber: "base", dexscreener: "base", gecko: "base" },
+  bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" },
 };
 
 export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
@@ -30,17 +32,21 @@ export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 
 export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>): Promise<unknown[]> {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
-  const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(EVM_CHAINS[chain].rpc, {
-    method: "POST",
-    body,
-    ttlMs: 10_000,
-  });
-  const byId = new Map(res.map((r) => [r.id, r]));
-  return body.map((b) => {
-    const r = byId.get(b.id);
-    if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
-    return r.result;
-  });
+  const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(urls[i]!, { method: "POST", body, ttlMs: 10_000 });
+      const byId = new Map(res.map((r) => [r.id, r]));
+      return body.map((b) => {
+        const r = byId.get(b.id);
+        if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
+        return r.result;
+      });
+    } catch (err) {
+      // Límite de peticiones o fallo de red: el siguiente RPC. Un error de la llamada (p. ej. un revert), no.
+      if (i + 1 >= urls.length || !isTransientError(err)) throw err;
+    }
+  }
 }
 
 /** Decodifica un string ABI (o bytes32, que usan algunos tokens antiguos). */
@@ -150,6 +156,31 @@ async function paraswapQuote(chain: EvmChainId, tokenIn: EvmToken, tokenOut: Evm
   };
 }
 
+/** StateView de Uniswap v4: lee el estado de los pools. */
+const UNISWAP_V4_STATE_VIEW: Partial<Record<EvmChainId, string>> = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
+
+/**
+ * Por qué no hay ruta, si es por esto: el pool de Uniswap v4 del token no tiene liquidez propia (0 fuera de
+ * los swaps). Un contrato la pone y la quita dentro de sus propias operaciones, así que el pool muestra volumen
+ * y liquidez en DexScreener y GeckoTerminal pero nadie más puede operar en él. Así eran los dos tokens de Base
+ * sin ruta de la M24 de la v0.37.3 (en otro pool igual: 269 swaps en 100 minutos, todos de un mismo contrato).
+ */
+export async function emptyV4Pool(chain: EvmChainId, token: string): Promise<string | null> {
+  const view = UNISWAP_V4_STATE_VIEW[chain];
+  if (!view) return null;
+  const pools = ((await dexPairs(chain, [token])).get(token.toLowerCase()) ?? []).filter((p) => p.dexId === "uniswap" && (p.labels ?? []).includes("v4"));
+  if (!pools.length) return null;
+  // getLiquidity(bytes32 poolId)
+  const liquidity = (await rpcBatch(chain, pools.map((p) => ({ method: "eth_call", params: [{ to: view, data: `0xfa6793d5${p.pairAddress.slice(2)}` }, "latest"] })))) as string[];
+  if (liquidity.some((l) => BigInt(l || "0x0") > 0n)) return null;
+  const shown = pools.reduce((sum, p) => sum + (p.liquidity?.usd ?? 0), 0);
+  const aside = shown ? `, aunque DexScreener le calcule ${Math.round(shown)} USD` : "";
+  return (
+    `Su pool de Uniswap v4 no tiene liquidez propia (0 fuera de los swaps${aside}): ` +
+    "solo la pone un contrato dentro de sus propias operaciones, así que nadie más puede comprar ni vender en él"
+  );
+}
+
 /** Cotización de un swap: KyberSwap y, si falla, ParaSwap. */
 export async function quote(chain: EvmChainId, tokenIn: EvmToken, tokenOut: EvmToken, amountIn: bigint): Promise<EvmQuote> {
   try {
@@ -158,7 +189,9 @@ export async function quote(chain: EvmChainId, tokenIn: EvmToken, tokenOut: EvmT
     try {
       return await paraswapQuote(chain, tokenIn, tokenOut, amountIn);
     } catch (paraErr) {
-      throw new Error(`Sin ruta de swap en ${chain}: ${(kyberErr as Error).message}; ${(paraErr as Error).message}`);
+      let why: string | null = null;
+      for (const t of [tokenOut, tokenIn]) if (!why && t.address !== NATIVE) why = await emptyV4Pool(chain, t.address).catch(() => null);
+      throw new Error(`Sin ruta de swap en ${chain}: ${(kyberErr as Error).message}; ${(paraErr as Error).message}${why ? `. ${why}` : ""}`);
     }
   }
 }
@@ -207,6 +240,8 @@ export async function tokenSecurity(chain: EvmChainId, address: string): Promise
 export interface DexPair {
   pairAddress: string;
   dexId: string;
+  /** Versión del DEX cuando la hay (p. ej. ["v4"]). */
+  labels?: string[];
   url: string;
   baseToken: { address: string; symbol: string; name: string };
   quoteToken: { address: string; symbol: string };

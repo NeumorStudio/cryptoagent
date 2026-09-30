@@ -145,25 +145,35 @@ const LIQUIDATION_RETRY_MS = Number(process.env.LIQUIDATION_RETRY_MS ?? 20_000);
 /**
  * Vende todo a estables. Con `nativeOnly`, solo el nativo que quede (segundo paso de un cierre por objetivo);
  * con `keepNative`, todo menos el nativo (primer paso: si al final no se cierra, sigue habiendo gas).
+ *
+ * Con `minOut` (cierre por objetivo), cada token se vende como una orden límite: si su venta no da al menos
+ * ese mínimo, se para ahí y se lanza CloseAborted sin tocar lo que queda ni los futuros. En la M17 de la v0.37.1
+ * se dio el objetivo por alcanzado con 57,83 $, la venta dio 53,20 un segundo después y la misión siguió sin
+ * la posición ni sus órdenes.
  */
 export async function liquidateAll(
   missionId: number,
   sessionId: number | null,
   reasoning: string,
-  opts: { keepNative?: boolean; nativeOnly?: boolean } = {},
+  opts: { keepNative?: boolean; nativeOnly?: boolean; minOut?: (venue: VenueId, asset: string) => number | undefined } = {},
 ): Promise<string[]> {
-  // Primero los futuros: su margen vuelve como efectivo a su cadena.
   const { closeAllPerps } = await import("./perps.js");
-  const problems: string[] = opts.nativeOnly ? [] : await closeAllPerps(missionId, reasoning);
   const holdings = getHoldings(missionId);
   const meta = { exitReason: reasoning };
+  // Primero los futuros: su margen vuelve como efectivo a su cadena. En un cierre con mínimos van después
+  // de los tokens: si una venta no llega, siguen abiertos.
+  const problems: string[] = opts.nativeOnly || opts.minOut ? [] : await closeAllPerps(missionId, reasoning);
 
   for (const chain of allChains()) {
     const tokens = opts.nativeOnly ? [] : holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
     for (const h of tokens) {
-      await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning, meta })).catch(
-        (err) => problems.push(`${h.symbol} (${chain.label}): ${(err as Error).message}`),
-      );
+      const minOut = opts.minOut?.(chain.id, h.asset);
+      try {
+        await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning, meta, minOut }));
+      } catch (err) {
+        if (err instanceof LimitNotReached) throw new CloseAborted(h.symbol, chain.label, err.got, err.min);
+        problems.push(`${h.symbol} (${chain.label}): ${(err as Error).message}`);
+      }
     }
     // El nativo se vende al final, dejando lo necesario para la fee de esa última transacción.
     // Con dinero real no se vende: hace falta para pagar la red en las siguientes misiones.
@@ -175,6 +185,8 @@ export async function liquidateAll(
       );
     }
   }
+
+  if (opts.minOut && !opts.nativeOnly) problems.push(...(await closeAllPerps(missionId, reasoning)));
 
   for (const h of holdings.filter((h) => !opts.nativeOnly && h.venue === "binance" && !binance.isCash(h.asset))) {
     let sold = false;
@@ -208,6 +220,13 @@ const describeCosts = (costs: CostLine[]) => costs.map((c) => `${c.kind}: ${Numb
 export class LimitNotReached extends Error {
   constructor(readonly got: number, readonly min: number) {
     super(`El precio no llega al límite: saldrían ${got}, el límite pide ${min}`);
+  }
+}
+
+/** Un cierre con mínimos se ha parado: una venta no llegaba a lo cotizado (lo vendido antes, vendido queda). */
+export class CloseAborted extends Error {
+  constructor(readonly symbol: string, readonly chainLabel: string, readonly got: number, readonly min: number) {
+    super(`la venta de ${symbol} (${chainLabel}) daría ${Number(got.toPrecision(6))} y la cotización que confirmó el objetivo pedía al menos ${Number(min.toPrecision(6))}`);
   }
 }
 
@@ -284,7 +303,10 @@ export async function swap(args: {
   const key = quoteKey(m, chain.id, input.address, output.address);
   const ref = lastQuotes.get(key);
   lastQuotes.delete(key);
-  if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * 0.02) {
+  // Vale también si la cantidad cambia algo (hasta un 25 %), en proporción: en la M30 de la v0.37.3 cotizó 40 $,
+  // compró 42 y se llenó un 30 % por debajo sin protección. Con más cantidad, lo esperado queda algo alto (el
+  // impacto crece más que la cantidad): protege de más, nunca de menos.
+  if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * QUOTE_AMOUNT_TOLERANCE) {
     const expected = ref.amountOut * (amount / ref.amountIn);
     const minOut = expected * (1 - args.slippageBps / 10_000);
     if (quote.amountOut < minOut) {
@@ -341,6 +363,7 @@ export async function swap(args: {
 // Última cotización de cada swap por misión: al ejecutar ese mismo swap poco después, el slippage se mide contra ella.
 const lastQuotes = new Map<string, { amountIn: number; amountOut: number; at: number }>();
 const QUOTE_TTL_MS = 60_000;
+const QUOTE_AMOUNT_TOLERANCE = 0.25;
 const quoteKey = (missionId: number, chain: string, input: string, output: string) => `${missionId}:${chain}:${input}:${output}`;
 
 export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: string, amount: number, slippageBps = 50, missionId?: number | null) {
@@ -357,8 +380,8 @@ export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: s
     route: q.route,
     ...(q.warnings.length ? { warnings: q.warnings } : {}),
     note:
-      "Sin contar los costes de red: se calculan al ejecutar, según tu monedero. Si ejecutas este mismo swap (mismo importe) en menos " +
-      "de 60 s, tu slippage se mide contra esta cotización: si el precio se ha movido más, el swap revierte y pagas solo la red.",
+      "Sin contar los costes de red: se calculan al ejecutar, según tu monedero. Si ejecutas este mismo swap (con un importe hasta un 25 % " +
+      "distinto) en menos de 60 s, tu slippage se mide contra esta cotización: si el precio se ha movido más, el swap revierte y pagas solo la red.",
   };
 }
 

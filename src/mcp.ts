@@ -111,13 +111,17 @@ server.registerTool(
       max_loss_pct: z.number().positive().max(100).optional().describe("Solo live: pérdida máxima de la misión en %; por debajo, solo se puede vender a estables"),
       replace: z.boolean().default(false).describe("Cancelar la misión activa si la hay"),
       instructions: z.string().optional().describe("Instrucciones del usuario para esta misión. Vacío = modo libre"),
+      close_on_target: z
+        .boolean()
+        .default(true)
+        .describe("Solo sim. true: al tocar el objetivo se vende todo y la misión termina. false: dura hasta el plazo y cuenta como conseguida si al final vale el objetivo o más"),
       allocation: z
         .object(Object.fromEntries(VENUES.map((v) => [v, z.number().min(0).max(100).optional()])))
         .optional()
         .describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`),
     },
   },
-  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target }) => {
     const active = getActiveMission();
     if (active && !replace) {
       return {
@@ -146,7 +150,7 @@ server.registerTool(
       if (!capital_usd) throw new Error("Falta capital_usd");
       const target = target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined);
       if (!target) throw new Error("Falta target_usd o target_pct");
-      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
+      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target });
       return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };

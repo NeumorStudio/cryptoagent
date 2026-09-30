@@ -119,6 +119,8 @@ test("el revisor corrige solo los campos de una retrospectiva que indique", asyn
   memory.writeMissionReview({ missionId: m3.id, whatWasTried: "probar", whatHappened: "5 de 9 en total", nextTime: "seguir" });
   const r = await runTool("revise_mission_review", { mission_id: m3.id, what_happened: "7 de 15 en total", reason: "la cuenta estaba mal" }, { sessionId: 1, missionId: m3.id });
   assert.ok(!r.isError, String(r.content));
+  // Devuelve lo que había en el campo sustituido: se ve qué se ha cambiado.
+  assert.deepEqual(JSON.parse(String(r.content)).previous, { what_happened: "5 de 9 en total" });
   const row = db.prepare("SELECT what_was_tried, what_happened, next_time FROM mission_reviews WHERE mission_id = ?").get(m3.id) as Record<string, string>;
   assert.deepEqual({ ...row }, { what_was_tried: "probar", what_happened: "7 de 15 en total", next_time: "seguir" });
   assert.equal((await runTool("revise_mission_review", { mission_id: m3.id, reason: "nada" }, { sessionId: 1, missionId: m3.id })).isError, true);

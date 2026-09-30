@@ -170,6 +170,13 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 11,
+    description: "Misiones que no se cierran al tocar el objetivo: se comprueba al final del plazo",
+    up: (db) => {
+      db.exec("ALTER TABLE missions ADD COLUMN close_on_target INTEGER NOT NULL DEFAULT 1");
+    },
+  },
 ];
 
 /**

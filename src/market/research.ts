@@ -21,6 +21,8 @@ interface Candidate {
   sources: string[];
   mcapUsd?: number;
   liquidityUsd?: number;
+  /** De dónde sale liquidityUsd: Jupiter (un lado del pool, como riskCheck y la memoria) u otra fuente (los dos lados). */
+  liquiditySource?: string;
   priceChange5mPct?: number;
   priceChange1hPct?: number;
   netBuyers5m?: number;
@@ -37,11 +39,22 @@ interface Candidate {
 /** Candidatos de Solana de varias fuentes, combinados por mint. */
 export async function scanMarket(limit = 25) {
   const merged = new Map<string, Candidate>();
+  // Liquidez y cambios de precio: la de Jupiter manda cuando la hay. Es la misma medida que usan riskCheck y la
+  // memoria; DexScreener y GeckoTerminal suman los dos lados del pool (suele salir el doble) y miden solo un par.
+  // Antes cada candidato llevaba la de la fuente que respondiera primero, y no se podían comparar entre sí.
+  const jupiterFirst = new Set(["liquidityUsd", "priceChange5mPct", "priceChange1hPct"]);
   const add = (mint: string | undefined, source: string, data: Partial<Candidate>) => {
     if (!mint) return;
     const c = merged.get(mint) ?? { mint, sources: [] };
     if (!c.sources.includes(source)) c.sources.push(source);
-    for (const [k, v] of Object.entries(data)) if (v !== undefined && (c as any)[k] === undefined) (c as any)[k] = v;
+    const replace = source.startsWith("jupiter") && !c.liquiditySource?.startsWith("jupiter");
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined) continue;
+      const override = replace && jupiterFirst.has(k);
+      if ((c as any)[k] !== undefined && !override) continue;
+      (c as any)[k] = v;
+      if (k === "liquidityUsd") c.liquiditySource = source;
+    }
     merged.set(mint, c);
   };
 
@@ -205,6 +218,9 @@ export async function tokenReport(mint: string) {
         mainDex: top.dexId,
         pairAgeMinutes: ageMinutes(top.pairCreatedAt),
         liquidityUsd: n(top.liquidity?.usd, 0),
+        liquidityNote:
+          "DexScreener suma los dos lados del pool (el token y el SOL o la estable): suele salir cerca del doble que la liquidez de Jupiter, " +
+          "que es la que usan riskCheck y la memoria. Su priceChangePct es el de este par; el de Jupiter (stats5m) agrega todos los pools.",
         volumeUsd: top.volume,
         volume1hAllPairsUsd: n(pairs.reduce((s: number, p: any) => s + Number(p.volume?.h1 ?? 0), 0), 0),
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },

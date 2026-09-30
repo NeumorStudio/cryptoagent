@@ -7,7 +7,7 @@ import { bscLaunchpad } from "../src/sim/launchpads.js";
 import * as memory from "../src/sim/memory.js";
 import { createMission } from "../src/sim/mission.js";
 import { runTool } from "../src/tools/index.js";
-import { installFakeMarket, MEME, MEME_DEV } from "./fake-market.js";
+import { installFakeMarket, MEME, MEME_DEV, STONK, STONK_DEV } from "./fake-market.js";
 
 installFakeMarket();
 
@@ -76,4 +76,15 @@ test("token_report compara el volumen de 1 h de Jupiter con el de todos los pare
     volume1hJupiterVsDexRatio: 16.2,
   });
   assert.equal(volumeJupiterVsDex({ stats1h: { buyVolumeUsd: 5 } }, { volume1hAllPairsUsd: 0 }), undefined, "sin volumen en una fuente no hay cociente");
+});
+
+test("un creador con miles de lanzamientos se marca como probable plataforma, pero sus datos se dan igual", async () => {
+  const rc = JSON.parse(String((await runTool("token_report", { chain: "solana", token: STONK }, ctx)).content)).riskCheck;
+  assert.equal(rc.creatorIsLaunchpadDeployer, true);
+  assert.equal(rc.creator, STONK_DEV);
+  assert.equal(rc.creatorTokens, 6612);
+  assert.equal(rc.creatorGraduated, 127);
+  // Una creencia sobre creadores en masa también lo ve (antes se quedaba sin datos por encima de 5.000).
+  const pos = { venue: "solana", asset: STONK, entry: { creatorTokens: 6612, creatorGraduationPct: 1.9 }, research: {} } as unknown as Parameters<typeof memory.matches>[1];
+  assert.ok(memory.matches({ all: [{ f: "creatorTokens", op: ">=", v: 500 }, { f: "creatorGraduationPct", op: "<", v: 5 }] }, pos));
 });

@@ -887,8 +887,18 @@ export function reviseMissionReview(a: { missionId: number; whatWasTried?: strin
     a.nextTime ?? r.next_time,
     a.missionId,
   );
-  logActivity({ missionId: a.missionId, sessionId: null, kind: "lesson", title: `Corrige la retrospectiva de la misión #${a.missionId}: ${a.reason}` });
-  return { missionId: a.missionId, corrected: changed };
+  // Cada campo se sustituye entero: lo que había se devuelve (y queda en la actividad) para que se vea qué se
+  // ha cambiado y no se pierda sin querer lo que no se quería tocar.
+  const column = { whatWasTried: "what_was_tried", whatHappened: "what_happened", surprises: "surprises", nextTime: "next_time" } as const;
+  const previous = Object.fromEntries(changed.map((k) => [column[k], r[column[k]] ?? ""]));
+  logActivity({
+    missionId: a.missionId,
+    sessionId: null,
+    kind: "lesson",
+    title: `Corrige la retrospectiva de la misión #${a.missionId}: ${a.reason}`,
+    body: changed.map((k) => `Antes, ${column[k]}: ${previous[column[k]]}`).join("\n\n"),
+  });
+  return { missionId: a.missionId, corrected: changed, previous };
 }
 
 export function markReviewed(missionId: number) {
@@ -972,6 +982,7 @@ export function recentApproach(count = 8) {
   });
   const n = perMission.length;
   const share = (f: (x: (typeof perMission)[number]) => boolean) => `${perMission.filter(f).length} de ${n}`;
+  const avg = (xs: number[]) => (xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null);
   // Éxitos seguidos al final de la serie: si el enfoque actual gana, no es estancamiento.
   let successStreak = 0;
   for (let i = n - 1; i >= 0 && perMission[i]!.succeeded; i--) successStreak++;
@@ -982,6 +993,10 @@ export function recentApproach(count = 8) {
       successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n).toFixed(1)),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
+      worstPct: Math.min(...perMission.map((x) => x.resultPct)),
+      /** Media de lo ganado en las conseguidas y de lo perdido en las demás: cuánto pesa cada fallo frente a cada éxito. */
+      avgResultPctSucceeded: avg(perMission.filter((x) => x.succeeded).map((x) => x.resultPct)),
+      avgResultPctFailed: avg(perMission.filter((x) => !x.succeeded).map((x) => x.resultPct)),
       withOneEntry: share((x) => x.positions === 1),
       /** Misiones que acabaron paradas (sin operar el último cuarto del plazo) sin llegar: se rindió. */
       parkedAtEnd: share((x) => x.parkedAtEnd),

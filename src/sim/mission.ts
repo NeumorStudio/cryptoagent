@@ -2,7 +2,7 @@
 // llega al objetivo o se acaba el tiempo; entonces se cierran todas las posiciones a mercado.
 // Cada misión tiene su propia cartera, órdenes, diario y posiciones.
 import { db, logJournal, now } from "../db.js";
-import { liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
+import { CloseAborted, liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
 import { DEFAULT_ALLOCATION, type Allocation, type ChainId, type Holding } from "./types.js";
 import { settleTransfers } from "./transfers.js";
 import { allChains, getVenue } from "./venues/index.js";
@@ -31,6 +31,11 @@ export interface Mission {
   approval: "manual" | "auto" | null;
   /** Solo live: JSON de MissionLimits. */
   limits: string | null;
+  /**
+   * 1: al tocar el objetivo se vende todo y la misión se da por conseguida. 0: dura hasta el plazo y se da por
+   * conseguida si al final (vendido todo) vale el objetivo o más; qué hacer al llegar antes lo decide el agente.
+   */
+  close_on_target: number;
 }
 
 export interface MissionLimits {
@@ -97,12 +102,13 @@ function insertMission(args: {
   allocation: Allocation;
   holdings: Holding[];
   live?: { approval: "manual" | "auto"; limits: MissionLimits };
+  closeOnTarget?: boolean;
 }): number {
   const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
   const id = Number(
     db
       .prepare(
-        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         now(),
@@ -115,6 +121,7 @@ function insertMission(args: {
         args.live ? "live" : "sim",
         args.live?.approval ?? null,
         args.live ? JSON.stringify(args.live.limits) : null,
+        args.closeOnTarget === false ? 0 : 1,
       ).lastInsertRowid,
   );
   // En una misión real, los saldos son los de la cadena (holdings es su espejo).
@@ -142,6 +149,7 @@ export async function createMission(
   durationMinutes: number,
   instructions?: string,
   allocation: Allocation = DEFAULT_ALLOCATION,
+  opts: { closeOnTarget?: boolean } = {},
 ): Promise<Mission> {
   validate(initialUsd, targetUsd, durationMinutes);
   const plan = validateAllocation(allocation);
@@ -157,7 +165,7 @@ export async function createMission(
   const holdings = planPortfolio(initialUsd, plan, prices);
   cancelActive();
   // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
-  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings }))!;
+  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings, closeOnTarget: opts.closeOnTarget }))!;
 }
 
 function cancelActive() {
@@ -266,6 +274,11 @@ export async function missionStatus(missionId?: number) {
     deadline: mission.deadline,
     timeLeft: left.text,
     secondsLeft: left.seconds,
+    resultPct: Number((((v.totalUsd - mission.initial_usd) / mission.initial_usd) * 100).toFixed(1)),
+    closesOnTarget:
+      mission.close_on_target !== 0
+        ? "sí: al llegar al objetivo se vende todo y la misión termina conseguida"
+        : "no: la misión dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o más. Llegar antes no la termina: qué hacer entonces lo decides tú",
     userInstructions: mission.instructions ?? "ninguna: modo libre",
     ...(isLive(mission)
       ? {
@@ -365,13 +378,16 @@ async function checkOne(mission: Mission): Promise<string[]> {
   }
   const v = await valuation(mission.id);
   let value = v.totalUsd;
-  // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido.
-  let reached = value >= mission.target_usd && v.reliable;
+  // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido. En una misión que no se
+  // cierra al tocarlo, el objetivo se comprueba solo al final, con lo realizado al venderlo todo.
+  const closesOnTarget = mission.close_on_target !== 0;
+  let reached = closesOnTarget && value >= mission.target_usd && v.reliable;
   // Antes de venderlo todo por haber llegado, se confirma con cotizaciones del momento: la valoración puede venir
   // de una cotización de hace unos segundos, y en un token que se mueve un 40 % por minuto ya no vale. En la M4 de
   // la v0.36.1 se dio por alcanzado con 57,46 $, la venta dio 47,46 y se llevó por delante la toma de beneficio.
+  let fresh: Awaited<ReturnType<typeof valuation>> | null = null;
   if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
-    const fresh = await valuation(mission.id, false, { fresh: true });
+    fresh = await valuation(mission.id, false, { fresh: true });
     value = fresh.totalUsd;
     reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
     if (!reached) return [];
@@ -394,12 +410,29 @@ async function checkOne(mission: Mission): Promise<string[]> {
       : lossHit
         ? `Parada automática: la misión #${mission.id} ha llegado a la pérdida máxima (${value.toFixed(2)} < ${floor!.toFixed(2)} USD)`
         : `Cierre automático: se acabó el plazo de la misión #${mission.id}`;
-  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
   // Con el objetivo tocado, el nativo se vende solo si al final se cierra: si lo realizado se queda corto y la
   // misión sigue, sin él no habría gas para volver a operar (en la M1 de la v0.35 se quedó sin SOL así).
   const keepNative = reached && !expired && !isLive(mission);
-  const problems = await liquidateAll(mission.id, null, reason, { keepNative });
+  // Cada token se vende como una orden límite: al menos lo que dio la cotización que confirmó el objetivo, menos
+  // un 1 %. Si el precio se ha ido en el segundo que pasa hasta vender, no se cierra: la misión sigue con su
+  // posición y sus órdenes (mientras se cierra, las órdenes no se ejecutan: solo corren en misiones activas).
+  const quoted = new Map((fresh?.holdings ?? []).map((h) => [`${h.venue}:${h.asset}`, h.usd]));
+  const minOut = keepNative && fresh ? (venue: string, asset: string) => {
+    const usd = quoted.get(`${venue}:${asset}`);
+    return usd && usd > 0 ? usd * 0.99 : undefined;
+  } : undefined;
+  let problems: string[];
+  try {
+    problems = await liquidateAll(mission.id, null, reason, { keepNative, minOut });
+  } catch (err) {
+    if (!(err instanceof CloseAborted)) throw err;
+    db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
+    const summary = `Misión #${mission.id}: objetivo tocado (${value.toFixed(2)} USD), pero no se cierra: ${err.message}. El precio se ha movido; la misión continúa con sus posiciones y órdenes.`;
+    logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary });
+    return [summary];
+  }
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   let final = await valuation(mission.id, true);
 
   // El objetivo se detecta con el valor de liquidación estimado, pero lo que cuenta es lo
@@ -426,10 +459,14 @@ async function checkOne(mission: Mission): Promise<string[]> {
     return [summary];
   }
 
-  db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
+  // Sin cierre al objetivo, al acabar el plazo cuenta lo que vale la cartera ya vendida.
+  const succeeded = reached || (!closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd);
+  const finalStatus = succeeded ? "succeeded" : status;
+  db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(finalStatus, now(), final.totalUsd, mission.id);
+  const resultPct = ((final.totalUsd - mission.initial_usd) / mission.initial_usd) * 100;
   const summary =
-    `Misión #${mission.id} ${reached ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +
-    `(objetivo ${mission.target_usd} USD)`;
+    `Misión #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +
+    `(${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }

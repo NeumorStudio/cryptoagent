@@ -279,9 +279,13 @@ function limitFill(order: OrderRow, action: SwapAction) {
 /** Ejecuta una orden disparada (por precio o por tiempo). El reclamo atómico evita ejecutarla dos veces. */
 async function execute(order: OrderRow, reasoning: string, price: number | null, log: string[]) {
   if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) return;
-  const seen = price === null ? { executedAt: now() } : { triggerPriceSeen: price };
+  // El precio del mercado cuando saltó no es el de la venta: una toma de beneficio se llena a su límite. El revisor
+  // leía "triggerPriceSeen" como precio de venta y concluyó que las tomas de beneficio se llenan por encima (M18 de
+  // la v0.37.3: 0,0000399 visto, 0,000033 vendido).
+  const seen = price === null ? { executedAt: now() } : { marketPriceWhenTriggered: price };
   try {
     const action = JSON.parse(order.action);
+    const limit = getVenue(order.venue).kind === "chain" ? limitFill(order, action as SwapAction) : {};
     const base = {
       missionId: order.mission_id,
       sessionId: order.session_id,
@@ -290,10 +294,17 @@ async function execute(order: OrderRow, reasoning: string, price: number | null,
     };
     const result =
       getVenue(order.venue).kind === "chain"
-        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), ...limitFill(order, action as SwapAction) })
+        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), ...limit })
         : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
-    close(order.id, "filled", { ...seen, ...result });
-    log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
+    const atLimit = "fillAtLimit" in limit ? { filledAtLimitPrice: order.trigger_price } : {};
+    close(order.id, "filled", { ...seen, ...atLimit, ...result });
+    log.push(
+      price === null
+        ? `Orden #${order.id} ejecutada por tiempo`
+        : "fillAtLimit" in limit
+          ? `Orden #${order.id} ejecutada: se llenó a tu límite (${order.trigger_label} = ${order.trigger_price}); el mercado estaba a ${price}`
+          : `Orden #${order.id} ejecutada a mercado: saltó con ${order.trigger_label} = ${price}`,
+    );
   } catch (err) {
     // Toma de beneficio que ya no llega al precio (se movió entre la comprobación y la venta): como una orden
     // límite real, no se llena y sigue esperando.

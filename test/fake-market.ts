@@ -4,6 +4,9 @@ import { setFetchImpl } from "../src/market/http.js";
 
 export const MEME = "MeMe1111111111111111111111111111111111111pump";
 export const MEME_DEV = "DevRug11111111111111111111111111111111111111";
+/** Token de stonkfun cuyo "creador" es una dirección con 6.612 lanzamientos (probablemente la plataforma). */
+export const STONK = "Stnk1111111111111111111111111111111111111111";
+export const STONK_DEV = "StnkDev1111111111111111111111111111111111111";
 
 interface Token {
   symbol: string;
@@ -15,6 +18,7 @@ export const tokens: Record<string, Token> = {
   [SOL_MINT]: { symbol: "SOL", decimals: 9, price: 150 },
   [USDC_MINT]: { symbol: "USDC", decimals: 6, price: 1 },
   [MEME]: { symbol: "MEME", decimals: 6, price: 0.01 },
+  [STONK]: { symbol: "STONK", decimals: 6, price: 0.001 },
 };
 
 /** Comisión de la ruta falsa de Jupiter (0,3 %). */
@@ -33,11 +37,16 @@ export const TAXED = "0x1111111111111111111111111111111111111111";
 /** Honeypot: se puede comprar, pero no vender. */
 export const HONEY = "0x2222222222222222222222222222222222222222";
 export const CAKE = "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82";
+/** Token de Base cuyo único pool (Uniswap v4) no tiene liquidez propia: la pone un contrato en sus swaps. */
+export const EMPTY_V4 = "0x4444444444444444444444444444444444444444";
+const EMPTY_V4_POOL = "0x" + "ab".repeat(32);
 
 interface EvmToken extends Token {
   buyTax?: string;
   sellTax?: string;
   honeypot?: boolean;
+  /** Solo tiene un pool de Uniswap v4 sin liquidez propia: ningún agregador lo enruta. */
+  emptyV4?: boolean;
 }
 
 export const evmTokens: Record<EvmChain, Record<string, EvmToken>> = {
@@ -46,6 +55,7 @@ export const evmTokens: Record<EvmChain, Record<string, EvmToken>> = {
     [BASE_USDC]: { symbol: "USDC", decimals: 6, price: 1 },
     [TAXED]: { symbol: "TAX", decimals: 18, price: 0.5, buyTax: "0.05", sellTax: "0.05" },
     [HONEY]: { symbol: "HONEY", decimals: 18, price: 1, buyTax: "0", sellTax: "0", honeypot: true },
+    [EMPTY_V4]: { symbol: "WASH", decimals: 18, price: 0.001, buyTax: "0", sellTax: "0", emptyV4: true },
   },
   bsc: {
     [NATIVE]: { symbol: "BNB", decimals: 18, price: 600 },
@@ -59,13 +69,18 @@ const EVM_HOSTS: Record<EvmChain, string> = { base: "mainnet.base.org", bsc: "bs
 export const EVM_GAS = 200_000;
 export const EVM_GAS_PRICE: Record<EvmChain, number> = { base: 10_000_000, bsc: 50_000_000 };
 
-function handle(url: URL, body?: unknown): Response {
+export function handle(url: URL, body?: unknown): Response {
   if (url.host === "lite-api.jup.ag") {
     if (url.pathname === "/tokens/v2/search") {
       const t = tokens[url.searchParams.get("query")!];
       const id = url.searchParams.get("query");
       // MEME lo lanzó un creador "en serie" (40 tokens, ninguno graduado).
-      const creator = id === MEME ? { dev: MEME_DEV, audit: { devMints: 40, devMigrations: 0, devBalancePercentage: 8 } } : {};
+      const creator =
+        id === MEME
+          ? { dev: MEME_DEV, audit: { devMints: 40, devMigrations: 0, devBalancePercentage: 8 } }
+          : id === STONK
+            ? { dev: STONK_DEV, launchpad: "stonkfun", audit: { devMints: 6612, devMigrations: 127 } }
+            : {};
       return json(t ? [{ id, symbol: t.symbol, name: t.symbol, decimals: t.decimals, usdPrice: t.price, ...creator }] : []);
     }
     if (url.pathname === "/price/v3") {
@@ -94,7 +109,7 @@ function handle(url: URL, body?: unknown): Response {
     const chain = url.pathname.split("/")[1] as EvmChain;
     const a = evmTokens[chain][url.searchParams.get("tokenIn")!.toLowerCase()];
     const b = evmTokens[chain][url.searchParams.get("tokenOut")!.toLowerCase()];
-    if (!a || !b) return json({ code: 4008, message: "route not found" }, 400);
+    if (!a || !b || a.emptyV4 || b.emptyV4) return json({ code: 4008, message: "route not found" }, 400);
     const amountIn = Number(url.searchParams.get("amountIn")) / 10 ** a.decimals;
     const out = ((amountIn * a.price) / b.price) * (1 - POOL_FEE);
     const gasNative = (EVM_GAS * EVM_GAS_PRICE[chain]) / 1e18;
@@ -150,6 +165,9 @@ function handle(url: URL, body?: unknown): Response {
     const [, , , chain, list] = url.pathname.split("/") as [string, string, string, EvmChain, string];
     const pairs = list.split(",").flatMap((addr) => {
       const t = evmTokens[chain]?.[addr.toLowerCase()];
+      if (t?.emptyV4) {
+        return [{ pairAddress: EMPTY_V4_POOL, dexId: "uniswap", labels: ["v4"], url: "", baseToken: { address: addr, symbol: t.symbol, name: t.symbol }, quoteToken: { address: NATIVE, symbol: "ETH" }, priceUsd: String(t.price), liquidity: { usd: 22_750 } }];
+      }
       return t ? [{ pairAddress: "0xpair", dexId: "fake-dex", url: "", baseToken: { address: addr, symbol: t.symbol, name: t.symbol }, quoteToken: { address: NATIVE, symbol: "WETH" }, priceUsd: String(t.price), liquidity: { usd: 100_000 } }] : [];
     });
     return json(pairs);
@@ -201,6 +219,8 @@ function rpc(chain: EvmChain, calls: Array<{ id: number; method: string; params:
   return json(
     calls.map((c) => {
       if (c.method === "eth_gasPrice") return { jsonrpc: "2.0", id: c.id, result: `0x${EVM_GAS_PRICE[chain].toString(16)}` };
+      // StateView.getLiquidity del pool vacío de Uniswap v4: 0.
+      if (String(c.params[0].data).startsWith("0xfa6793d5")) return { jsonrpc: "2.0", id: c.id, result: `0x${word(0n)}` };
       const t = evmTokens[chain][String(c.params[0].to).toLowerCase()];
       if (!t) return { jsonrpc: "2.0", id: c.id, result: "0x" };
       if (c.params[0].data === "0x313ce567") return { jsonrpc: "2.0", id: c.id, result: `0x${word(BigInt(t.decimals))}` };

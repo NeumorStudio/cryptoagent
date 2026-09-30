@@ -8062,6 +8062,13 @@ var init_migrations = __esm({
             update.run(JSON.stringify(f), r.id);
           }
         }
+      },
+      {
+        version: 11,
+        description: "Misiones que no se cierran al tocar el objetivo: se comprueba al final del plazo",
+        up: (db2) => {
+          db2.exec("ALTER TABLE missions ADD COLUMN close_on_target INTEGER NOT NULL DEFAULT 1");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8294,7 +8301,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.37.3";
+    CODE_VERSION = "0.38.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8712,17 +8719,20 @@ var init_binance2 = __esm({
 // src/market/evm.ts
 async function rpcBatch(chain, calls) {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
-  const res = await fetchJson(EVM_CHAINS[chain].rpc, {
-    method: "POST",
-    body,
-    ttlMs: 1e4
-  });
-  const byId = new Map(res.map((r) => [r.id, r]));
-  return body.map((b) => {
-    const r = byId.get(b.id);
-    if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
-    return r.result;
-  });
+  const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs: 1e4 });
+      const byId = new Map(res.map((r) => [r.id, r]));
+      return body.map((b) => {
+        const r = byId.get(b.id);
+        if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
+        return r.result;
+      });
+    } catch (err) {
+      if (i + 1 >= urls.length || !isTransientError(err)) throw err;
+    }
+  }
 }
 function decodeString(hex3) {
   const data = hex3.replace(/^0x/, "");
@@ -8795,6 +8805,17 @@ async function paraswapQuote(chain, tokenIn, tokenOut, amountIn) {
     source: "ParaSwap"
   };
 }
+async function emptyV4Pool(chain, token2) {
+  const view = UNISWAP_V4_STATE_VIEW[chain];
+  if (!view) return null;
+  const pools = ((await dexPairs(chain, [token2])).get(token2.toLowerCase()) ?? []).filter((p) => p.dexId === "uniswap" && (p.labels ?? []).includes("v4"));
+  if (!pools.length) return null;
+  const liquidity = await rpcBatch(chain, pools.map((p) => ({ method: "eth_call", params: [{ to: view, data: `0xfa6793d5${p.pairAddress.slice(2)}` }, "latest"] })));
+  if (liquidity.some((l) => BigInt(l || "0x0") > 0n)) return null;
+  const shown = pools.reduce((sum, p) => sum + (p.liquidity?.usd ?? 0), 0);
+  const aside = shown ? `, aunque DexScreener le calcule ${Math.round(shown)} USD` : "";
+  return `Su pool de Uniswap v4 no tiene liquidez propia (0 fuera de los swaps${aside}): solo la pone un contrato dentro de sus propias operaciones, as\xED que nadie m\xE1s puede comprar ni vender en \xE9l`;
+}
 async function quote(chain, tokenIn, tokenOut, amountIn) {
   try {
     return await kyberQuote(chain, tokenIn.address, tokenOut.address, amountIn);
@@ -8802,7 +8823,9 @@ async function quote(chain, tokenIn, tokenOut, amountIn) {
     try {
       return await paraswapQuote(chain, tokenIn, tokenOut, amountIn);
     } catch (paraErr) {
-      throw new Error(`Sin ruta de swap en ${chain}: ${kyberErr.message}; ${paraErr.message}`);
+      let why = null;
+      for (const t of [tokenOut, tokenIn]) if (!why && t.address !== NATIVE) why = await emptyV4Pool(chain, t.address).catch(() => null);
+      throw new Error(`Sin ruta de swap en ${chain}: ${kyberErr.message}; ${paraErr.message}${why ? `. ${why}` : ""}`);
     }
   }
 }
@@ -8841,7 +8864,7 @@ async function dexPairs(chain, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8849,10 +8872,11 @@ var init_evm = __esm({
     init_http();
     NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     EVM_CHAINS = {
-      base: { chainId: 8453, rpc: "https://mainnet.base.org", kyber: "base", dexscreener: "base", gecko: "base" },
-      bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
+      base: { chainId: 8453, rpc: "https://mainnet.base.org", fallbackRpcs: ["https://base-rpc.publicnode.com", "https://base.drpc.org"], kyber: "base", dexscreener: "base", gecko: "base" },
+      bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
     };
     isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
+    UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
   }
@@ -9230,11 +9254,19 @@ async function attempt(label2, fn) {
 }
 async function scanMarket(limit = 25) {
   const merged = /* @__PURE__ */ new Map();
+  const jupiterFirst = /* @__PURE__ */ new Set(["liquidityUsd", "priceChange5mPct", "priceChange1hPct"]);
   const add = (mint, source, data) => {
     if (!mint) return;
     const c = merged.get(mint) ?? { mint, sources: [] };
     if (!c.sources.includes(source)) c.sources.push(source);
-    for (const [k, v] of Object.entries(data)) if (v !== void 0 && c[k] === void 0) c[k] = v;
+    const replace = source.startsWith("jupiter") && !c.liquiditySource?.startsWith("jupiter");
+    for (const [k, v] of Object.entries(data)) {
+      if (v === void 0) continue;
+      const override = replace && jupiterFirst.has(k);
+      if (c[k] !== void 0 && !override) continue;
+      c[k] = v;
+      if (k === "liquidityUsd") c.liquiditySource = source;
+    }
     merged.set(mint, c);
   };
   const jup = async (interval) => {
@@ -9380,6 +9412,7 @@ async function tokenReport(mint) {
         mainDex: top.dexId,
         pairAgeMinutes: ageMinutes2(top.pairCreatedAt),
         liquidityUsd: n2(top.liquidity?.usd, 0),
+        liquidityNote: "DexScreener suma los dos lados del pool (el token y el SOL o la estable): suele salir cerca del doble que la liquidez de Jupiter, que es la que usan riskCheck y la memoria. Su priceChangePct es el de este par; el de Jupiter (stats5m) agrega todos los pools.",
         volumeUsd: top.volume,
         volume1hAllPairsUsd: n2(pairs.reduce((s, p) => s + Number(p.volume?.h1 ?? 0), 0), 0),
         txns: { m5: top.txns?.m5, h1: top.txns?.h1 },
@@ -9494,14 +9527,12 @@ async function entryFeatures(mint) {
   const sharedDeployer = typeof mints === "number" && mints >= LAUNCHPAD_DEPLOYER_MIN_TOKENS;
   const lpLocked = Array.isArray(rc?.markets) && rc.markets.length ? Math.max(...rc.markets.map((m) => Number(m.lp?.lpLockedPct ?? 0))) : void 0;
   return {
-    ...sharedDeployer ? { creatorIsLaunchpadDeployer: true } : {
-      // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
-      creatorIsLaunchpadDeployer: mints === void 0 ? void 0 : false,
-      creator: t?.dev ?? rc?.creator ?? void 0,
-      creatorTokens: mints,
-      creatorGraduated: migrations,
-      creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0
-    },
+    // false explícito solo si hay datos: sin el campo, una condición "= false" no cumpliría nunca
+    creatorIsLaunchpadDeployer: mints === void 0 ? void 0 : sharedDeployer,
+    creator: t?.dev ?? rc?.creator ?? void 0,
+    creatorTokens: mints,
+    creatorGraduated: migrations,
+    creatorGraduationPct: mints ? round((migrations ?? 0) / mints * 100, 1) : void 0,
     devHoldingPct: round(t?.audit?.devBalancePercentage, 1),
     insidersDetected: typeof rc?.graphInsidersDetected === "number" ? rc.graphInsidersDetected : void 0,
     lpLockedPct: lpLocked === void 0 ? void 0 : round(lpLocked, 1),
@@ -11064,7 +11095,7 @@ function insertMission(args) {
   const deadline = new Date(Date.now() + args.durationMinutes * 6e4).toISOString();
   const id = Number(
     db.prepare(
-      "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).run(
       now(),
       args.initialUsd,
@@ -11075,7 +11106,8 @@ function insertMission(args) {
       JSON.stringify(args.holdings),
       args.live ? "live" : "sim",
       args.live?.approval ?? null,
-      args.live ? JSON.stringify(args.live.limits) : null
+      args.live ? JSON.stringify(args.live.limits) : null,
+      args.closeOnTarget === false ? 0 : 1
     ).lastInsertRowid
   );
   resetPortfolio(id, args.holdings);
@@ -11091,7 +11123,7 @@ function validate2(initialUsd, targetUsd, durationMinutes) {
   if (!(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
   if (!(durationMinutes > 0)) throw new Error("La duraci\xF3n debe ser positiva");
 }
-async function createMission(initialUsd, targetUsd, durationMinutes, instructions, allocation = DEFAULT_ALLOCATION) {
+async function createMission(initialUsd, targetUsd, durationMinutes, instructions, allocation = DEFAULT_ALLOCATION, opts = {}) {
   validate2(initialUsd, targetUsd, durationMinutes);
   const plan = validateAllocation(allocation);
   const prices = {};
@@ -11104,7 +11136,7 @@ async function createMission(initialUsd, targetUsd, durationMinutes, instruction
   }
   const holdings = planPortfolio(initialUsd, plan, prices);
   cancelActive();
-  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings }));
+  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings, closeOnTarget: opts.closeOnTarget }));
 }
 function cancelActive() {
   const previous = getActiveMission();
@@ -11186,6 +11218,8 @@ async function missionStatus(missionId) {
     deadline: mission.deadline,
     timeLeft: left.text,
     secondsLeft: left.seconds,
+    resultPct: Number(((v.totalUsd - mission.initial_usd) / mission.initial_usd * 100).toFixed(1)),
+    closesOnTarget: mission.close_on_target !== 0 ? "s\xED: al llegar al objetivo se vende todo y la misi\xF3n termina conseguida" : "no: la misi\xF3n dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o m\xE1s. Llegar antes no la termina: qu\xE9 hacer entonces lo decides t\xFA",
     userInstructions: mission.instructions ?? "ninguna: modo libre",
     ...isLive(mission) ? {
       mode: "REAL: dinero de verdad de la cartera de la IA",
@@ -11249,9 +11283,11 @@ async function checkOne(mission) {
   }
   const v = await valuation(mission.id);
   let value = v.totalUsd;
-  let reached = value >= mission.target_usd && v.reliable;
+  const closesOnTarget = mission.close_on_target !== 0;
+  let reached = closesOnTarget && value >= mission.target_usd && v.reliable;
+  let fresh = null;
   if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
-    const fresh = await valuation(mission.id, false, { fresh: true });
+    fresh = await valuation(mission.id, false, { fresh: true });
     value = fresh.totalUsd;
     reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
     if (!reached) return [];
@@ -11263,10 +11299,24 @@ async function checkOne(mission) {
   const status = reached ? "succeeded" : bust ? "bust" : "expired";
   if (!db.prepare("UPDATE missions SET status = 'closing' WHERE id = ? AND status = 'active'").run(mission.id).changes) return [];
   const reason = reached ? `Cierre autom\xE1tico: objetivo de la misi\xF3n #${mission.id} alcanzado (${value.toFixed(2)} \u2265 ${mission.target_usd} USD)` : bust ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} se ha quedado sin fondos para operar (${value.toFixed(2)} USD)` : lossHit ? `Parada autom\xE1tica: la misi\xF3n #${mission.id} ha llegado a la p\xE9rdida m\xE1xima (${value.toFixed(2)} < ${floor.toFixed(2)} USD)` : `Cierre autom\xE1tico: se acab\xF3 el plazo de la misi\xF3n #${mission.id}`;
-  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   await settleTransfers({ missionId: mission.id, force: true });
   const keepNative = reached && !expired && !isLive(mission);
-  const problems = await liquidateAll(mission.id, null, reason, { keepNative });
+  const quoted = new Map((fresh?.holdings ?? []).map((h) => [`${h.venue}:${h.asset}`, h.usd]));
+  const minOut = keepNative && fresh ? (venue, asset2) => {
+    const usd2 = quoted.get(`${venue}:${asset2}`);
+    return usd2 && usd2 > 0 ? usd2 * 0.99 : void 0;
+  } : void 0;
+  let problems;
+  try {
+    problems = await liquidateAll(mission.id, null, reason, { keepNative, minOut });
+  } catch (err) {
+    if (!(err instanceof CloseAborted)) throw err;
+    db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
+    const summary2 = `Misi\xF3n #${mission.id}: objetivo tocado (${value.toFixed(2)} USD), pero no se cierra: ${err.message}. El precio se ha movido; la misi\xF3n contin\xFAa con sus posiciones y \xF3rdenes.`;
+    logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2 });
+    return [summary2];
+  }
+  db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), mission.id);
   let final = await valuation(mission.id, true);
   const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
   const realizedUsd = final.holdings.filter((h) => h.valuedBy === "stable" || (isLive(mission) || keepNative) && natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
@@ -11281,8 +11331,11 @@ async function checkOne(mission) {
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });
     return [summary2];
   }
-  db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(status, now(), final.totalUsd, mission.id);
-  const summary = `Misi\xF3n #${mission.id} ${reached ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`;
+  const succeeded = reached || !closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd;
+  const finalStatus = succeeded ? "succeeded" : status;
+  db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(finalStatus, now(), final.totalUsd, mission.id);
+  const resultPct = (final.totalUsd - mission.initial_usd) / mission.initial_usd * 100;
+  const summary = `Misi\xF3n #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; objetivo ${mission.target_usd} USD)`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }
@@ -11677,15 +11730,19 @@ async function withRetries(fn, attempts = 4, waitMs = LIQUIDATION_RETRY_MS) {
 }
 async function liquidateAll(missionId, sessionId, reasoning2, opts = {}) {
   const { closeAllPerps: closeAllPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
-  const problems = opts.nativeOnly ? [] : await closeAllPerps2(missionId, reasoning2);
   const holdings = getHoldings(missionId);
   const meta3 = { exitReason: reasoning2 };
+  const problems = opts.nativeOnly || opts.minOut ? [] : await closeAllPerps2(missionId, reasoning2);
   for (const chain of allChains()) {
     const tokens = opts.nativeOnly ? [] : holdings.filter((h) => h.venue === chain.id && !chain.isCash(h.asset) && h.asset !== chain.native.address);
     for (const h of tokens) {
-      await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning: reasoning2, meta: meta3 })).catch(
-        (err) => problems.push(`${h.symbol} (${chain.label}): ${err.message}`)
-      );
+      const minOut = opts.minOut?.(chain.id, h.asset);
+      try {
+        await withRetries(() => swap({ missionId, sessionId, chain: chain.id, input: h.asset, output: chain.cash.address, sellAll: true, slippageBps: 300, reasoning: reasoning2, meta: meta3, minOut }));
+      } catch (err) {
+        if (err instanceof LimitNotReached) throw new CloseAborted(h.symbol, chain.label, err.got, err.min);
+        problems.push(`${h.symbol} (${chain.label}): ${err.message}`);
+      }
     }
     const nativeLeft = balance(missionId, chain.id, chain.native.address) - chain.liquidationReserve;
     if (nativeLeft > 1e-6 && !isLiveMission(missionId) && !opts.keepNative) {
@@ -11695,6 +11752,7 @@ async function liquidateAll(missionId, sessionId, reasoning2, opts = {}) {
       );
     }
   }
+  if (opts.minOut && !opts.nativeOnly) problems.push(...await closeAllPerps2(missionId, reasoning2));
   for (const h of holdings.filter((h2) => !opts.nativeOnly && h2.venue === "binance" && !binance.isCash(h2.asset))) {
     let sold = false;
     for (const quote2 of ["USDC", "USDT"]) {
@@ -11759,7 +11817,7 @@ async function swap(args) {
   const key = quoteKey(m, chain.id, input2.address, output2.address);
   const ref = lastQuotes.get(key);
   lastQuotes.delete(key);
-  if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * 0.02) {
+  if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * QUOTE_AMOUNT_TOLERANCE) {
     const expected = ref.amountOut * (amount / ref.amountIn);
     const minOut = expected * (1 - args.slippageBps / 1e4);
     if (quote2.amountOut < minOut) {
@@ -11819,7 +11877,7 @@ async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50,
     priceImpactPct: q.priceImpactPct,
     route: q.route,
     ...q.warnings.length ? { warnings: q.warnings } : {},
-    note: "Sin contar los costes de red: se calculan al ejecutar, seg\xFAn tu monedero. Si ejecutas este mismo swap (mismo importe) en menos de 60 s, tu slippage se mide contra esta cotizaci\xF3n: si el precio se ha movido m\xE1s, el swap revierte y pagas solo la red."
+    note: "Sin contar los costes de red: se calculan al ejecutar, seg\xFAn tu monedero. Si ejecutas este mismo swap (con un importe hasta un 25 % distinto) en menos de 60 s, tu slippage se mide contra esta cotizaci\xF3n: si el precio se ha movido m\xE1s, el swap revierte y pagas solo la red."
   };
 }
 async function binanceMarketOrder(args) {
@@ -11949,7 +12007,7 @@ async function valuation(missionId, recordSnapshot = false, opts = {}) {
     } : {}
   };
 }
-var DUST5, LIQUIDATION_RETRY_MS, describeCosts, LimitNotReached, lastQuotes, QUOTE_TTL_MS, quoteKey, evmAddress;
+var DUST5, LIQUIDATION_RETRY_MS, describeCosts, LimitNotReached, CloseAborted, lastQuotes, QUOTE_TTL_MS, QUOTE_AMOUNT_TOLERANCE, quoteKey, evmAddress;
 var init_portfolio = __esm({
   "src/sim/portfolio.ts"() {
     "use strict";
@@ -11974,8 +12032,22 @@ var init_portfolio = __esm({
       got;
       min;
     };
+    CloseAborted = class extends Error {
+      constructor(symbol2, chainLabel, got, min) {
+        super(`la venta de ${symbol2} (${chainLabel}) dar\xEDa ${Number(got.toPrecision(6))} y la cotizaci\xF3n que confirm\xF3 el objetivo ped\xEDa al menos ${Number(min.toPrecision(6))}`);
+        this.symbol = symbol2;
+        this.chainLabel = chainLabel;
+        this.got = got;
+        this.min = min;
+      }
+      symbol;
+      chainLabel;
+      got;
+      min;
+    };
     lastQuotes = /* @__PURE__ */ new Map();
     QUOTE_TTL_MS = 6e4;
+    QUOTE_AMOUNT_TOLERANCE = 0.25;
     quoteKey = (missionId, chain, input2, output2) => `${missionId}:${chain}:${input2}:${output2}`;
     evmAddress = (missionId) => `0x${createHash2("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
   }
@@ -41790,18 +41862,22 @@ function limitFill(order, action) {
 }
 async function execute(order, reasoning2, price, log) {
   if (!db.prepare("UPDATE orders SET status = 'executing' WHERE id = ? AND status = 'open'").run(order.id).changes) return;
-  const seen = price === null ? { executedAt: now() } : { triggerPriceSeen: price };
+  const seen = price === null ? { executedAt: now() } : { marketPriceWhenTriggered: price };
   try {
     const action = JSON.parse(order.action);
+    const limit = getVenue(order.venue).kind === "chain" ? limitFill(order, action) : {};
     const base2 = {
       missionId: order.mission_id,
       sessionId: order.session_id,
       reasoning: reasoning2,
       meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
     };
-    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action, ...limitFill(order, action) }) : await binanceMarketOrder({ ...base2, ...action });
-    close(order.id, "filled", { ...seen, ...result });
-    log.push(price === null ? `Orden #${order.id} ejecutada por tiempo` : `Orden #${order.id} ejecutada a ${order.trigger_label} = ${price}`);
+    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action, ...limit }) : await binanceMarketOrder({ ...base2, ...action });
+    const atLimit = "fillAtLimit" in limit ? { filledAtLimitPrice: order.trigger_price } : {};
+    close(order.id, "filled", { ...seen, ...atLimit, ...result });
+    log.push(
+      price === null ? `Orden #${order.id} ejecutada por tiempo` : "fillAtLimit" in limit ? `Orden #${order.id} ejecutada: se llen\xF3 a tu l\xEDmite (${order.trigger_label} = ${order.trigger_price}); el mercado estaba a ${price}` : `Orden #${order.id} ejecutada a mercado: salt\xF3 con ${order.trigger_label} = ${price}`
+    );
   } catch (err) {
     if (err instanceof LimitNotReached) {
       db.prepare("UPDATE orders SET status = 'open' WHERE id = ? AND status = 'executing'").run(order.id);
@@ -42426,8 +42502,16 @@ function reviseMissionReview(a) {
     a.nextTime ?? r.next_time,
     a.missionId
   );
-  logActivity({ missionId: a.missionId, sessionId: null, kind: "lesson", title: `Corrige la retrospectiva de la misi\xF3n #${a.missionId}: ${a.reason}` });
-  return { missionId: a.missionId, corrected: changed };
+  const column = { whatWasTried: "what_was_tried", whatHappened: "what_happened", surprises: "surprises", nextTime: "next_time" };
+  const previous = Object.fromEntries(changed.map((k) => [column[k], r[column[k]] ?? ""]));
+  logActivity({
+    missionId: a.missionId,
+    sessionId: null,
+    kind: "lesson",
+    title: `Corrige la retrospectiva de la misi\xF3n #${a.missionId}: ${a.reason}`,
+    body: changed.map((k) => `Antes, ${column[k]}: ${previous[column[k]]}`).join("\n\n")
+  });
+  return { missionId: a.missionId, corrected: changed, previous };
 }
 function markReviewed(missionId) {
   db.prepare("UPDATE missions SET reviewed_at = COALESCE(reviewed_at, ?) WHERE id = ?").run(now(), missionId);
@@ -42486,6 +42570,7 @@ function recentApproach(count = 8) {
   });
   const n3 = perMission.length;
   const share = (f) => `${perMission.filter(f).length} de ${n3}`;
+  const avg = (xs) => xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null;
   let successStreak = 0;
   for (let i = n3 - 1; i >= 0 && perMission[i].succeeded; i--) successStreak++;
   return {
@@ -42495,6 +42580,10 @@ function recentApproach(count = 8) {
       successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n3).toFixed(1)),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
+      worstPct: Math.min(...perMission.map((x) => x.resultPct)),
+      /** Media de lo ganado en las conseguidas y de lo perdido en las demás: cuánto pesa cada fallo frente a cada éxito. */
+      avgResultPctSucceeded: avg(perMission.filter((x) => x.succeeded).map((x) => x.resultPct)),
+      avgResultPctFailed: avg(perMission.filter((x) => !x.succeeded).map((x) => x.resultPct)),
       withOneEntry: share((x) => x.positions === 1),
       /** Misiones que acabaron paradas (sin operar el último cuarto del plazo) sin llegar: se rindió. */
       parkedAtEnd: share((x) => x.parkedAtEnd),
@@ -42944,7 +43033,7 @@ function riskCheck(chain, token2, f, missionId) {
 }
 function riskCell(rc) {
   return [
-    rc.creatorIsLaunchpadDeployer ? "creador: la direcci\xF3n de la plataforma (sin datos de creador)" : "",
+    rc.creatorIsLaunchpadDeployer ? "creador: 5.000+ tokens, probablemente la plataforma" : "",
     rc.creatorTokens !== void 0 ? `creador ${rc.creatorTokens} tokens/${rc.creatorGraduated ?? 0} graduados` : "",
     rc.creatorTradesWithYou ? `le operaste ${rc.creatorTradesWithYou} (peor ${rc.creatorWorstPnlWithYouPct} %)` : "",
     rc.devHoldingPct !== void 0 ? `dev ${rc.devHoldingPct} %` : "",
@@ -43215,7 +43304,7 @@ var SIM_TOOLS = [
     kind: "misc",
     // Sin novedades del briefing: también la usa la sesión del usuario para ver si la misión sigue, y se las
     // quedaba (marcándolas como vistas) antes de que llegaran al trader. Le llegan con el resto de sus herramientas.
-    description: "Estado de tu misi\xF3n: capital inicial, objetivo, valor actual de la cartera, cu\xE1nto falta y tiempo restante. La misi\xF3n termina sola al alcanzar el objetivo o al acabarse el plazo; entonces se cierran todas las posiciones a mercado.",
+    description: "Estado de tu misi\xF3n: capital inicial, objetivo, valor actual de la cartera, cu\xE1nto falta y tiempo restante. La misi\xF3n termina sola al acabarse el plazo y, si closesOnTarget lo dice, tambi\xE9n al alcanzar el objetivo; entonces se cierran todas las posiciones a mercado.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => json2(await missionStatus(ctx.missionId ?? void 0))
   }),
@@ -43309,7 +43398,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "simulate_swap",
     kind: "trade",
     journaled: true,
-    description: `Ejecuta en simulaci\xF3n un swap en tu monedero de una cadena. El resultado es la cotizaci\xF3n real del agregador en ese instante (liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas el token nativo de la cadena para pagar la red. input/output: direcci\xF3n del token o un alias (${TOKEN_ALIASES}). Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token. slippage_bps protege la cotizaci\xF3n que acabas de ver: si cotizaste este mismo swap con quote_swap hace menos de 60 s y el precio se ha movido m\xE1s que tu slippage, el swap revierte (pagas solo la red). Sin cotizaci\xF3n previa, se ejecuta al precio del momento.`,
+    description: `Ejecuta en simulaci\xF3n un swap en tu monedero de una cadena. El resultado es la cotizaci\xF3n real del agregador en ese instante (liquidez y comisiones de los pools incluidas) y se descuentan los costes de red de esa cadena. En Solana: fee de red en SOL y, si recibes un token nuevo, la renta de la cuenta del token (se recupera al vaciarla). Necesitas el token nativo de la cadena para pagar la red. input/output: direcci\xF3n del token o un alias (${TOKEN_ALIASES}). Indica amount (cantidad del token de entrada) o sell_all para vender todo tu saldo de ese token. slippage_bps protege la cotizaci\xF3n que acabas de ver: si cotizaste este mismo swap con quote_swap hace menos de 60 s (con una cantidad que no difiera m\xE1s de un 25 %; se compara en proporci\xF3n) y el precio se ha movido m\xE1s que tu slippage, el swap revierte (pagas solo la red). Sin cotizaci\xF3n previa, se ejecuta al precio del momento.`,
     schema: external_exports.object({
       chain: chainParam,
       input: external_exports.string(),
@@ -43905,7 +43994,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "memory",
     role: "reviewer",
     journaled: true,
-    description: "Corrige una retrospectiva ya escrita: solo los campos que indiques (el resto se queda igual), con el motivo. Para cifras equivocadas, conclusiones que los datos posteriores desmienten o lo que falt\xF3 decir.",
+    description: "Corrige una retrospectiva ya escrita: solo los campos que indiques (el resto se queda igual), con el motivo. Cada campo que indiques se sustituye entero, as\xED que incluye lo que quieras conservar; la respuesta trae el texto anterior (previous). Para cifras equivocadas, conclusiones que los datos posteriores desmienten o lo que falt\xF3 decir.",
     schema: external_exports.object({
       mission_id: external_exports.number().int(),
       what_was_tried: external_exports.string().min(1).optional(),
@@ -44705,10 +44794,11 @@ server.registerTool(
       max_loss_pct: external_exports.number().positive().max(100).optional().describe("Solo live: p\xE9rdida m\xE1xima de la misi\xF3n en %; por debajo, solo se puede vender a estables"),
       replace: external_exports.boolean().default(false).describe("Cancelar la misi\xF3n activa si la hay"),
       instructions: external_exports.string().optional().describe("Instrucciones del usuario para esta misi\xF3n. Vac\xEDo = modo libre"),
+      close_on_target: external_exports.boolean().default(true).describe("Solo sim. true: al tocar el objetivo se vende todo y la misi\xF3n termina. false: dura hasta el plazo y cuenta como conseguida si al final vale el objetivo o m\xE1s"),
       allocation: external_exports.object(Object.fromEntries(VENUES.map((v) => [v, external_exports.number().min(0).max(100).optional()]))).optional().describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`)
     }
   },
-  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target }) => {
     const active2 = getActiveMission();
     if (active2 && !replace) {
       return {
@@ -44737,7 +44827,7 @@ server.registerTool(
       if (!capital_usd) throw new Error("Falta capital_usd");
       const target = target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : void 0);
       if (!target) throw new Error("Falta target_usd o target_pct");
-      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION);
+      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target });
       return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };

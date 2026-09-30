@@ -73,8 +73,8 @@ export interface Features {
   honeypot?: boolean;
   mintable?: boolean;
   /**
-   * El "creador" que da la fuente es la dirección de la plataforma de lanzamiento (miles de tokens), no una persona:
-   * entonces no hay datos de creador (ni dirección ni recuentos).
+   * El "creador" que da la fuente ha lanzado 5.000 tokens o más: probablemente es la dirección de la plataforma de
+   * lanzamiento, no una persona. Los datos del creador (dirección y recuentos) se dan igual.
    */
   creatorIsLaunchpadDeployer?: boolean;
   /** Quién creó el token (dirección): con él se calcula tu historial con ese creador. */

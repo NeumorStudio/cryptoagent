@@ -61,7 +61,8 @@ test("una orden condicional guardada con el formato anterior se ejecuta", async 
   setPrice(MEME, 0.013);
   const usdcBefore = bal(m, "solana", USDC_MINT);
   const log = await checkOrders();
-  assert.match(log.join("\n"), /ejecutada/);
+  // El mensaje distingue el precio al que se llenó (el límite) del que tenía el mercado al saltar.
+  assert.match(log.join("\n"), /ejecutada: se llenó a tu límite \(MEME\/USD = 0\.012\); el mercado estaba a 0\.0129/);
   assert.equal(bal(m, "solana", MEME), 0);
   // Como una orden límite real: se llena al precio fijado (0.012), no al del pico (0.013).
   assert.ok(Math.abs(bal(m, "solana", USDC_MINT) - usdcBefore - amount * 0.012) < 1e-6, String(bal(m, "solana", USDC_MINT) - usdcBefore));
@@ -172,4 +173,19 @@ test("liquidar deja la cartera en stablecoins (el SOL reservado paga la última 
   assert.ok(left[0]!.amount < 0.001);
   assert.equal(bal(m, "solana", SOL_MINT), 0);
   assert.equal(listPositions(m).filter((p) => p.status === "open").length, 0);
+});
+
+test("slippage: la cotización protege también si compras algo más o menos de lo cotizado (hasta un 25 %)", async () => {
+  setPrice(MEME, 0.01);
+  const m = (await createMission(1000, 5000, 60, undefined, { solana: 100 })).id;
+  const base = { missionId: m, sessionId: null, chain: "solana" as const, input: "USDC", output: MEME, reasoning: "test" };
+  await quoteSwap("solana", "USDC", MEME, 10, 100, m);
+  setPrice(MEME, 0.0137);
+  const usdc = bal(m, "solana", USDC_MINT);
+  await assert.rejects(swap({ ...base, amount: 11, slippageBps: 100 }), /revierte.*slippage/, "10 % más que lo cotizado: sigue protegido");
+  assert.equal(bal(m, "solana", USDC_MINT), usdc);
+  // Muy distinto de lo cotizado ya no es la misma operación: se ejecuta al precio del momento.
+  await quoteSwap("solana", "USDC", MEME, 10, 100, m);
+  await swap({ ...base, amount: 20, slippageBps: 100 });
+  await swap({ ...base, input: MEME, output: "USDC", sellAll: true, slippageBps: 500 });
 });

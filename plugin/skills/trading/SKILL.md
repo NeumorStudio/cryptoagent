@@ -92,7 +92,7 @@ No añadas nada más a los prompts: ni ideas, ni estrategias, ni contexto de est
 
 ## 6. Avisar al usuario
 
-Resume en pocas líneas: si es una misión REAL (y su aprobación y límites), capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al alcanzar el objetivo o al acabarse el tiempo. Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
+Resume en pocas líneas: si es una misión REAL (y su aprobación y límites), capital, objetivo y plazo (fecha y hora de fin), el reparto, las instrucciones si las hay, dónde está el panel si se abrió, y que el agente ya trabaja en segundo plano con un revisor que analiza lo que hace y le prepara lo aprendido. La misión termina sola al acabarse el tiempo (y, salvo que se haya creado con `close_on_target: false`, también al alcanzar el objetivo). Añade que puede escribir `/cryptoagent:estado` en cualquier momento para ver cómo va, también desde el móvil con Remote Control.
 
 ## 7. Mientras dura la misión
 

@@ -60,7 +60,7 @@ BNB Chain.
 
 - El precio de ejecución es la cotización de Jupiter o el order book de Binance **en el momento de la llamada**.
 - **Slippage**: como al firmar en un monedero, protege la cotización que viste. Si cotizas un swap con `quote_swap` y lo
-  ejecutas con el mismo importe en menos de 60 s, y el precio se ha movido más que tu `slippage_bps`, el swap revierte y
+  ejecutas en menos de 60 s con un importe parecido (hasta un 25 % distinto; se compara en proporción), y el precio se ha movido más que tu `slippage_bps`, el swap revierte y
   solo pagas la red. Si ejecutas sin cotizar antes, se ejecuta al precio de ese momento (y el slippage no tiene contra qué medirse).
   Las comisiones de los pools (incluida la de pump.fun) ya van dentro de la cotización.
 - Se cobran además: la fee de red de Solana (fija, configurable) y la renta de la cuenta de token
@@ -132,6 +132,11 @@ de GoPlus). Para cualquier otra consulta, usa estas APIs con `http_get`. Todas d
 - Perfiles recientes: `https://api.dexscreener.com/token-profiles/latest/v1`
 - Tokens promocionados (boosts): `https://api.dexscreener.com/token-boosts/latest/v1`, `.../token-boosts/top/v1`
 - Pares de un token: `https://api.dexscreener.com/tokens/v1/solana/<mint>` o `https://api.dexscreener.com/latest/dex/tokens/<mint>`
+- **Su liquidez no es la de Jupiter.** DexScreener (y GeckoTerminal) suman los dos lados del pool, el token y el SOL o la
+  estable; la `liquidity` de Jupiter se acerca a un solo lado. En un pool normal la de DexScreener sale cerca del doble, así
+  que esa diferencia no indica nada por sí sola. `riskCheck`, `scan_market` (cuando Jupiter tiene el token: mira
+  `liquiditySource`) y la memoria usan la de Jupiter. El cambio de precio también difiere: DexScreener lo mide en ese par,
+  y `stats5m` de Jupiter en todos los pools.
 - Búsqueda: `https://api.dexscreener.com/latest/dex/search?q=<texto>`
 - Los tokens muy nuevos que siguen en la curva de pump.fun a veces aún no tienen par en DexScreener.
 
@@ -157,11 +162,11 @@ Webs como DexScreener pueden mostrar controles anti-bot en el navegador; sus API
 
 Solo datos, sin veredicto: qué significan para tus resultados lo decides tú con tus misiones y lo apuntan tus creencias.
 
-- **Creador.** `creatorTokens` (tokens que ha lanzado) y `creatorGraduated` (cuántos se graduaron), de Jupiter en Solana; en EVM, GoPlus da el creador, lo que conserva (`devHoldingPct`) y sus otros honeypots (`creatorHoneypots`). `creatorTradesWithYou` y `creatorWorstPnlWithYouPct`: cuántos tokens suyos has operado tú y el peor resultado que te dieron.
+- **Creador.** `creatorTokens` (tokens que ha lanzado) y `creatorGraduated` (cuántos se graduaron), de Jupiter en Solana; en EVM, GoPlus da el creador, lo que conserva (`devHoldingPct`) y sus otros honeypots (`creatorHoneypots`). `creatorTradesWithYou` y `creatorWorstPnlWithYouPct`: cuántos tokens suyos has operado tú y el peor resultado que te dieron. `creatorIsLaunchpadDeployer`: la dirección ha lanzado 5.000 tokens o más, así que probablemente es la de la plataforma (en stonkfun, muchos tokens salen de unas pocas direcciones con miles de lanzamientos); sus recuentos se dan igual.
 - **Token.** `insidersDetected` y `lpLockedPct` (RugCheck), `honeypot` e impuestos (GoPlus), `mcapToLiquidity` y `launchpad`. En BNB Chain el launchpad sale de la dirección: …7777 = Flap.sh, …4444 o …ffff = four.meme, también en tus operaciones antiguas.
 - **Volumen según cada fuente.** `token_report` trae `volumeCheck`: el volumen de 1 h según Jupiter, el de todos los pares de DexScreener y su cociente (`volume1hJupiterVsDexRatio`, también en los datos de cada posición).
 - **Entre lecturas.** Si lees un token dos veces, `riskCheck.sinceLastRead` dice cuánto cambiaron la liquidez, el precio y los compradores. Al comprar se guardan `readsBeforeBuy`, `minutesBetweenReads`, `liquidityTrendPct` y `netBuyersTrend`.
-- **Condiciones para tus creencias.** Todos se pueden usar: `volume1hJupiterVsDexRatio`, `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
+- **Condiciones para tus creencias.** Todos se pueden usar: `volume1hJupiterVsDexRatio`, `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `creatorIsLaunchpadDeployer`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
 
 ## 6. Futuros perpetuos (simulados con datos de Hyperliquid)
 

@@ -33,6 +33,8 @@ export interface TradeMeta {
   lessonsApplied?: string;
   /** Ids de las creencias que aplica: el simulador mide con ellos cómo le va a cada creencia. */
   beliefsApplied?: number[];
+  /** Ids de las creencias negativas que se salta a sabiendas (thesis.overrides). */
+  beliefsOverridden?: number[];
 }
 
 /**

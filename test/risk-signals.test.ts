@@ -99,3 +99,23 @@ test("token_report trae los valores que usa la memoria, con el cociente de compr
   assert.ok(!memory.matches({ all: [{ f: "buySellRatio5m", op: ">=", v: 1.3 }] }, pos));
   assert.ok(memory.matches({ all: [{ f: "buySellCountRatio5m", op: ">=", v: 1.3 }] }, pos));
 });
+
+test("al comprar, dice qué creencias citadas no cumple el token, y no cuentan como aplicadas", async () => {
+  const b = memory.writeBelief({
+    statement: "En Solana, con las compras claramente por encima de las ventas por volumen, el arranque sigue",
+    appliesTo: "Solana",
+    expectation: "positive",
+    condition: { all: [{ f: "venue", op: "=", v: "solana" }, { f: "buySellRatio5m", op: ">=", v: 1.3 }] },
+    missionId: null,
+  });
+  const r = await runTool("simulate_swap", { chain: "solana", input: "USDC", output: STONK, amount: 10, slippage_bps: 300, thesis: { ...thesis, beliefs_applied: [b.id] } }, ctx);
+  assert.ok(!r.isError, String(r.content));
+  const out = JSON.parse(String(r.content));
+  assert.deepEqual(out.citedBeliefsNotMet, [`Citas #${b.id}, pero este token no la cumple: buySellRatio5m 1.15 (pide >= 1.3)`]);
+  const p = db.prepare("SELECT id, research FROM positions WHERE mission_id = ? AND asset = ? AND status = 'open'").get(mission.id, STONK) as { id: number; research: string };
+  assert.deepEqual(JSON.parse(p.research).citedBeliefsNotMet, [b.id]);
+  // Cerrada, no cuenta como una vez que la aplicó: solo como citada sin cumplirla.
+  db.prepare("UPDATE positions SET status = 'closed', closed_at = ?, qty_open = 0, realized_cost_usd = 10, realized_proceeds_usd = 7 WHERE id = ?").run(now(), p.id);
+  const view = (memory.recall() as unknown as { beliefs: Array<{ id: number; evidence: { appliedIn: Record<string, number> } }> }).beliefs.find((x) => x.id === b.id)!;
+  assert.deepEqual(view.evidence.appliedIn, { trades: 0, citedWithoutMeetingIt: 1 });
+});

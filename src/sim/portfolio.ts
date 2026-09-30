@@ -275,6 +275,11 @@ export async function swap(args: {
     const f = args.minOut / quote.amountOut;
     quote = { ...quote, amountOut: args.minOut, grossOut: quote.grossOut * f };
   }
+  // El coste de entrar y salir: la cotización de venta se pide nada más tener la de compra, mientras se registra lo
+  // demás. Pedida después de registrar la compra (1-2 s más tarde) incluía el precio moviéndose: en la v0.39.0
+  // salían idas y vueltas negativas (fableroom -35,7 %) o de un 14,8 % en un token que subía un 900 % en 5 min.
+  const buying = (chain.isCash(input.address) || input.address === chain.native.address) && !chain.isCash(output.address) && output.address !== chain.native.address;
+  const exitQuote = buying ? chain.quote({ input: output, output: chain.cash, amountIn: quote.amountOut, slippageBps: 100 }).catch(() => null) : null;
   const settled = chain.settle(quote, {
     balance: (asset) => balance(m, chain.id, asset),
     approved: (asset) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset)),
@@ -358,7 +363,7 @@ export async function swap(args: {
     valueUsd,
     meta: args.meta,
   }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
-  const exit = await sellNow(m, chain, output, quote.amountOut, valueUsd, chain.isCash(input.address) || input.address === chain.native.address);
+  const exit = await sellNow(m, chain, output, valueUsd, exitQuote);
   const cancelled = await cancelOrdersForSoldOut(m, chain.id, input);
   return { ...result, ...(exit ?? {}), ...(cancelled.length ? { ordersCancelled: cancelled } : {}) };
 }
@@ -398,10 +403,11 @@ export async function cancelOrdersForSoldOut(missionId: number, venue: ChainId, 
  * pump.fun", cuando la ida y vuelta era de un 2-3 % y el resto era el precio moviéndose. Se guarda en la posición
  * (roundTripAtEntryPct) para que las creencias puedan medirlo.
  */
-async function sellNow(missionId: number, chain: ReturnType<typeof getChain>, token: TokenRef, qty: number, paidUsd: number, isBuy: boolean) {
-  if (!isBuy || chain.isCash(token.address) || token.address === chain.native.address || !(paidUsd > 0) || !(qty > 0)) return null;
+async function sellNow(missionId: number, chain: ReturnType<typeof getChain>, token: TokenRef, paidUsd: number, exitQuote: Promise<{ amountOut: number } | null> | null) {
+  if (!exitQuote || !(paidUsd > 0)) return null;
   try {
-    const q = await chain.quote({ input: token, output: chain.cash, amountIn: qty, slippageBps: 100 });
+    const q = await exitQuote;
+    if (!q) return null;
     const roundTripPct = Number(((1 - q.amountOut / paidUsd) * 100).toFixed(1));
     const pos = db.prepare("SELECT id, research FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open' ORDER BY id DESC LIMIT 1").get(missionId, chain.id, token.address) as
       | { id: number; research: string | null }

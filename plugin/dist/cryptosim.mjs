@@ -8090,6 +8090,43 @@ var init_migrations = __esm({
             );
           }
         }
+      },
+      {
+        version: 13,
+        description: 'Creencias que el agente se salt\xF3 a sabiendas, sacadas del texto de la tesis ("Ignora a sabiendas: #21 (\u2026)")',
+        up: (db2) => {
+          const rows = db2.prepare("SELECT id, thesis, research FROM positions WHERE thesis IS NOT NULL").all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const r of rows) {
+            const line = r.thesis.split("\n").find((l) => l.startsWith("Ignora a sabiendas:"));
+            const ids = line ? [...new Set([...line.matchAll(/#(\d+) \(/g)].map((m) => Number(m[1])))] : [];
+            const research = JSON.parse(r.research ?? "{}");
+            research.beliefsOverridden = ids.length;
+            if (ids.length) research.overriddenBeliefIds = ids;
+            update.run(JSON.stringify(research), r.id);
+          }
+        }
+      },
+      {
+        version: 14,
+        description: "C\xF3mo iba la misi\xF3n en cada entrada ya guardada: entrada n.\xBA, p\xE9rdidas previas, resultado acumulado y minutos desde la \xFAltima p\xE9rdida",
+        up: (db2) => {
+          const positions = db2.prepare("SELECT p.id, p.mission_id, p.opened_at, p.closed_at, p.status, p.realized_cost_usd AS c, p.realized_proceeds_usd AS pr, p.research, m.initial_usd FROM positions p JOIN missions m ON m.id = p.mission_id ORDER BY p.opened_at, p.id").all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const p of positions) {
+            if (p.status === "moved") continue;
+            const same = positions.filter((x) => x.mission_id === p.mission_id);
+            const before = same.filter((x) => x.status === "closed" && x.closed_at !== null && x.closed_at <= p.opened_at);
+            const losses = before.filter((x) => x.c > 0 && x.pr < x.c * 0.99).sort((a, b) => a.closed_at.localeCompare(b.closed_at));
+            const research = JSON.parse(p.research ?? "{}");
+            research.entryNumberInMission = same.filter((x) => x.status !== "moved" && x.opened_at < p.opened_at).length + 1;
+            research.lossesBeforeInMission = losses.length;
+            if (p.initial_usd > 0) research.missionPnlPctAtEntry = Number((before.reduce((s, x) => s + x.pr - x.c, 0) / p.initial_usd * 100).toFixed(1));
+            const last = losses.at(-1);
+            if (last) research.minutesSinceLastLoss = Math.round((new Date(p.opened_at).getTime() - new Date(last.closed_at).getTime()) / 6e4);
+            update.run(JSON.stringify(research), p.id);
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8322,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.39.0";
+    CODE_VERSION = "0.40.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9783,6 +9820,7 @@ function decisionContext(missionId, venue, asset2, addUsd, cashSpent) {
   const previous = db.prepare("SELECT mission_id AS m, closed_at AS at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC").all(venue, asset2);
   const deadline = db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId)?.deadline;
   return {
+    ...missionPathAtEntry(missionId, (/* @__PURE__ */ new Date()).toISOString()),
     ...capital > 0 && addUsd > 0 ? { portfolioPct: Math.round((existing + addUsd) / capital * 100) } : {},
     previousTradesInToken: previous.length,
     ...previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {},
@@ -9794,6 +9832,19 @@ function decisionContext(missionId, venue, asset2, addUsd, cashSpent) {
     ...deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)) } : {},
     // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
     ...marketContext(venue)
+  };
+}
+function missionPathAtEntry(missionId, at) {
+  const initial = db.prepare("SELECT initial_usd FROM missions WHERE id = ?").get(missionId)?.initial_usd ?? 0;
+  const before = db.prepare("SELECT closed_at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE mission_id = ? AND status = 'closed' AND closed_at <= ? ORDER BY closed_at").all(missionId, at);
+  const losses = before.filter((x) => x.c > 0 && x.p < x.c * 0.99);
+  const opened = db.prepare("SELECT COUNT(*) AS n FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at < ?").get(missionId, at).n;
+  const lastLoss = losses.at(-1);
+  return {
+    entryNumberInMission: opened + 1,
+    lossesBeforeInMission: losses.length,
+    ...initial > 0 ? { missionPnlPctAtEntry: Number((before.reduce((s, x) => s + x.p - x.c, 0) / initial * 100).toFixed(1)) } : {},
+    ...lastLoss ? { minutesSinceLastLoss: Math.round((new Date(at).getTime() - new Date(lastLoss.closed_at).getTime()) / 6e4) } : {}
   };
 }
 function tokenHistory(venue, asset2) {
@@ -9829,6 +9880,10 @@ async function fillVsPrice(venue, asset2, costUsd, qty) {
     return {};
   }
 }
+function overridden(meta3, previous) {
+  const ids = [.../* @__PURE__ */ new Set([...Array.isArray(previous) ? previous : [], ...meta3?.beliefsOverridden ?? []])];
+  return { beliefsOverridden: ids.length, ...ids.length ? { overriddenBeliefIds: ids } : {} };
+}
 async function openOrAdd(args) {
   const missionId = args.missionId;
   const existing = db.prepare("SELECT * FROM positions WHERE mission_id IS ? AND venue = ? AND asset = ? AND status = 'open'").get(missionId, args.venue, args.asset);
@@ -9840,6 +9895,7 @@ async function openOrAdd(args) {
       research2.portfolioPct = Math.max(Number(research2.portfolioPct ?? 0), ctx.portfolioPct ?? 0);
       research2.adds = Number(research2.adds ?? 0) + 1;
       research2.addedWhileDown = Boolean(research2.addedWhileDown) || args.costUsd / args.qty < avgCost * 0.97;
+      Object.assign(research2, overridden(args.meta, research2.overriddenBeliefIds));
     }
     db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ?, research = ? WHERE id = ?").run(
       args.qty,
@@ -9855,7 +9911,8 @@ async function openOrAdd(args) {
     ...decisionContext(missionId, args.venue, args.asset, args.costUsd, true),
     ...await fillVsPrice(args.venue, args.asset, args.costUsd, args.qty),
     adds: 0,
-    addedWhileDown: false
+    addedWhileDown: false,
+    ...overridden(args.meta)
   });
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)
@@ -11823,6 +11880,8 @@ async function swap(args) {
     const f = args.minOut / quote2.amountOut;
     quote2 = { ...quote2, amountOut: args.minOut, grossOut: quote2.grossOut * f };
   }
+  const buying = (chain.isCash(input2.address) || input2.address === chain.native.address) && !chain.isCash(output2.address) && output2.address !== chain.native.address;
+  const exitQuote = buying ? chain.quote({ input: output2, output: chain.cash, amountIn: quote2.amountOut, slippageBps: 100 }).catch(() => null) : null;
   const settled = chain.settle(quote2, {
     balance: (asset2) => balance(m, chain.id, asset2),
     approved: (asset2) => Boolean(db.prepare("SELECT 1 FROM evm_approvals WHERE mission_id = ? AND chain = ? AND token = ?").get(m, chain.id, asset2))
@@ -11892,7 +11951,7 @@ async function swap(args) {
     valueUsd,
     meta: args.meta
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
-  const exit = await sellNow(m, chain, output2, quote2.amountOut, valueUsd, chain.isCash(input2.address) || input2.address === chain.native.address);
+  const exit = await sellNow(m, chain, output2, valueUsd, exitQuote);
   const cancelled = await cancelOrdersForSoldOut(m, chain.id, input2);
   return { ...result, ...exit ?? {}, ...cancelled.length ? { ordersCancelled: cancelled } : {} };
 }
@@ -11913,10 +11972,11 @@ async function cancelOrdersForSoldOut(missionId, venue, token2) {
   }
   return cancelled;
 }
-async function sellNow(missionId, chain, token2, qty, paidUsd, isBuy) {
-  if (!isBuy || chain.isCash(token2.address) || token2.address === chain.native.address || !(paidUsd > 0) || !(qty > 0)) return null;
+async function sellNow(missionId, chain, token2, paidUsd, exitQuote) {
+  if (!exitQuote || !(paidUsd > 0)) return null;
   try {
-    const q = await chain.quote({ input: token2, output: chain.cash, amountIn: qty, slippageBps: 100 });
+    const q = await exitQuote;
+    if (!q) return null;
     const roundTripPct = Number(((1 - q.amountOut / paidUsd) * 100).toFixed(1));
     const pos = db.prepare("SELECT id, research FROM positions WHERE mission_id = ? AND venue = ? AND asset = ? AND status = 'open' ORDER BY id DESC LIMIT 1").get(missionId, chain.id, token2.address);
     if (pos) {
@@ -12274,7 +12334,9 @@ async function one(p) {
   const entry = priceAt(cs, open2) ?? cs[0]?.[4];
   const exit = priceAt(cs, close2);
   if (!entry || !exit) return { ...base2, unavailable: "sin velas en ese intervalo" };
-  const held = cs.filter((c) => c[0] >= open2 - 60 && c[0] <= close2);
+  const held = cs.filter((c) => c[0] + 60 > open2 && c[0] + 60 <= close2);
+  const touched = cs.filter((c) => c[0] + 60 > open2 && c[0] <= close2);
+  const shortTrade = close2 - open2 < MIN_MEASURABLE_SEC;
   const at15 = close2 + 15 * 60 <= now2 ? priceAt(cs, close2 + 15 * 60) : void 0;
   const at30 = close2 + 30 * 60 <= now2 ? priceAt(cs, close2 + 30 * 60) : void 0;
   const d = perp ? 2 : 1;
@@ -12285,6 +12347,7 @@ async function one(p) {
     // segundo que no se podían vender (en la M28, p/acc "llegó a +66 %" justo antes de un rug del -95 %).
     bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[4])), d) : void 0,
     worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[4])), d) : void 0,
+    highWhileHeldPct: touched.length ? pct2(entry, Math.max(...touched.map((c) => c[2])), d) : void 0,
     ifHeld15Pct: at15 ? pct2(entry, at15, d) : void 0,
     ifHeld30Pct: at30 ? pct2(entry, at30, d) : void 0
   };
@@ -12299,9 +12362,15 @@ async function one(p) {
     if (out.ifHeld30Pct < out.marketMovePct - 15) notes.push(`mantenerla 30 min m\xE1s habr\xEDa dado ${out.ifHeld30Pct} %: la salida fue buena`);
     else if (out.ifHeld30Pct > out.marketMovePct + 15) notes.push(`mantenerla 30 min m\xE1s habr\xEDa dado ${out.ifHeld30Pct} %: sali\xF3 demasiado pronto`);
   }
-  if (out.bestWhileHeldPct !== void 0 && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) notes.push("nunca lleg\xF3 a ir en positivo: el problema fue la entrada, no la salida");
+  if (!shortTrade && out.bestWhileHeldPct !== void 0 && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) {
+    notes.push("nunca lleg\xF3 a ir en positivo: el problema fue la entrada, no la salida");
+  }
+  if (out.highWhileHeldPct !== void 0 && out.highWhileHeldPct >= 10) notes.push(`dentro del minuto lleg\xF3 a +${out.highWhileHeldPct} % (puede ser un pico no vendible)`);
   if (perp) notes.push(`futuro a ${perp[3]}x: los % son del precio en el sentido de la posici\xF3n; sobre el margen, por ${perp[3]}`);
-  if (out.marketMovePct !== void 0 && base2.actualPct !== null && Math.abs(out.marketMovePct - base2.actualPct) > 15) {
+  if (shortTrade) {
+    out.unreliable = `operaci\xF3n de ${close2 - open2} s: las velas de 1 min no la miden (entrada, salida y m\xE1ximos pueden no corresponder)`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  } else if (out.marketMovePct !== void 0 && base2.actualPct !== null && Math.abs(out.marketMovePct - base2.actualPct) > 15) {
     out.unreliable = `el precio del pool (${out.marketMovePct} %) no cuadra con la venta real (${base2.actualPct} %): no eran precios de venta`;
     notes.unshift("lectura poco fiable, ver unreliable");
   }
@@ -12322,7 +12391,7 @@ async function missionCounterfactuals(missionId, limit = 8) {
   }
   return out;
 }
-var NETWORK2, cache2, pct2, priceAt;
+var NETWORK2, cache2, pct2, priceAt, MIN_MEASURABLE_SEC;
 var init_counterfactuals = __esm({
   "src/sim/counterfactuals.ts"() {
     "use strict";
@@ -12333,9 +12402,13 @@ var init_counterfactuals = __esm({
     pct2 = (a, b, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
     priceAt = (cs, sec) => {
       let p;
-      for (const c of cs) if (c[0] <= sec) p = c[4];
+      for (const c of cs) {
+        if (c[0] + 60 <= sec) p = c[4];
+        else if (c[0] <= sec) p ??= c[1];
+      }
       return p;
     };
+    MIN_MEASURABLE_SEC = 120;
   }
 });
 
@@ -42051,7 +42124,14 @@ var CONDITION_FIELDS = [
   "liquidityTrendPct",
   "netBuyersTrend",
   "fillVsPricePct",
-  "roundTripAtEntryPct"
+  "roundTripAtEntryPct",
+  // Cuántas creencias negativas se saltó a sabiendas al entrar (thesis.overrides).
+  "beliefsOverridden",
+  // Cómo iba la misión al entrar: entrada n.º, pérdidas ya cerradas, resultado acumulado y minutos desde la última pérdida.
+  "entryNumberInMission",
+  "lossesBeforeInMission",
+  "missionPnlPctAtEntry",
+  "minutesSinceLastLoss"
 ];
 var CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="];
 var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
@@ -42073,7 +42153,12 @@ var RESEARCH_FIELDS = /* @__PURE__ */ new Set([
   "liquidityTrendPct",
   "netBuyersTrend",
   "fillVsPricePct",
-  "roundTripAtEntryPct"
+  "roundTripAtEntryPct",
+  "beliefsOverridden",
+  "entryNumberInMission",
+  "lossesBeforeInMission",
+  "missionPnlPctAtEntry",
+  "minutesSinceLastLoss"
 ]);
 function fieldValue(p, f) {
   if (f === "venue") return p.entry.venue ?? p.venue;
@@ -42094,6 +42179,38 @@ function matches(cond, p) {
         return op === "<" ? x < v : op === "<=" ? x <= v : op === ">" ? x > v : x >= v;
     }
   });
+}
+function failingClauses(cond, p) {
+  return cond.all.filter((c) => !matches({ all: [c] }, p)).map(({ f, op, v }) => {
+    const x = fieldValue(p, f);
+    return `${f} ${x === void 0 || x === null ? "sin dato" : JSON.stringify(x)} (pide ${op} ${JSON.stringify(v)})`;
+  });
+}
+function checkCitedBeliefs(missionId, venue, asset2, ids) {
+  if (!ids.length) return [];
+  const p = listPositions(missionId).find((x) => x.venue === venue && x.asset === asset2 && x.status === "open");
+  if (!p) return [];
+  const met = [];
+  const notMet = [];
+  const notes = [];
+  for (const id of [...new Set(ids)]) {
+    const b = db.prepare("SELECT * FROM beliefs WHERE id = ?").get(id);
+    if (!b?.condition) continue;
+    const failing = failingClauses(JSON.parse(b.condition), p);
+    if (!failing.length) met.push(id);
+    else {
+      notMet.push(id);
+      notes.push(`Citas #${id}, pero este token no la cumple: ${failing.join("; ")}`);
+    }
+  }
+  const row = db.prepare("SELECT research FROM positions WHERE id = ?").get(p.id);
+  const research = JSON.parse(row.research ?? "{}");
+  if (research.citedBeliefsMet === void 0) {
+    research.citedBeliefsMet = met;
+    research.citedBeliefsNotMet = notMet;
+    db.prepare("UPDATE positions SET research = ? WHERE id = ?").run(JSON.stringify(research), p.id);
+  }
+  return notes;
 }
 var describeCondition = (c) => c.all.map(({ f, op, v }) => `${f} ${op} ${JSON.stringify(v)}`).join(" y ");
 var outcome = (p) => (p.pnlPct ?? 0) >= 1 ? "win" : (p.pnlPct ?? 0) <= -1 ? "loss" : "flat";
@@ -42136,7 +42253,12 @@ var STAGE_LABEL = {
   rule: "regla (30 casos o m\xE1s)"
 };
 function beliefEvidence(b, closed) {
-  const applied = summarizeTrades(closed.filter((p) => p.beliefsApplied.includes(b.id)));
+  const cited = closed.filter((p) => p.beliefsApplied.includes(b.id));
+  const condition = b.condition ? JSON.parse(b.condition) : null;
+  const notMet = cited.filter(
+    (p) => Array.isArray(p.research.citedBeliefsNotMet) && p.research.citedBeliefsNotMet.includes(b.id) || condition !== null && !matches(condition, p)
+  );
+  const applied = { ...summarizeTrades(cited.filter((p) => !notMet.includes(p))), ...notMet.length ? { citedWithoutMeetingIt: notMet.length } : {} };
   const cond = b.condition ? JSON.parse(b.condition) : null;
   let matched;
   let verdict = applied.trades ? `sin condici\xF3n; aplicada en ${applied.trades} operaciones: ${applied.wins} ganadas, ${applied.losses} perdidas${magnitude(applied)}` : "sin condici\xF3n y todav\xEDa sin operaciones que la apliquen";
@@ -42156,7 +42278,19 @@ function beliefEvidence(b, closed) {
     if (decided2 >= 3) verdict += ` \xB7 ${STAGE_LABEL[stage]}`;
     verdict += magnitude(summary);
   }
-  return { verdict, appliedIn: applied, ...matched ? { matchingTrades: matched } : {} };
+  const skipped = overrideRecord(b.id, closed);
+  return { verdict, appliedIn: applied, ...matched ? { matchingTrades: matched } : {}, ...skipped ? { whenOverridden: skipped } : {} };
+}
+function overrideRecord(beliefId, closed = closedPositions()) {
+  const ps = closed.filter((p) => Array.isArray(p.research.overriddenBeliefIds) && p.research.overriddenBeliefIds.includes(beliefId));
+  if (!ps.length) return null;
+  const pcts = ps.map((p) => p.pnlPct ?? 0);
+  return {
+    times: ps.length,
+    won: ps.filter((p) => (p.pnlUsd ?? 0) > 0).length,
+    avgPnlPct: Number((pcts.reduce((s, x) => s + x, 0) / ps.length).toFixed(1)),
+    text: `te la has saltado ${ps.length} ${ps.length === 1 ? "vez" : "veces"}: ${ps.filter((p) => (p.pnlUsd ?? 0) > 0).length} ganadas, media ${(pcts.reduce((s, x) => s + x, 0) / ps.length).toFixed(1)} %`
+  };
 }
 function beliefView(b, closed) {
   const cond = b.condition ? JSON.parse(b.condition) : null;
@@ -42232,7 +42366,7 @@ var STRONG_NEGATIVE = { minDecided: 4, minWilsonLowPct: 50, maxAvgPnlPct: -15 };
 function blockingBeliefs(venue, entry, asset2 = "", decision = {}) {
   const closed = closedPositions();
   const pos = { venue, asset: asset2, entry: { ...entry, venue }, research: decision };
-  return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => isStrongNegative(ev)).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+  return db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all().filter((b) => matches(JSON.parse(b.condition), pos)).map((b) => ({ b, ev: beliefEvidence(b, closed) })).filter(({ ev }) => isStrongNegative(ev)).map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict, ...ev.whenOverridden ? { whenOverridden: ev.whenOverridden.text } : {} }));
 }
 function isStrongNegative(ev) {
   const t = ev.matchingTrades;
@@ -42648,6 +42782,8 @@ function recentApproach(count = 8) {
   });
   const n3 = perMission.length;
   const share = (f) => `${perMission.filter(f).length} de ${n3}`;
+  const trips = missions.flatMap((m) => listPositions(m.id).map((p) => Number(p.research.roundTripAtEntryPct))).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+  const quantile = (q) => trips[Math.min(trips.length - 1, Math.floor(q * trips.length))];
   const avg = (xs) => xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null;
   let successStreak = 0;
   for (let i = n3 - 1; i >= 0 && perMission[i].succeeded; i--) successStreak++;
@@ -42657,6 +42793,7 @@ function recentApproach(count = 8) {
       succeeded: share((x) => x.succeeded),
       successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n3).toFixed(1)),
+      ...trips.length ? { roundTripAtEntry: `mediana ${quantile(0.5)} %, p75 ${quantile(0.75)} % (${trips.length} compras)` } : {},
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
       worstPct: Math.min(...perMission.map((x) => x.resultPct)),
       /** Media de lo ganado en las conseguidas y de lo perdido en las demás: cuánto pesa cada fallo frente a cada éxito. */
@@ -42970,7 +43107,7 @@ async function checkBuyAgainstMemory(a) {
   }
   const features = await chain.entryFeatures(out.address).catch(() => null);
   if (!features) return [];
-  const overridden = new Map((a.overrides ?? []).map((o) => [o.id, o]));
+  const overridden2 = new Map((a.overrides ?? []).map((o) => [o.id, o]));
   const reasons = [];
   let amountUsd = 0;
   if (a.input && a.amount) {
@@ -42980,16 +43117,18 @@ async function checkBuyAgainstMemory(a) {
   const decision = a.missionId !== void 0 ? decisionContext(a.missionId, chain.id, out.address, amountUsd, false) : {};
   const entry = { ...features, ...creatorHistory(features.creator) };
   const blocking = blockingBeliefs(chain.id, entry, out.address, decision);
-  for (const b of blocking.filter((x) => !overridden.has(x.id))) reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`);
+  for (const b of blocking.filter((x) => !overridden2.has(x.id))) {
+    reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})${b.whenOverridden ? `. Cuando la ignoraste: ${b.whenOverridden}` : ""}`);
+  }
   if (reasons.length) {
-    const ids = blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id);
+    const ids = blocking.filter((x) => !overridden2.has(x.id)).map((b) => b.id);
     throw new Error(
       `Tu memoria desaconseja esta compra de ${out.symbol}:
 ${reasons.join("\n")}
 Si aun as\xED quieres comprarlo, repite la operaci\xF3n con thesis.overrides = [${ids.map((id) => `{ id: ${id}, reason: "por qu\xE9 esta vez es distinto" }`).join(", ")}].`
     );
   }
-  return [...overridden.values()];
+  return [...overridden2.values()];
 }
 
 // src/tools/index.ts
@@ -43076,7 +43215,19 @@ Plan: ${t.exit_plan}
 Memoria: ${t.beliefs_applied.length ? `creencias #${t.beliefs_applied.join(", #")}. ` : ""}${t.memory_note}` + (t.risks_checked ? `
 Riesgos comprobados: ${t.risks_checked}` : "") + (t.overrides?.length ? `
 Ignora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
-var tradeMeta = (t) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
+async function withCitedCheck(missionId, chain, output2, cited, trade) {
+  const result = await trade;
+  if (!cited.length) return result;
+  const token2 = await getChain(chain).resolveToken(output2).catch(() => null);
+  const notes = token2 ? checkCitedBeliefs(missionId, chain, token2.address, cited) : [];
+  return notes.length ? { ...result, citedBeliefsNotMet: notes } : result;
+}
+var tradeMeta = (t) => ({
+  thesis: formatThesis(t),
+  lessonsApplied: t.memory_note,
+  beliefsApplied: t.beliefs_applied,
+  ...t.overrides?.length ? { beliefsOverridden: t.overrides.map((o) => o.id) } : {}
+});
 var lastReads = /* @__PURE__ */ new Map();
 function riskCheck(chain, token2, f, missionId) {
   const key = `${missionId ?? "-"}:${chain}:${token2.toLowerCase()}`;
@@ -43507,18 +43658,24 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       if (isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
       await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json2(
-        await swap({
-          missionId: mid(ctx),
-          sessionId: ctx.sessionId,
-          chain: i.chain,
-          input: i.input,
-          output: i.output,
-          amount: i.amount,
-          sellAll: i.sell_all,
-          slippageBps: i.slippage_bps,
-          reasoning: formatThesis(i.thesis),
-          meta: tradeMeta(i.thesis)
-        })
+        await withCitedCheck(
+          mid(ctx),
+          i.chain,
+          i.output,
+          i.thesis.beliefs_applied,
+          swap({
+            missionId: mid(ctx),
+            sessionId: ctx.sessionId,
+            chain: i.chain,
+            input: i.input,
+            output: i.output,
+            amount: i.amount,
+            sellAll: i.sell_all,
+            slippageBps: i.slippage_bps,
+            reasoning: formatThesis(i.thesis),
+            meta: tradeMeta(i.thesis)
+          })
+        )
       );
     }
   }),
@@ -43540,18 +43697,24 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       if (!isLiveMission(mid(ctx))) throw new Error("Esta misi\xF3n es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
       await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json2(
-        await swap({
-          missionId: mid(ctx),
-          sessionId: ctx.sessionId,
-          chain: i.chain,
-          input: i.input,
-          output: i.output,
-          amount: i.amount,
-          sellAll: i.sell_all,
-          slippageBps: i.slippage_bps,
-          reasoning: formatThesis(i.thesis),
-          meta: tradeMeta(i.thesis)
-        })
+        await withCitedCheck(
+          mid(ctx),
+          i.chain,
+          i.output,
+          i.thesis.beliefs_applied,
+          swap({
+            missionId: mid(ctx),
+            sessionId: ctx.sessionId,
+            chain: i.chain,
+            input: i.input,
+            output: i.output,
+            amount: i.amount,
+            sellAll: i.sell_all,
+            slippageBps: i.slippage_bps,
+            reasoning: formatThesis(i.thesis),
+            meta: tradeMeta(i.thesis)
+          })
+        )
       );
     }
   }),

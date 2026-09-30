@@ -66,6 +66,7 @@ export function decisionContext(missionId: number, venue: string, asset: string,
     .all(venue, asset) as Array<{ m: number; at: string; c: number; p: number }>;
   const deadline = (db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId) as { deadline: string } | undefined)?.deadline;
   return {
+    ...missionPathAtEntry(missionId, new Date().toISOString()),
     ...(capital > 0 && addUsd > 0 ? { portfolioPct: Math.round(((existing + addUsd) / capital) * 100) } : {}),
     previousTradesInToken: previous.length,
     ...(previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {}),
@@ -77,6 +78,28 @@ export function decisionContext(missionId: number, venue: string, asset: string,
     ...(deadline ? { minutesLeft: Math.max(0, Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)) } : {}),
     // Cuándo y con qué mercado: hora UTC y actividad del último escaneo de la cadena.
     ...marketContext(venue),
+  };
+}
+
+/**
+ * Cómo iba la misión al entrar: cuántas posiciones había cerrado en pérdidas, cuánto llevaba ganado o perdido con
+ * lo ya cerrado, cuántos minutos desde la última pérdida y qué entrada es. Lo más caro de las tandas de la v0.38 y
+ * la v0.39 fue encadenar entradas tras un stop, cada vez más grandes (M4, M12, M13, M14, M20), y no había ningún
+ * dato con el que una creencia pudiera medirlo. También lo usa la migración 14 para las posiciones ya guardadas.
+ */
+export function missionPathAtEntry(missionId: number, at: string) {
+  const initial = (db.prepare("SELECT initial_usd FROM missions WHERE id = ?").get(missionId) as { initial_usd: number } | undefined)?.initial_usd ?? 0;
+  const before = db
+    .prepare("SELECT closed_at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE mission_id = ? AND status = 'closed' AND closed_at <= ? ORDER BY closed_at")
+    .all(missionId, at) as Array<{ closed_at: string; c: number; p: number }>;
+  const losses = before.filter((x) => x.c > 0 && x.p < x.c * 0.99);
+  const opened = (db.prepare("SELECT COUNT(*) AS n FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at < ?").get(missionId, at) as { n: number }).n;
+  const lastLoss = losses.at(-1);
+  return {
+    entryNumberInMission: opened + 1,
+    lossesBeforeInMission: losses.length,
+    ...(initial > 0 ? { missionPnlPctAtEntry: Number(((before.reduce((s, x) => s + x.p - x.c, 0) / initial) * 100).toFixed(1)) } : {}),
+    ...(lastLoss ? { minutesSinceLastLoss: Math.round((new Date(at).getTime() - new Date(lastLoss.closed_at).getTime()) / 60_000) } : {}),
   };
 }
 
@@ -135,6 +158,16 @@ async function fillVsPrice(venue: string, asset: string, costUsd: number, qty: n
   }
 }
 
+/**
+ * Creencias negativas que el agente se saltó a sabiendas al entrar (o al ampliar): sus ids y cuántas. Con ellos se
+ * mide cómo le va cuando ignora su memoria (en la M20 de la v0.39.0 se saltó dos veces la #21 "por necesidad",
+ * -19 % y -37 %, y solo quedaba en el texto de la tesis).
+ */
+function overridden(meta: TradeMeta | undefined, previous?: unknown) {
+  const ids = [...new Set([...(Array.isArray(previous) ? (previous as number[]) : []), ...(meta?.beliefsOverridden ?? [])])];
+  return { beliefsOverridden: ids.length, ...(ids.length ? { overriddenBeliefIds: ids } : {}) };
+}
+
 async function openOrAdd(args: {
   missionId: number;
   venue: string;
@@ -162,6 +195,7 @@ async function openOrAdd(args: {
       research.portfolioPct = Math.max(Number(research.portfolioPct ?? 0), ctx.portfolioPct ?? 0);
       research.adds = Number(research.adds ?? 0) + 1;
       research.addedWhileDown = Boolean(research.addedWhileDown) || args.costUsd / args.qty < avgCost * 0.97;
+      Object.assign(research, overridden(args.meta, research.overriddenBeliefIds));
     }
     db.prepare("UPDATE positions SET qty_open = qty_open + ?, cost_open_usd = cost_open_usd + ?, research = ? WHERE id = ?").run(
       args.qty,
@@ -182,6 +216,7 @@ async function openOrAdd(args: {
         ...(await fillVsPrice(args.venue, args.asset, args.costUsd, args.qty)),
         adds: 0,
         addedWhileDown: false,
+        ...overridden(args.meta),
       });
   db.prepare(
     `INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, qty_open, cost_open_usd, entry_features, research, thesis, lessons_applied, beliefs_applied)

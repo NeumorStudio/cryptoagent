@@ -7709,6 +7709,43 @@ var init_migrations = __esm({
             );
           }
         }
+      },
+      {
+        version: 13,
+        description: 'Creencias que el agente se salt\xF3 a sabiendas, sacadas del texto de la tesis ("Ignora a sabiendas: #21 (\u2026)")',
+        up: (db2) => {
+          const rows = db2.prepare("SELECT id, thesis, research FROM positions WHERE thesis IS NOT NULL").all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const r of rows) {
+            const line = r.thesis.split("\n").find((l) => l.startsWith("Ignora a sabiendas:"));
+            const ids = line ? [...new Set([...line.matchAll(/#(\d+) \(/g)].map((m) => Number(m[1])))] : [];
+            const research = JSON.parse(r.research ?? "{}");
+            research.beliefsOverridden = ids.length;
+            if (ids.length) research.overriddenBeliefIds = ids;
+            update.run(JSON.stringify(research), r.id);
+          }
+        }
+      },
+      {
+        version: 14,
+        description: "C\xF3mo iba la misi\xF3n en cada entrada ya guardada: entrada n.\xBA, p\xE9rdidas previas, resultado acumulado y minutos desde la \xFAltima p\xE9rdida",
+        up: (db2) => {
+          const positions = db2.prepare("SELECT p.id, p.mission_id, p.opened_at, p.closed_at, p.status, p.realized_cost_usd AS c, p.realized_proceeds_usd AS pr, p.research, m.initial_usd FROM positions p JOIN missions m ON m.id = p.mission_id ORDER BY p.opened_at, p.id").all();
+          const update = db2.prepare("UPDATE positions SET research = ? WHERE id = ?");
+          for (const p of positions) {
+            if (p.status === "moved") continue;
+            const same = positions.filter((x) => x.mission_id === p.mission_id);
+            const before = same.filter((x) => x.status === "closed" && x.closed_at !== null && x.closed_at <= p.opened_at);
+            const losses = before.filter((x) => x.c > 0 && x.pr < x.c * 0.99).sort((a, b) => a.closed_at.localeCompare(b.closed_at));
+            const research = JSON.parse(p.research ?? "{}");
+            research.entryNumberInMission = same.filter((x) => x.status !== "moved" && x.opened_at < p.opened_at).length + 1;
+            research.lossesBeforeInMission = losses.length;
+            if (p.initial_usd > 0) research.missionPnlPctAtEntry = Number((before.reduce((s, x) => s + x.pr - x.c, 0) / p.initial_usd * 100).toFixed(1));
+            const last = losses.at(-1);
+            if (last) research.minutesSinceLastLoss = Math.round((new Date(p.opened_at).getTime() - new Date(last.closed_at).getTime()) / 6e4);
+            update.run(JSON.stringify(research), p.id);
+          }
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -7905,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.39.0";
+    CODE_VERSION = "0.40.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

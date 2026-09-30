@@ -46,7 +46,9 @@ export async function checkBuyAgainstMemory(a: {
   const decision = a.missionId !== undefined ? decisionContext(a.missionId, chain.id, out.address, amountUsd, false) : {};
   const entry = { ...features, ...creatorHistory(features.creator) } as unknown as Record<string, unknown>;
   const blocking = blockingBeliefs(chain.id, entry, out.address, decision);
-  for (const b of blocking.filter((x) => !overridden.has(x.id))) reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})`);
+  for (const b of blocking.filter((x) => !overridden.has(x.id))) {
+    reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})${b.whenOverridden ? `. Cuando la ignoraste: ${b.whenOverridden}` : ""}`);
+  }
   if (reasons.length) {
     const ids = blocking.filter((x) => !overridden.has(x.id)).map((b) => b.id);
     throw new Error(

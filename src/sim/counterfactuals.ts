@@ -18,6 +18,8 @@ export interface Counterfactual {
   /** Lo más alto y lo más bajo que llegó mientras la tenía (cierres de cada minuto), sobre el precio de entrada. */
   bestWhileHeldPct?: number;
   worstWhileHeldPct?: number;
+  /** Lo más alto dentro de cada minuto mientras la tenía: puede ser un pico de segundos que no se podía vender. */
+  highWhileHeldPct?: number;
   /** Si la hubiera mantenido 15 o 30 minutos más (sobre el precio de entrada). */
   ifHeld15Pct?: number;
   ifHeld30Pct?: number;
@@ -57,12 +59,22 @@ async function perpCandles(coin: string, fromSec: number, toSec: number): Promis
   return raw.map((k) => [Math.floor(k[0] / 1000), Number(k[1]), Number(k[2]), Number(k[3]), Number(k[4])]);
 }
 
-/** Precio de cierre de la última vela en o antes de `sec`. */
+/**
+ * Precio en el instante `sec`, sin mirar al futuro: el cierre de la última vela ya terminada o, si `sec` cae en la
+ * primera, su apertura. Antes se tomaba el cierre de la vela en curso, que llega hasta un minuto después: en una
+ * operación de segundos la entrada y la salida salían iguales (fableroom, M11 de la v0.39.0: "0 % de movimiento"
+ * en un minuto en que la curva subió un 45 %).
+ */
 const priceAt = (cs: Array<[number, number, number, number, number]>, sec: number) => {
   let p: number | undefined;
-  for (const c of cs) if (c[0] <= sec) p = c[4];
+  for (const c of cs) {
+    if (c[0] + 60 <= sec) p = c[4];
+    else if (c[0] <= sec) p ??= c[1];
+  }
   return p;
 };
+/** Una operación más corta que esto no se puede medir con velas de 1 minuto. */
+const MIN_MEASURABLE_SEC = 120;
 
 async function one(p: Pos): Promise<Counterfactual> {
   const base: Counterfactual = { positionId: p.id, symbol: p.symbol, actualPct: p.pnlPct ?? null };
@@ -80,7 +92,10 @@ async function one(p: Pos): Promise<Counterfactual> {
   const entry = priceAt(cs, open) ?? cs[0]?.[4];
   const exit = priceAt(cs, close);
   if (!entry || !exit) return { ...base, unavailable: "sin velas en ese intervalo" };
-  const held = cs.filter((c) => c[0] >= open - 60 && c[0] <= close);
+  // Cierres de los minutos terminados mientras la tenía, y máximos de los minutos que tocó.
+  const held = cs.filter((c) => c[0] + 60 > open && c[0] + 60 <= close);
+  const touched = cs.filter((c) => c[0] + 60 > open && c[0] <= close);
+  const shortTrade = close - open < MIN_MEASURABLE_SEC;
   const at15 = close + 15 * 60 <= now ? priceAt(cs, close + 15 * 60) : undefined;
   const at30 = close + 30 * 60 <= now ? priceAt(cs, close + 30 * 60) : undefined;
   const d = perp ? 2 : 1;
@@ -91,6 +106,7 @@ async function one(p: Pos): Promise<Counterfactual> {
     // segundo que no se podían vender (en la M28, p/acc "llegó a +66 %" justo antes de un rug del -95 %).
     bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[4])), d) : undefined,
     worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[4])), d) : undefined,
+    highWhileHeldPct: touched.length ? pct(entry, Math.max(...touched.map((c) => c[2])), d) : undefined,
     ifHeld15Pct: at15 ? pct(entry, at15, d) : undefined,
     ifHeld30Pct: at30 ? pct(entry, at30, d) : undefined,
   };
@@ -105,11 +121,17 @@ async function one(p: Pos): Promise<Counterfactual> {
     if (out.ifHeld30Pct < out.marketMovePct - 15) notes.push(`mantenerla 30 min más habría dado ${out.ifHeld30Pct} %: la salida fue buena`);
     else if (out.ifHeld30Pct > out.marketMovePct + 15) notes.push(`mantenerla 30 min más habría dado ${out.ifHeld30Pct} %: salió demasiado pronto`);
   }
-  if (out.bestWhileHeldPct !== undefined && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) notes.push("nunca llegó a ir en positivo: el problema fue la entrada, no la salida");
+  if (!shortTrade && out.bestWhileHeldPct !== undefined && out.bestWhileHeldPct < (perp ? 0.1 : 3) && (p.pnlPct ?? 0) < 0) {
+    notes.push("nunca llegó a ir en positivo: el problema fue la entrada, no la salida");
+  }
+  if (out.highWhileHeldPct !== undefined && out.highWhileHeldPct >= 10) notes.push(`dentro del minuto llegó a +${out.highWhileHeldPct} % (puede ser un pico no vendible)`);
   if (perp) notes.push(`futuro a ${perp[3]}x: los % son del precio en el sentido de la posición; sobre el margen, por ${perp[3]}`);
   // Si el precio del pool no cuadra con lo que dio la venta real (rug, pool distinto o mucho impacto), sus
   // "llegó a" y "habría dado" no eran precios a los que se pudiera vender: se avisa para no juzgar la salida con ellos.
-  if (out.marketMovePct !== undefined && base.actualPct !== null && Math.abs(out.marketMovePct - base.actualPct) > 15) {
+  if (shortTrade) {
+    out.unreliable = `operación de ${close - open} s: las velas de 1 min no la miden (entrada, salida y máximos pueden no corresponder)`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  } else if (out.marketMovePct !== undefined && base.actualPct !== null && Math.abs(out.marketMovePct - base.actualPct) > 15) {
     out.unreliable = `el precio del pool (${out.marketMovePct} %) no cuadra con la venta real (${base.actualPct} %): no eran precios de venta`;
     notes.unshift("lectura poco fiable, ver unreliable");
   }

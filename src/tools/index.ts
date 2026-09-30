@@ -78,7 +78,24 @@ const formatThesis = (t: z.infer<typeof thesis>) =>
   (t.risks_checked ? `\nRiesgos comprobados: ${t.risks_checked}` : "") +
   (t.overrides?.length ? `\nIgnora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 
-const tradeMeta = (t: z.infer<typeof thesis>) => ({ thesis: formatThesis(t), lessonsApplied: t.memory_note, beliefsApplied: t.beliefs_applied });
+/**
+ * Tras una compra, qué creencias citadas en la tesis no cumple el token (y por qué dato). No frena nada: se lo
+ * dice y lo guarda en la posición.
+ */
+async function withCitedCheck<T extends object>(missionId: number, chain: ChainId, output: string, cited: number[], trade: Promise<T>) {
+  const result = await trade;
+  if (!cited.length) return result;
+  const token = await getChain(chain).resolveToken(output).catch(() => null);
+  const notes = token ? memory.checkCitedBeliefs(missionId, chain, token.address, cited) : [];
+  return notes.length ? { ...result, citedBeliefsNotMet: notes } : result;
+}
+
+const tradeMeta = (t: z.infer<typeof thesis>) => ({
+  thesis: formatThesis(t),
+  lessonsApplied: t.memory_note,
+  beliefsApplied: t.beliefs_applied,
+  ...(t.overrides?.length ? { beliefsOverridden: t.overrides.map((o) => o.id) } : {}),
+});
 
 
 // ─── Chequeo de riesgo de token_report ──────────────────────────────────────
@@ -629,18 +646,24 @@ export const SIM_TOOLS = [
       if (sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es REAL: usa execute_swap (opera con dinero de verdad). simulate_swap solo sirve en misiones simuladas.");
       await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json(
-        await sim.swap({
-          missionId: mid(ctx),
-          sessionId: ctx.sessionId,
-          chain: i.chain,
-          input: i.input,
-          output: i.output,
-          amount: i.amount,
-          sellAll: i.sell_all,
-          slippageBps: i.slippage_bps,
-          reasoning: formatThesis(i.thesis),
-          meta: tradeMeta(i.thesis),
-        }),
+        await withCitedCheck(
+          mid(ctx),
+          i.chain,
+          i.output,
+          i.thesis.beliefs_applied,
+          sim.swap({
+            missionId: mid(ctx),
+            sessionId: ctx.sessionId,
+            chain: i.chain,
+            input: i.input,
+            output: i.output,
+            amount: i.amount,
+            sellAll: i.sell_all,
+            slippageBps: i.slippage_bps,
+            reasoning: formatThesis(i.thesis),
+            meta: tradeMeta(i.thesis),
+          }),
+        ),
       );
     },
   }),
@@ -667,18 +690,24 @@ export const SIM_TOOLS = [
       if (!sim.isLiveMission(mid(ctx))) throw new Error("Esta misión es simulada: usa simulate_swap. execute_swap solo existe en misiones reales.");
       await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json(
-        await sim.swap({
-          missionId: mid(ctx),
-          sessionId: ctx.sessionId,
-          chain: i.chain,
-          input: i.input,
-          output: i.output,
-          amount: i.amount,
-          sellAll: i.sell_all,
-          slippageBps: i.slippage_bps,
-          reasoning: formatThesis(i.thesis),
-          meta: tradeMeta(i.thesis),
-        }),
+        await withCitedCheck(
+          mid(ctx),
+          i.chain,
+          i.output,
+          i.thesis.beliefs_applied,
+          sim.swap({
+            missionId: mid(ctx),
+            sessionId: ctx.sessionId,
+            chain: i.chain,
+            input: i.input,
+            output: i.output,
+            amount: i.amount,
+            sellAll: i.sell_all,
+            slippageBps: i.slippage_bps,
+            reasoning: formatThesis(i.thesis),
+            meta: tradeMeta(i.thesis),
+          }),
+        ),
       );
     },
   }),

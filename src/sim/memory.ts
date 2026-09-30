@@ -107,6 +107,13 @@ export const CONDITION_FIELDS = [
   "netBuyersTrend",
   "fillVsPricePct",
   "roundTripAtEntryPct",
+  // Cuántas creencias negativas se saltó a sabiendas al entrar (thesis.overrides).
+  "beliefsOverridden",
+  // Cómo iba la misión al entrar: entrada n.º, pérdidas ya cerradas, resultado acumulado y minutos desde la última pérdida.
+  "entryNumberInMission",
+  "lossesBeforeInMission",
+  "missionPnlPctAtEntry",
+  "minutesSinceLastLoss",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -139,6 +146,11 @@ const RESEARCH_FIELDS = new Set([
   "netBuyersTrend",
   "fillVsPricePct",
   "roundTripAtEntryPct",
+  "beliefsOverridden",
+  "entryNumberInMission",
+  "lossesBeforeInMission",
+  "missionPnlPctAtEntry",
+  "minutesSinceLastLoss",
 ]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {
@@ -163,6 +175,50 @@ export function matches(cond: Condition, p: Pos): boolean {
         return op === "<" ? x < v : op === "<=" ? x <= v : op === ">" ? x > v : x >= v;
     }
   });
+}
+
+/** Las cláusulas de una condición que una posición no cumple, con su valor real ("sin dato" si no lo hay). */
+function failingClauses(cond: Condition, p: Pos): string[] {
+  return cond.all
+    .filter((c) => !matches({ all: [c] }, p))
+    .map(({ f, op, v }) => {
+      const x = fieldValue(p, f);
+      return `${f} ${x === undefined || x === null ? "sin dato" : JSON.stringify(x)} (pide ${op} ${JSON.stringify(v)})`;
+    });
+}
+
+/**
+ * Tras una compra: de las creencias que el agente cita en su tesis (beliefs_applied), cuáles cumple de verdad el
+ * token y cuáles no, y por qué dato. Se guarda en la posición (citedBeliefsMet / citedBeliefsNotMet) para que la
+ * evidencia de "cuando la aplicó" cuente solo las aplicaciones reales. El revisor encontró la #4 citada en 5
+ * compras perdedoras que no la cumplían (v0.39.0): el agente creía filtrar con su memoria y no lo hacía.
+ */
+export function checkCitedBeliefs(missionId: number, venue: string, asset: string, ids: number[]): string[] {
+  if (!ids.length) return [];
+  const p = listPositions(missionId).find((x) => x.venue === venue && x.asset === asset && x.status === "open");
+  if (!p) return [];
+  const met: number[] = [];
+  const notMet: number[] = [];
+  const notes: string[] = [];
+  for (const id of [...new Set(ids)]) {
+    const b = db.prepare("SELECT * FROM beliefs WHERE id = ?").get(id) as BeliefRow | undefined;
+    if (!b?.condition) continue;
+    const failing = failingClauses(JSON.parse(b.condition) as Condition, p);
+    if (!failing.length) met.push(id);
+    else {
+      notMet.push(id);
+      notes.push(`Citas #${id}, pero este token no la cumple: ${failing.join("; ")}`);
+    }
+  }
+  const row = db.prepare("SELECT research FROM positions WHERE id = ?").get(p.id) as { research: string | null };
+  const research = JSON.parse(row.research ?? "{}") as Record<string, unknown>;
+  // Al ampliar se queda lo de la entrada.
+  if (research.citedBeliefsMet === undefined) {
+    research.citedBeliefsMet = met;
+    research.citedBeliefsNotMet = notMet;
+    db.prepare("UPDATE positions SET research = ? WHERE id = ?").run(JSON.stringify(research), p.id);
+  }
+  return notes;
 }
 
 const describeCondition = (c: Condition) => c.all.map(({ f, op, v }) => `${f} ${op} ${JSON.stringify(v)}`).join(" y ");
@@ -248,7 +304,14 @@ const STAGE_LABEL: Record<BeliefStage, string> = {
 };
 
 function beliefEvidence(b: BeliefRow, closed: Pos[]) {
-  const applied = summarizeTrades(closed.filter((p) => p.beliefsApplied.includes(b.id)));
+  // Solo las veces que la aplicó de verdad: citarla en una compra que no cumplía su condición no cuenta.
+  // Las compras anteriores a guardarlo (v0.40.0) se comprueban con la condición actual.
+  const cited = closed.filter((p) => p.beliefsApplied.includes(b.id));
+  const condition = b.condition ? (JSON.parse(b.condition) as Condition) : null;
+  const notMet = cited.filter(
+    (p) => (Array.isArray(p.research.citedBeliefsNotMet) && (p.research.citedBeliefsNotMet as number[]).includes(b.id)) || (condition !== null && !matches(condition, p)),
+  );
+  const applied = { ...summarizeTrades(cited.filter((p) => !notMet.includes(p))), ...(notMet.length ? { citedWithoutMeetingIt: notMet.length } : {}) };
   const cond = b.condition ? (JSON.parse(b.condition) as Condition) : null;
   let matched: Record<string, unknown> | undefined;
   let verdict = applied.trades
@@ -277,7 +340,24 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
     if (decided >= 3) verdict += ` · ${STAGE_LABEL[stage]}`;
     verdict += magnitude(summary);
   }
-  return { verdict, appliedIn: applied, ...(matched ? { matchingTrades: matched } : {}) };
+  const skipped = overrideRecord(b.id, closed);
+  return { verdict, appliedIn: applied, ...(matched ? { matchingTrades: matched } : {}), ...(skipped ? { whenOverridden: skipped } : {}) };
+}
+
+/**
+ * Cómo le fue al agente las veces que se saltó a sabiendas esta creencia (thesis.overrides): el precio real de
+ * ignorar su memoria, con sus propias operaciones. null si nunca se la ha saltado.
+ */
+export function overrideRecord(beliefId: number, closed: Pos[] = closedPositions()) {
+  const ps = closed.filter((p) => Array.isArray(p.research.overriddenBeliefIds) && (p.research.overriddenBeliefIds as number[]).includes(beliefId));
+  if (!ps.length) return null;
+  const pcts = ps.map((p) => p.pnlPct ?? 0);
+  return {
+    times: ps.length,
+    won: ps.filter((p) => (p.pnlUsd ?? 0) > 0).length,
+    avgPnlPct: Number((pcts.reduce((s, x) => s + x, 0) / ps.length).toFixed(1)),
+    text: `te la has saltado ${ps.length} ${ps.length === 1 ? "vez" : "veces"}: ${ps.filter((p) => (p.pnlUsd ?? 0) > 0).length} ganadas, media ${(pcts.reduce((s, x) => s + x, 0) / ps.length).toFixed(1)} %`,
+  };
 }
 
 function beliefView(b: BeliefRow, closed: Pos[]) {
@@ -380,6 +460,8 @@ export interface BlockingBelief {
   id: number;
   statement: string;
   verdict: string;
+  /** Las veces que el agente se la saltó y cómo le fue. */
+  whenOverridden?: string;
 }
 
 /**
@@ -406,7 +488,7 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
     .filter((b) => matches(JSON.parse(b.condition!) as Condition, pos))
     .map((b) => ({ b, ev: beliefEvidence(b, closed) }))
     .filter(({ ev }) => isStrongNegative(ev))
-    .map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict }));
+    .map(({ b, ev }) => ({ id: b.id, statement: b.statement, verdict: ev.verdict, ...(ev.whenOverridden ? { whenOverridden: ev.whenOverridden.text } : {}) }));
 }
 
 function isStrongNegative(ev: ReturnType<typeof beliefEvidence>) {
@@ -989,6 +1071,13 @@ export function recentApproach(count = 8) {
   });
   const n = perMission.length;
   const share = (f: (x: (typeof perMission)[number]) => boolean) => `${perMission.filter(f).length} de ${n}`;
+  // El coste medido de entrar y salir en esas misiones (vender en el mismo instante de comprar). El agente llegó a
+  // creer que costaba un 4-8 % cuando la mediana medida era del 2,1 % (v0.39.0): así lo tiene a la vista.
+  const trips = missions
+    .flatMap((m) => listPositions(m.id).map((p) => Number(p.research.roundTripAtEntryPct)))
+    .filter((x) => Number.isFinite(x))
+    .sort((a, b) => a - b);
+  const quantile = (q: number) => trips[Math.min(trips.length - 1, Math.floor(q * trips.length))]!;
   const avg = (xs: number[]) => (xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null);
   // Éxitos seguidos al final de la serie: si el enfoque actual gana, no es estancamiento.
   let successStreak = 0;
@@ -999,6 +1088,7 @@ export function recentApproach(count = 8) {
       succeeded: share((x) => x.succeeded),
       successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n).toFixed(1)),
+      ...(trips.length ? { roundTripAtEntry: `mediana ${quantile(0.5)} %, p75 ${quantile(0.75)} % (${trips.length} compras)` } : {}),
       bestPct: Math.max(...perMission.map((x) => x.resultPct)),
       worstPct: Math.min(...perMission.map((x) => x.resultPct)),
       /** Media de lo ganado en las conseguidas y de lo perdido en las demás: cuánto pesa cada fallo frente a cada éxito. */

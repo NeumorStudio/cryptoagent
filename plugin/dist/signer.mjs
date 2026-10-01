@@ -39262,6 +39262,13 @@ var init_migrations = __esm({
             update.run(JSON.stringify(research), p.id);
           }
         }
+      },
+      {
+        version: 15,
+        description: "Misiones sin objetivo: el usuario pide el m\xE1ximo rendimiento en el plazo, sin una meta",
+        up: (db2) => {
+          db2.exec("ALTER TABLE missions ADD COLUMN open_target INTEGER NOT NULL DEFAULT 0");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -39458,7 +39465,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.48.0";
+    CODE_VERSION = "0.49.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

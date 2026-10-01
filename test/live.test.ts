@@ -272,3 +272,19 @@ test("puente real en camino: no se abona por tiempo y no se cuenta dos veces cua
   const after = await total();
   assert.ok(Math.abs(after - before) < 0.01, `${before} → ${after}: contado dos veces`);
 });
+
+test("misión real sin objetivo: no tiene meta ni cierre al llegar, y mantiene los límites", () => {
+  const m = createLiveMission({
+    holdings: [{ venue: "solana", asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", symbol: "USDC", decimals: 6, amount: 40 }],
+    totalUsd: 40,
+    byChain: { solana: 40, base: 0, bsc: 0 },
+    targetPct: null,
+    durationMinutes: 30,
+    approval: "auto",
+    limits: { maxTradeUsd: 10, maxLossPct: 50 },
+  });
+  assert.equal(m.open_target, 1);
+  assert.equal(m.close_on_target, 0);
+  assert.equal(m.mode, "live");
+  assert.deepEqual(JSON.parse(m.limits!), { maxTradeUsd: 10, maxLossPct: 50 });
+});

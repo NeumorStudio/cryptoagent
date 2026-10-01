@@ -472,9 +472,11 @@ function render() {
   $("missionName").textContent = `Misión #${m.id}`;
   const pill = $("pill");
   pill.hidden = false;
-  pill.textContent = { active: "en carrera", succeeded: "meta alcanzada", expired: "no llegó", bust: "☠ sin fondos", cancelled: "detenida", closing: "cerrando" }[m.status] ?? m.status;
+  // Misión sin objetivo: no hay meta; cuenta lo que valga la cartera al final.
+  const open = m.open_target === 1;
+  pill.textContent = { active: "en carrera", succeeded: "meta alcanzada", expired: open ? "terminada" : "no llegó", bust: "☠ sin fondos", cancelled: "detenida", closing: "cerrando" }[m.status] ?? m.status;
   pill.className = "pill" + (m.status === "succeeded" ? " win" : m.status === "bust" ? " bust" : "");
-  $("missionSub").textContent = `De ${usd(m.initial_usd)} a ${usd(m.target_usd)} en ${span} · ${m.instructions ? `instrucciones: ${m.instructions}` : "modo libre"}`;
+  $("missionSub").textContent = `${open ? `${usd(m.initial_usd)}, sin objetivo: el máximo rendimiento` : `De ${usd(m.initial_usd)} a ${usd(m.target_usd)}`} en ${span} · ${m.instructions ? `instrucciones: ${m.instructions}` : "modo libre"}`;
   renderClock();
 
   const current = m.status === "active" ? v?.totalUsd : (m.final_usd ?? v?.totalUsd);
@@ -486,7 +488,11 @@ function render() {
     const toGo = m.target_usd - current;
     document.body.classList.toggle("is-bust", m.status === "bust");
     $("gap").textContent =
-      m.status === "succeeded" ? `Meta alcanzada: terminó con ${usd(m.final_usd ?? current)}.`
+      open && m.status !== "bust"
+        ? m.status === "active"
+          ? "Sin objetivo: cuenta lo que valga la cartera al final del plazo."
+          : `Terminó con ${usd(current)} (${signed((diff / m.initial_usd) * 100, " %")}).`
+      : m.status === "succeeded" ? `Meta alcanzada: terminó con ${usd(m.final_usd ?? current)}.`
       : m.status === "bust" ? `☠ Sin fondos: se quedó con ${usd(current)} y ya no podía operar. Misión muerta.`
       : m.status !== "active" ? `Terminó con ${usd(current)}, a ${usd(Math.max(0, toGo))} de la meta.`
       : toGo <= 0 ? "En la meta: cerrando posiciones."
@@ -507,14 +513,19 @@ function render() {
 // ── Pista ────────────────────────────────────────────────────
 function renderTrack(m, value, v) {
   const bench = v?.benchmarkUsd;
-  const stretch = m.target_usd - m.initial_usd;
+  const open = m.open_target === 1;
+  // Sin objetivo, la pista no tiene meta: la escala llega un poco más allá del mejor valor (o +10 %).
+  const target = open ? Math.max(m.initial_usd * 1.1, value * 1.02, bench ?? 0) : m.target_usd;
+  const stretch = target - m.initial_usd;
   const lo = Math.min(m.initial_usd - stretch * 0.4, value, bench ?? Infinity);
-  const hi = Math.max(m.target_usd, value) + stretch * 0.04;
+  const hi = Math.max(target, value) + stretch * 0.04;
   const pos = (x) => ((x - lo) / (hi - lo)) * 100;
-  const start = pos(m.initial_usd), finish = pos(m.target_usd), runner = pos(value);
+  const start = pos(m.initial_usd), finish = pos(target), runner = pos(value);
 
   $("startMark").style.left = `${start}%`;
   $("finishMark").style.left = `${finish}%`;
+  $("finishMark").hidden = open;
+  $("finishLabel").hidden = open;
   const sl = $("startLabel");
   sl.style.left = `${start}%`;
   sl.replaceChildren("salida ", el("b", {}, usd(m.initial_usd)));
@@ -524,7 +535,7 @@ function renderTrack(m, value, v) {
   // En pantallas estrechas salida y meta quedan cerca: la de salida se alinea a la izquierda de su
   // marca y, si aun así se pisan, se quedan solo las cifras.
   sl.classList.remove("right");
-  const overlap = () => sl.getBoundingClientRect().right + 8 > fl.getBoundingClientRect().left;
+  const overlap = () => !open && sl.getBoundingClientRect().right + 8 > fl.getBoundingClientRect().left;
   if (overlap()) sl.classList.add("right");
   if (overlap()) { sl.replaceChildren(el("b", {}, usd(m.initial_usd))); fl.replaceChildren(el("b", {}, usd(m.target_usd))); }
 
@@ -583,7 +594,7 @@ function renderChart() {
   const W = wrap.clientWidth, H = svg.clientHeight || 260, pad = { l: 4, r: 64, t: 28, b: 24 };
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const t1 = Math.max(new Date(m.deadline).getTime(), points.at(-1).t);
-  const ys = points.map((p) => p.y).concat([m.initial_usd, m.target_usd]);
+  const ys = points.map((p) => p.y).concat(m.open_target === 1 ? [m.initial_usd] : [m.initial_usd, m.target_usd]);
   const range = Math.max(...ys) - Math.min(...ys) || 1;
   const y0 = Math.min(...ys) - range * 0.08, y1 = Math.max(...ys) + range * 0.08;
   const X = (t) => pad.l + ((t - t0) / (t1 - t0)) * (W - pad.l - pad.r);
@@ -603,8 +614,10 @@ function renderChart() {
   add("line", { class: "grid", x1: pad.l, x2: W - pad.r, y1: H - pad.b, y2: H - pad.b });
   add("line", { class: "ref", x1: pad.l, x2: W - pad.r, y1: Y(m.initial_usd), y2: Y(m.initial_usd) });
   add("text", { class: "ref-label", x: W - pad.r + 8, y: Y(m.initial_usd) + 4 }, svg, `salida`);
-  add("line", { class: "ref meta", x1: pad.l, x2: W - pad.r, y1: Y(m.target_usd), y2: Y(m.target_usd) });
-  add("text", { class: "ref-label meta", x: W - pad.r + 8, y: Y(m.target_usd) + 4 }, svg, `meta`);
+  if (m.open_target !== 1) {
+    add("line", { class: "ref meta", x1: pad.l, x2: W - pad.r, y1: Y(m.target_usd), y2: Y(m.target_usd) });
+    add("text", { class: "ref-label meta", x: W - pad.r + 8, y: Y(m.target_usd) + 4 }, svg, `meta`);
+  }
   add("text", { class: "axis", x: pad.l, y: H - 6 }, svg, hm(m.created_at));
   add("text", { class: "axis", x: W - pad.r, y: H - 6, "text-anchor": "end" }, svg, hm(new Date(t1).toISOString()));
 

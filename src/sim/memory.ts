@@ -16,26 +16,32 @@ import { launchpadOf } from "./launchpads.js";
 
 interface Profile {
   durationMinutes: number;
-  targetPct: number;
+  /** null: misión sin objetivo (máximo rendimiento en el plazo). */
+  targetPct: number | null;
   directed: boolean;
 }
 
-function profile(m: Pick<Mission, "created_at" | "deadline" | "initial_usd" | "target_usd" | "instructions">): Profile {
+function profile(m: Pick<Mission, "created_at" | "deadline" | "initial_usd" | "target_usd" | "instructions" | "open_target">): Profile {
   return {
     durationMinutes: Math.max(1, Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 60_000)),
-    targetPct: Number((((m.target_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
+    targetPct: m.open_target ? null : Number((((m.target_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
     directed: !!m.instructions,
   };
 }
 
-/** Distancia entre perfiles: plazo en escala logarítmica, objetivo en tramos de 10 puntos, enfoque libre/dirigido. */
+/**
+ * Distancia entre perfiles: plazo en escala logarítmica, objetivo en tramos de 10 puntos, enfoque libre/dirigido. Una
+ * misión sin objetivo se parece a otra sin objetivo; frente a una con objetivo, cuenta como bastante distinta.
+ */
 function distance(a: Profile, b: Profile) {
-  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + Math.abs(a.targetPct - b.targetPct) / 10 + (a.directed === b.directed ? 0 : 0.5);
+  const target = a.targetPct === null || b.targetPct === null ? (a.targetPct === b.targetPct ? 0 : 1) : Math.abs(a.targetPct - b.targetPct) / 10;
+  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + target + (a.directed === b.directed ? 0 : 0.5);
 }
 
 const similarityLabel = (d: number) => (d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta");
 
-const describe = (p: Profile) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
+const describe = (p: Profile) =>
+  `${p.durationMinutes} min, ${p.targetPct === null ? "sin objetivo (máximo rendimiento)" : `objetivo +${p.targetPct} %`}, ${p.directed ? "con instrucciones" : "modo libre"}`;
 
 // ─── Condiciones de las creencias ───────────────────────────────────────────
 
@@ -560,7 +566,7 @@ export function recall(missionId?: number | null, limit?: number) {
         result:
           m.status === "cancelled"
             ? "cancelada por el usuario"
-            : `${m.status === "succeeded" ? "objetivo conseguido" : "no llegó al objetivo"}: ${m.initial_usd} → ${m.final_usd?.toFixed(2)} USD (${(
+            : `${m.open_target ? "sin objetivo" : m.status === "succeeded" ? "objetivo conseguido" : "no llegó al objetivo"}: ${m.initial_usd} → ${m.final_usd?.toFixed(2)} USD (${(
                 ((m.final_usd! - m.initial_usd) / m.initial_usd) *
                 100
               ).toFixed(1)} %)`,
@@ -1061,6 +1067,8 @@ export function recentApproach(count = 8) {
       holdingAtEnd: holding,
       parkedAtEnd: !holding && idleAtEndMinutes >= Math.max(3, durationMin * 0.25),
       succeeded: m.status === "succeeded",
+      /** Misión sin objetivo: no cuenta como conseguida ni como fallida, solo su rendimiento. */
+      openTarget: m.open_target === 1,
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
@@ -1080,12 +1088,14 @@ export function recentApproach(count = 8) {
   const quantile = (q: number) => trips[Math.min(trips.length - 1, Math.floor(q * trips.length))]!;
   const avg = (xs: number[]) => (xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null);
   // Éxitos seguidos al final de la serie: si el enfoque actual gana, no es estancamiento.
+  // Las misiones sin objetivo no son ni éxitos ni fracasos: las estadísticas de objetivo solo cuentan las que lo tenían.
+  const withTarget = perMission.filter((x) => !x.openTarget);
   let successStreak = 0;
-  for (let i = n - 1; i >= 0 && perMission[i]!.succeeded; i--) successStreak++;
+  for (let i = withTarget.length - 1; i >= 0 && withTarget[i]!.succeeded; i--) successStreak++;
   return {
     summary: {
       missions: n,
-      succeeded: share((x) => x.succeeded),
+      succeeded: `${withTarget.filter((x) => x.succeeded).length} de ${withTarget.length}` + (withTarget.length < n ? ` (y ${n - withTarget.length} sin objetivo)` : ""),
       successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n).toFixed(1)),
       ...(trips.length ? { roundTripAtEntry: `mediana ${quantile(0.5)} %, p75 ${quantile(0.75)} % (${trips.length} compras)` } : {}),
@@ -1093,7 +1103,8 @@ export function recentApproach(count = 8) {
       worstPct: Math.min(...perMission.map((x) => x.resultPct)),
       /** Media de lo ganado en las conseguidas y de lo perdido en las demás: cuánto pesa cada fallo frente a cada éxito. */
       avgResultPctSucceeded: avg(perMission.filter((x) => x.succeeded).map((x) => x.resultPct)),
-      avgResultPctFailed: avg(perMission.filter((x) => !x.succeeded).map((x) => x.resultPct)),
+      avgResultPctFailed: avg(withTarget.filter((x) => !x.succeeded).map((x) => x.resultPct)),
+      ...(withTarget.length < n ? { avgResultPctOpenTarget: avg(perMission.filter((x) => x.openTarget).map((x) => x.resultPct)) } : {}),
       withOneEntry: share((x) => x.positions === 1),
       /** Misiones que acabaron paradas (sin operar el último cuarto del plazo) sin llegar: se rindió. */
       parkedAtEnd: share((x) => x.parkedAtEnd),

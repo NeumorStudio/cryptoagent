@@ -237,6 +237,13 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 15,
+    description: "Misiones sin objetivo: el usuario pide el máximo rendimiento en el plazo, sin una meta",
+    up: (db) => {
+      db.exec("ALTER TABLE missions ADD COLUMN open_target INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 /**

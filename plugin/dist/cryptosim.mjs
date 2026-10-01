@@ -8128,6 +8128,13 @@ var init_migrations = __esm({
             update.run(JSON.stringify(research), p.id);
           }
         }
+      },
+      {
+        version: 15,
+        description: "Misiones sin objetivo: el usuario pide el m\xE1ximo rendimiento en el plazo, sin una meta",
+        up: (db2) => {
+          db2.exec("ALTER TABLE missions ADD COLUMN open_target INTEGER NOT NULL DEFAULT 0");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8360,7 +8367,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.48.0";
+    CODE_VERSION = "0.49.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42918,26 +42925,33 @@ function missionHistory() {
     return {
       missionId: m.id,
       capitalUsd: m.initial_usd,
-      targetUsd: m.target_usd,
-      targetPct: Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
+      targetUsd: m.open_target ? null : m.target_usd,
+      targetPct: m.open_target ? null : Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
+      ...m.open_target ? { goal: "sin objetivo: el m\xE1ximo rendimiento posible en el plazo" } : {},
       durationMinutes: minutes,
       userInstructions: m.instructions ?? "ninguna (modo libre)",
       finalUsd: m.final_usd === null ? null : Number(m.final_usd.toFixed(2)),
       resultPct: m.final_usd === null ? null : Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(2)),
-      outcome: m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no lleg\xF3 al objetivo" : m.status === "bust" ? "sin fondos (bancarrota)" : "cancelada",
+      outcome: outcomeLabel(m),
       reviewed: m.review_origin !== null || m.reviewed_at !== null
     };
   });
+}
+function outcomeLabel(m) {
+  if (m.status === "bust") return "sin fondos (bancarrota)";
+  if (m.status === "cancelled") return "cancelada";
+  if (m.open_target) return "sin objetivo: termin\xF3 por tiempo (cuenta el rendimiento)";
+  return m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no lleg\xF3 al objetivo" : m.status;
 }
 function insertMission(args) {
   const deadline = new Date(Date.now() + args.durationMinutes * 6e4).toISOString();
   const id = Number(
     db.prepare(
-      "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target, open_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).run(
       now(),
       args.initialUsd,
-      args.targetUsd,
+      args.targetUsd ?? args.initialUsd,
       deadline,
       args.instructions?.trim() || null,
       JSON.stringify(args.allocation),
@@ -42945,7 +42959,8 @@ function insertMission(args) {
       args.live ? "live" : "sim",
       args.live?.approval ?? null,
       args.live ? JSON.stringify(args.live.limits) : null,
-      args.closeOnTarget === false ? 0 : 1
+      args.closeOnTarget === false || args.targetUsd === null ? 0 : 1,
+      args.targetUsd === null ? 1 : 0
     ).lastInsertRowid
   );
   resetPortfolio(id, args.holdings);
@@ -42953,12 +42968,12 @@ function insertMission(args) {
     missionId: id,
     sessionId: null,
     kind: "mission",
-    summary: `${args.live ? "Misi\xF3n REAL" : "Misi\xF3n"} #${id} iniciada: de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD en ${Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)} min (el reloj arranca cuando el agente empieza a trabajar)`
+    summary: `${args.live ? "Misi\xF3n REAL" : "Misi\xF3n"} #${id} iniciada: ${args.targetUsd === null ? `${args.initialUsd.toFixed(2)} USD, sin objetivo (m\xE1ximo rendimiento)` : `de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD`} en ${Math.round((new Date(deadline).getTime() - Date.now()) / 6e4)} min (el reloj arranca cuando el agente empieza a trabajar)`
   });
   return id;
 }
 function validate4(initialUsd, targetUsd, durationMinutes) {
-  if (!(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
+  if (targetUsd !== null && !(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
   if (!(durationMinutes > 0)) throw new Error("La duraci\xF3n debe ser positiva");
 }
 async function createMission(initialUsd, targetUsd, durationMinutes, instructions, allocation = DEFAULT_ALLOCATION, opts = {}) {
@@ -42985,9 +43000,9 @@ function cancelActive() {
 }
 function createLiveMission(args) {
   if (!(args.totalUsd >= 1)) throw new Error(`La cartera real vale ${args.totalUsd.toFixed(2)} USD: env\xEDale fondos antes de empezar`);
-  if (!(args.targetPct > 0)) throw new Error("El objetivo debe ser una subida positiva");
+  if (args.targetPct !== null && !(args.targetPct > 0)) throw new Error("El objetivo debe ser una subida positiva");
   if (!(args.limits.maxTradeUsd > 0) || !(args.limits.maxLossPct > 0 && args.limits.maxLossPct <= 100)) throw new Error("L\xEDmites no v\xE1lidos");
-  const targetUsd = Number((args.totalUsd * (1 + args.targetPct / 100)).toFixed(2));
+  const targetUsd = args.targetPct === null ? null : Number((args.totalUsd * (1 + args.targetPct / 100)).toFixed(2));
   validate4(args.totalUsd, targetUsd, args.durationMinutes);
   const allocation = Object.fromEntries(
     Object.entries(args.byChain).filter(([, v]) => v > 0).map(([c, v]) => [c, Number((v / args.totalUsd * 100).toFixed(1))])
@@ -43032,7 +43047,7 @@ async function missionStatus(missionId) {
         status: mission.status,
         mode: mission.mode,
         initialUsd: mission.initial_usd,
-        targetUsd: mission.target_usd,
+        targetUsd: mission.open_target ? null : mission.target_usd,
         finalUsd: mission.final_usd,
         deadline: mission.deadline,
         endedAt: mission.ended_at,
@@ -43048,17 +43063,19 @@ async function missionStatus(missionId) {
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
-    targetUsd: mission.target_usd,
+    ...mission.open_target ? { goal: "SIN OBJETIVO: el usuario quiere el m\xE1ximo rendimiento posible al final del plazo. No hay una meta que alcanzar ni cierre al llegar a nada: cuenta lo que valga la cartera al acabar." } : {
+      targetUsd: mission.target_usd,
+      missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
+      progressPct: Number(((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd) * 100).toFixed(1))
+    },
     currentUsd: Number(v.totalUsd.toFixed(2)),
     currentUsdNote: "Valor de liquidaci\xF3n con cotizaciones de hasta 10 s: en tokens que se mueven r\xE1pido, vender puede dar algo distinto.",
-    missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
-    progressPct: Number(((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd) * 100).toFixed(1)),
     now: (/* @__PURE__ */ new Date()).toISOString(),
     deadline: mission.deadline,
     timeLeft: left.text,
     secondsLeft: left.seconds,
     resultPct: Number(((v.totalUsd - mission.initial_usd) / mission.initial_usd * 100).toFixed(1)),
-    closesOnTarget: mission.close_on_target !== 0 ? "s\xED: al llegar al objetivo se vende todo y la misi\xF3n termina conseguida" : "no: la misi\xF3n dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o m\xE1s. Llegar antes no la termina: qu\xE9 hacer entonces lo decides t\xFA",
+    closesOnTarget: mission.open_target ? "no hay objetivo: la misi\xF3n dura hasta el plazo y al final se vende todo" : mission.close_on_target !== 0 ? "s\xED: al llegar al objetivo se vende todo y la misi\xF3n termina conseguida" : "no: la misi\xF3n dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o m\xE1s. Llegar antes no la termina: qu\xE9 hacer entonces lo decides t\xFA",
     userInstructions: mission.instructions ?? "ninguna: modo libre",
     ...isLive(mission) ? {
       mode: "REAL: dinero de verdad de la cartera de la IA",
@@ -43085,7 +43102,7 @@ async function stopMission(closePositions, missionId) {
     missionId: mission.id,
     sessionId: null,
     kind: "mission",
-    summary: `Misi\xF3n #${mission.id} detenida por el usuario ${closePositions ? "cerrando posiciones" : "sin cerrar posiciones"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`,
+    summary: `Misi\xF3n #${mission.id} detenida por el usuario ${closePositions ? "cerrando posiciones" : "sin cerrar posiciones"}: ${mission.initial_usd} \u2192 ${final.totalUsd.toFixed(2)} USD (${targetText(mission)})`,
     details: { problems }
   });
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
@@ -43095,7 +43112,7 @@ function minutesSinceLastTrade(mission) {
   return (Date.now() - new Date(last ?? mission.started_at ?? mission.created_at).getTime()) / 6e4;
 }
 function idleCheck(mission, v, secondsLeft) {
-  if (mission.status !== "active" || v.totalUsd >= mission.target_usd || secondsLeft < 90 || v.totalUsd <= 0) return null;
+  if (mission.status !== "active" || !mission.open_target && v.totalUsd >= mission.target_usd || secondsLeft < 90 || v.totalUsd <= 0) return null;
   const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
   const cash = v.holdings.filter((h) => h.valuedBy === "stable" || natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
   const cashPct = cash / v.totalUsd * 100;
@@ -43103,7 +43120,7 @@ function idleCheck(mission, v, secondsLeft) {
   const idleMin = minutesSinceLastTrade(mission);
   if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
   const needPct = (mission.target_usd - v.totalUsd) / v.totalUsd * 100;
-  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; te falta un +${needPct.toFixed(0)} % y quedan ${Math.round(secondsLeft / 60)} min.` + (mission.instructions ? " Las instrucciones del usuario mandan." : "");
+  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; ` + (mission.open_target ? "" : `te falta un +${needPct.toFixed(0)} % y `) + `quedan ${Math.round(secondsLeft / 60)} min.` + (mission.instructions ? " Las instrucciones del usuario mandan." : "");
 }
 function bustFloor(mission) {
   return Math.max(2, mission.initial_usd * 0.05);
@@ -43175,11 +43192,11 @@ async function checkOne(mission) {
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });
     return [summary2];
   }
-  const succeeded = reached || !closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd;
+  const succeeded = !mission.open_target && (reached || !closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd);
   const finalStatus = succeeded ? "succeeded" : status;
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(finalStatus, now(), final.totalUsd, mission.id);
   const resultPct = (final.totalUsd - mission.initial_usd) / mission.initial_usd * 100;
-  const summary = `Misi\xF3n #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; objetivo ${mission.target_usd} USD)`;
+  const summary = `Misi\xF3n #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; ${targetText(mission)})`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }
@@ -43200,7 +43217,7 @@ async function checkMission(missionId) {
   );
   return results.flat();
 }
-var isLive, lastSync, checking;
+var isLive, targetText, lastSync, checking;
 var init_mission = __esm({
   "src/sim/mission.ts"() {
     "use strict";
@@ -43210,6 +43227,7 @@ var init_mission = __esm({
     init_transfers();
     init_venues();
     isLive = (m) => m?.mode === "live";
+    targetText = (m) => m.open_target ? "sin objetivo" : `objetivo ${m.target_usd} USD`;
     lastSync = /* @__PURE__ */ new Map();
     checking = /* @__PURE__ */ new Set();
   }
@@ -44084,7 +44102,8 @@ async function strategyFit(missionOrId) {
   const mission = typeof missionOrId === "number" ? getMission(missionOrId) : missionOrId;
   const v = await valuation(mission.id);
   const minutesLeft = Math.max(1, (new Date(mission.deadline).getTime() - Date.now()) / 6e4);
-  const need = mission.target_usd / v.totalUsd - 1;
+  const open2 = mission.open_target === 1;
+  const need = open2 ? 0 : mission.target_usd / v.totalUsd - 1;
   const a = Math.log(1 + Math.max(need, 0));
   const rows = [];
   const perpMax = await perpMarkets().then(
@@ -44098,8 +44117,8 @@ async function strategyFit(missionOrId) {
     const spot = probTouch(a, s);
     rows.push({
       strategy: `${sym} al contado`,
-      reachTargetPct: pct(spot),
-      fit: label(spot),
+      reachTargetPct: open2 ? null : pct(spot),
+      fit: open2 ? "sin objetivo" : label(spot),
       basis: `movimiento t\xEDpico en ${Math.round(minutesLeft)} min: \xB1${(s * 100).toFixed(2)} %; \xFAltima hora: ${vol.change1hPct > 0 ? "+" : ""}${vol.change1hPct} %`,
       available: true
     });
@@ -44114,10 +44133,10 @@ async function strategyFit(missionOrId) {
       const ruin = probTouch(liq, s);
       rows.push({
         strategy: `Futuros ${sym} ${lev}x`,
-        reachTargetPct: pct(reach),
+        reachTargetPct: open2 ? null : pct(reach),
         ruinPct: pct(ruin),
-        fit: label(reach * (1 - ruin)),
-        basis: `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
+        fit: open2 ? "sin objetivo" : label(reach * (1 - ruin)),
+        basis: open2 ? `movimiento t\xEDpico con ${lev}x: \xB1${(s * lev * 100).toFixed(1)} % de la cartera; liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp` : `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
         available: true
       });
     }
@@ -44126,18 +44145,29 @@ async function strategyFit(missionOrId) {
   if (closed.length >= 5) {
     const hit = closed.filter((p) => (p.pnlPct ?? 0) >= need * 100).length / closed.length;
     const ruin = closed.filter((p) => (p.pnlPct ?? 0) <= -50).length / closed.length;
+    const sorted = closed.map((p) => p.pnlPct ?? 0).sort((x, y) => x - y);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const winners = sorted.filter((x) => x > 0).length / sorted.length;
     rows.push({
       strategy: "Memecoin joven (< 60 min)",
-      reachTargetPct: pct(hit),
+      reachTargetPct: open2 ? null : pct(hit),
       ruinPct: pct(ruin),
-      fit: label(hit),
-      basis: `tus ${closed.length} operaciones: ${pct(hit)} % dieron +${(need * 100).toFixed(0)} % o m\xE1s en una sola operaci\xF3n y ${pct(ruin)} % perdieron la mitad o m\xE1s` + (hit < 0.05 && need > 0.3 ? "; con un objetivo as\xED, solo encadenando varias ganadoras" : ""),
+      fit: open2 ? "sin objetivo" : label(hit),
+      basis: open2 ? `tus ${closed.length} operaciones: mediana ${median > 0 ? "+" : ""}${median.toFixed(0)} %, ${pct(winners)} % en ganancias y ${pct(ruin)} % perdieron la mitad o m\xE1s` : `tus ${closed.length} operaciones: ${pct(hit)} % dieron +${(need * 100).toFixed(0)} % o m\xE1s en una sola operaci\xF3n y ${pct(ruin)} % perdieron la mitad o m\xE1s` + (hit < 0.05 && need > 0.3 ? "; con un objetivo as\xED, solo encadenando varias ganadoras" : ""),
       available: true
     });
   } else {
     rows.push({ strategy: "Memecoin joven (< 60 min)", reachTargetPct: null, fit: "sin datos", basis: "menos de 5 operaciones propias", available: true });
   }
   rows.sort((x, y) => (y.reachTargetPct ?? -1) * (1 - (y.ruinPct ?? 0) / 100) - (x.reachTargetPct ?? -1) * (1 - (x.ruinPct ?? 0) / 100));
+  if (open2) {
+    return {
+      goal: "sin objetivo: el m\xE1ximo rendimiento al final del plazo",
+      minutesLeft: Math.round(minutesLeft),
+      note: "Misi\xF3n sin objetivo: no hay probabilidad de llegar que calcular. Para cada estrategia, el recorrido t\xEDpico en el tiempo que queda (cripto grande) o tu historial (memecoins), y el riesgo de ruina. Sirve para comparar cu\xE1nto puede dar cada una y cu\xE1nto arriesga.",
+      strategies: rows
+    };
+  }
   return {
     needPct: Number((need * 100).toFixed(1)),
     minutesLeft: Math.round(minutesLeft),
@@ -73921,15 +73951,16 @@ init_launchpads();
 function profile(m) {
   return {
     durationMinutes: Math.max(1, Math.round((new Date(m.deadline).getTime() - new Date(m.created_at).getTime()) / 6e4)),
-    targetPct: Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
+    targetPct: m.open_target ? null : Number(((m.target_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
     directed: !!m.instructions
   };
 }
 function distance(a, b) {
-  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + Math.abs(a.targetPct - b.targetPct) / 10 + (a.directed === b.directed ? 0 : 0.5);
+  const target = a.targetPct === null || b.targetPct === null ? a.targetPct === b.targetPct ? 0 : 1 : Math.abs(a.targetPct - b.targetPct) / 10;
+  return Math.abs(Math.log(a.durationMinutes / b.durationMinutes)) + target + (a.directed === b.directed ? 0 : 0.5);
 }
 var similarityLabel = (d) => d <= 0.6 ? "muy parecida" : d <= 1.5 ? "parecida" : "distinta";
-var describe3 = (p) => `${p.durationMinutes} min, objetivo +${p.targetPct} %, ${p.directed ? "con instrucciones" : "modo libre"}`;
+var describe3 = (p) => `${p.durationMinutes} min, ${p.targetPct === null ? "sin objetivo (m\xE1ximo rendimiento)" : `objetivo +${p.targetPct} %`}, ${p.directed ? "con instrucciones" : "modo libre"}`;
 var CONDITION_FIELDS = [
   "venue",
   // Futuros (Hyperliquid): moneda, sentido y apalancamiento.
@@ -74284,7 +74315,7 @@ function recall(missionId, limit) {
       similarity: curProfile ? similarityLabel(d) : void 0,
       distance: Number(d.toFixed(2)),
       instructions: m.instructions ?? void 0,
-      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`,
+      result: m.status === "cancelled" ? "cancelada por el usuario" : `${m.open_target ? "sin objetivo" : m.status === "succeeded" ? "objetivo conseguido" : "no lleg\xF3 al objetivo"}: ${m.initial_usd} \u2192 ${m.final_usd?.toFixed(2)} USD (${((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)} %)`,
       ...review && review.origin !== "legacy" ? { nextTime: review.next_time } : {}
     };
   }).sort((a, b) => a.distance - b.distance);
@@ -74642,6 +74673,8 @@ function recentApproach(count = 8) {
       holdingAtEnd: holding,
       parkedAtEnd: !holding && idleAtEndMinutes >= Math.max(3, durationMin * 0.25),
       succeeded: m.status === "succeeded",
+      /** Misión sin objetivo: no cuenta como conseguida ni como fallida, solo su rendimiento. */
+      openTarget: m.open_target === 1,
       resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
@@ -74655,12 +74688,13 @@ function recentApproach(count = 8) {
   const trips = missions.flatMap((m) => listPositions(m.id).map((p) => Number(p.research.roundTripAtEntryPct))).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
   const quantile = (q) => trips[Math.min(trips.length - 1, Math.floor(q * trips.length))];
   const avg = (xs) => xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null;
+  const withTarget = perMission.filter((x) => !x.openTarget);
   let successStreak = 0;
-  for (let i = n3 - 1; i >= 0 && perMission[i].succeeded; i--) successStreak++;
+  for (let i = withTarget.length - 1; i >= 0 && withTarget[i].succeeded; i--) successStreak++;
   return {
     summary: {
       missions: n3,
-      succeeded: share((x) => x.succeeded),
+      succeeded: `${withTarget.filter((x) => x.succeeded).length} de ${withTarget.length}` + (withTarget.length < n3 ? ` (y ${n3 - withTarget.length} sin objetivo)` : ""),
       successStreak,
       avgResultPct: Number((perMission.reduce((s, x) => s + x.resultPct, 0) / n3).toFixed(1)),
       ...trips.length ? { roundTripAtEntry: `mediana ${quantile(0.5)} %, p75 ${quantile(0.75)} % (${trips.length} compras)` } : {},
@@ -74668,7 +74702,8 @@ function recentApproach(count = 8) {
       worstPct: Math.min(...perMission.map((x) => x.resultPct)),
       /** Media de lo ganado en las conseguidas y de lo perdido en las demás: cuánto pesa cada fallo frente a cada éxito. */
       avgResultPctSucceeded: avg(perMission.filter((x) => x.succeeded).map((x) => x.resultPct)),
-      avgResultPctFailed: avg(perMission.filter((x) => !x.succeeded).map((x) => x.resultPct)),
+      avgResultPctFailed: avg(withTarget.filter((x) => !x.succeeded).map((x) => x.resultPct)),
+      ...withTarget.length < n3 ? { avgResultPctOpenTarget: avg(perMission.filter((x) => x.openTarget).map((x) => x.resultPct)) } : {},
       withOneEntry: share((x) => x.positions === 1),
       /** Misiones que acabaron paradas (sin operar el último cuarto del plazo) sin llegar: se rindió. */
       parkedAtEnd: share((x) => x.parkedAtEnd),
@@ -76824,10 +76859,12 @@ async function statusReport(missionId) {
   const current = m.status === "active" ? v.totalUsd : m.final_usd ?? v.totalUsd;
   const change = (current - m.initial_usd) / m.initial_usd * 100;
   const progress = (current - m.initial_usd) / (m.target_usd - m.initial_usd) * 100;
-  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "terminada sin llegar al objetivo" : m.status === "bust" ? "SIN FONDOS: se qued\xF3 sin dinero para operar" : "detenida por el usuario";
+  const statusText = m.status === "active" ? `en curso, quedan ${timeLeft(m.deadline)}` : m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? m.open_target ? "terminada (sin objetivo: cuenta el rendimiento)" : "terminada sin llegar al objetivo" : m.status === "bust" ? "SIN FONDOS: se qued\xF3 sin dinero para operar" : "detenida por el usuario";
   const lines = [];
   lines.push(`Misi\xF3n #${m.id}: ${statusText}`);
-  lines.push(`Valor: ${usd(current)} (${pct3(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`);
+  lines.push(
+    m.open_target ? `Valor: ${usd(current)} (${pct3(change)}) \xB7 sin objetivo: el m\xE1ximo rendimiento en el plazo` : `Valor: ${usd(current)} (${pct3(change)}) \xB7 objetivo ${usd(m.target_usd)} \xB7 progreso ${Math.round(progress)} %`
+  );
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
   const open2 = listPositions(m.id).filter((p) => p.status === "open");
   if (m.status === "active") {
@@ -76951,20 +76988,23 @@ server.registerTool(
       replace: external_exports.boolean().default(false).describe("Cancelar la misi\xF3n activa si la hay"),
       instructions: external_exports.string().optional().describe("Instrucciones del usuario para esta misi\xF3n. Vac\xEDo = modo libre"),
       close_on_target: external_exports.boolean().default(true).describe("Solo sim. true: al tocar el objetivo se vende todo y la misi\xF3n termina. false: dura hasta el plazo y cuenta como conseguida si al final vale el objetivo o m\xE1s"),
+      open_target: external_exports.boolean().default(false).describe("true: misi\xF3n sin objetivo (el m\xE1ximo rendimiento posible en el plazo); no se pasa target_usd ni target_pct. Vale en sim y en live"),
       allocation: external_exports.object(Object.fromEntries(VENUES.map((v) => [v, external_exports.number().min(0).max(100).optional()]))).optional().describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`)
     }
   },
-  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target, open_target }) => {
     const active2 = getActiveMission();
     if (active2 && !replace) {
       return {
-        ...text(`Ya hay una misi\xF3n activa (#${active2.id}, objetivo ${active2.target_usd} USD, plazo ${active2.deadline}). Pregunta al usuario si quiere reemplazarla.`),
+        ...text(`Ya hay una misi\xF3n activa (#${active2.id}, ${targetText(active2)}, plazo ${active2.deadline}). Pregunta al usuario si quiere reemplazarla.`),
         isError: true
       };
     }
     try {
       if (mode === "live") {
-        if (!target_pct || !approval || !max_trade_usd || !max_loss_pct) throw new Error("En una misi\xF3n real hacen falta target_pct, approval, max_trade_usd y max_loss_pct");
+        if (!target_pct && !open_target || !approval || !max_trade_usd || !max_loss_pct) {
+          throw new Error("En una misi\xF3n real hacen falta target_pct (u open_target: true), approval, max_trade_usd y max_loss_pct");
+        }
         const running2 = await signerStatus();
         if (!running2?.status.unlocked || running2.status.stopped) throw new Error("La cartera real no est\xE1 desbloqueada: usa start_wallet y pide al usuario que la desbloquee en su p\xE1gina");
         const { closeEmptyTokenAccounts: closeEmptyTokenAccounts2 } = await Promise.resolve().then(() => (init_cleanup(), cleanup_exports));
@@ -76974,7 +77014,7 @@ server.registerTool(
           holdings: snap.holdings,
           totalUsd: snap.totalUsd,
           byChain: snap.byChain,
-          targetPct: target_pct,
+          targetPct: open_target ? null : target_pct,
           durationMinutes: duration_minutes,
           instructions,
           approval,
@@ -76983,8 +77023,8 @@ server.registerTool(
         return text(JSON.stringify(cleaned ? { ...mission2, accountsClosed: `${cleaned.closed} cuentas de token vac\xEDas cerradas: recuperados ${cleaned.recoveredSol} SOL` } : mission2));
       }
       if (!capital_usd) throw new Error("Falta capital_usd");
-      const target = target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : void 0);
-      if (!target) throw new Error("Falta target_usd o target_pct");
+      const target = open_target ? null : target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : void 0);
+      if (target === void 0) throw new Error("Falta target_usd o target_pct (o open_target: true para una misi\xF3n sin objetivo)");
       const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target });
       return text(JSON.stringify(mission));
     } catch (err) {

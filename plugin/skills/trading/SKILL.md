@@ -33,7 +33,7 @@ Primero, una llamada a AskUserQuestion con una sola pregunta, **Modo** (header "
 Haz una sola llamada a AskUserQuestion con estas cuatro preguntas:
 
 1. **Capital inicial** (header "Capital"): 100 $, 1.000 $ (Recommended), 10.000 $.
-2. **Objetivo** (header "Objetivo"), expresado como ganancia sobre el capital: +2 %, +5 % (Recommended), +10 %, +25 %.
+2. **Objetivo** (header "Objetivo"), expresado como ganancia sobre el capital: +5 % (Recommended), +10 %, +25 %, o "Sin objetivo" (descripción: "el máximo rendimiento posible en el plazo, sin una meta"; `open_target: true`).
 3. **Tiempo para conseguirlo** (header "Tiempo"): 1 hora, 6 horas, 24 horas (Recommended), 3 días.
 4. **Panel en directo** (header "Panel"): "Sí, abrir el panel (Recommended)", con la descripción "Arranca en tu ordenador (localhost) una web para ver en directo lo que hace el agente"; o "No".
 
@@ -51,11 +51,11 @@ Después, en otra llamada a AskUserQuestion, haz tres preguntas:
    - "Solo cadenas, sin Binance": Solana 40 %, Base 30 %, BNB Chain 30 % (`{"solana":40,"base":30,"bsc":30}`).
    - Con "Other" el usuario puede dar su propio reparto ("mitad Base, mitad Solana"): conviértelo a porcentajes que sumen 100.
    Marca como recomendada "Repartido" si el capital es de 100 $ o más, y "Todo en Solana" si es menor: repartido quedarían saldos de pocos dólares por sitio, y Binance exige unos 5 $ por orden.
-3. **Qué pasa al llegar al objetivo** (header "Al objetivo"):
+3. **Qué pasa al llegar al objetivo** (header "Al objetivo"; no la hagas si eligió "Sin objetivo"):
    - "Seguir hasta el final (Recommended)": la misión dura todo el plazo y cuenta como conseguida si al final vale el objetivo o más. Si llega antes, el agente decide si protege la ganancia o sigue operando, y hace más operaciones de las que aprender (`close_on_target: false`).
    - "Terminar la misión": al llegar al objetivo se vende todo y la misión termina conseguida (`close_on_target: true`).
 
-Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes`, `allocation` con el reparto elegido, `close_on_target` según la respuesta e `instructions` si las hay; en modo libre no lo envíes).
+Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absoluto, `duration_minutes`, `allocation` con el reparto elegido, `close_on_target` según la respuesta e `instructions` si las hay; en modo libre no lo envíes). Si eligió "Sin objetivo", envía `open_target: true` en lugar de `target_usd` y `close_on_target`.
 
 ### 3B. Misión real
 
@@ -63,7 +63,7 @@ Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absol
    - Si no hay cartera, o el firmante está apagado, bloqueado, parado o es de otra versión (`signerOutdated`): llama a `start_wallet` (si es de otra versión, lo reinicia con la actual) (abre la página de la cartera en su navegador) y explícale que allí debe crearla o desbloquearla con su contraseña. **Nunca pidas ni aceptes en el chat la frase de recuperación ni la contraseña.** Pregunta con AskUserQuestion si ya está ("Ya está desbloqueada" / "Cancelar") y vuelve a llamar a `wallet_status`.
    - Si la cartera vale menos de 5 $, dile que le envíe fondos a las direcciones que aparecen (USDC o USDT, y un poco de SOL, ETH o BNB para el gas) y para aquí.
 2. Enseña el saldo real total y por cadena. Después, una llamada a AskUserQuestion con cuatro preguntas:
-   1. **Objetivo** (header "Objetivo"), como ganancia sobre lo que vale la cartera: +5 %, +10 % (Recommended), +25 %.
+   1. **Objetivo** (header "Objetivo"), como ganancia sobre lo que vale la cartera: +5 %, +10 % (Recommended), +25 %, o "Sin objetivo" (el máximo rendimiento posible en el plazo; `open_target: true`).
    2. **Tiempo** (header "Tiempo"): 15 minutos, 1 hora (Recommended), 6 horas.
    3. **Aprobación** (header "Aprobación"):
       - "Yo apruebo cada operación (Recommended)": el agente propone y la operación espera (hasta 90 s) a que la apruebes en la página de la cartera.
@@ -73,7 +73,7 @@ Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absol
       - "Amplios": máximo por operación = 50 % del saldo; pérdida máxima = 60 %.
       - Con "Other", el usuario da sus cifras.
 3. Pregunta también el **Panel** y el **Enfoque**, como en 3A (pueden ir en la misma llamada a AskUserQuestion que las anteriores si caben; si no, en otra).
-4. Crea la misión con `create_mission`: `mode: "live"`, `target_pct`, `duration_minutes`, `approval` (`manual` o `auto`), `max_trade_usd` (en USD, calculado sobre el saldo), `max_loss_pct` e `instructions` si las hay.
+4. Crea la misión con `create_mission`: `mode: "live"`, `target_pct` (u `open_target: true` si eligió "Sin objetivo"), `duration_minutes`, `approval` (`manual` o `auto`), `max_trade_usd` (en USD, calculado sobre el saldo), `max_loss_pct` e `instructions` si las hay.
 5. Si la aprobación es manual, recuérdale que tenga abierta la página de la cartera (desbloqueada) para aprobar las operaciones.
 
 ## 4. Panel

@@ -36,6 +36,8 @@ export interface Mission {
    * conseguida si al final (vendido todo) vale el objetivo o más; qué hacer al llegar antes lo decide el agente.
    */
   close_on_target: number;
+  /** 1: misión sin objetivo (máximo rendimiento en el plazo). target_usd guarda entonces el capital inicial. */
+  open_target: number;
 }
 
 export interface MissionLimits {
@@ -81,22 +83,34 @@ export function missionHistory() {
     return {
       missionId: m.id,
       capitalUsd: m.initial_usd,
-      targetUsd: m.target_usd,
-      targetPct: Number((((m.target_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
+      targetUsd: m.open_target ? null : m.target_usd,
+      targetPct: m.open_target ? null : Number((((m.target_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
+      ...(m.open_target ? { goal: "sin objetivo: el máximo rendimiento posible en el plazo" } : {}),
       durationMinutes: minutes,
       userInstructions: m.instructions ?? "ninguna (modo libre)",
       finalUsd: m.final_usd === null ? null : Number(m.final_usd.toFixed(2)),
       resultPct: m.final_usd === null ? null : Number((((m.final_usd - m.initial_usd) / m.initial_usd) * 100).toFixed(2)),
-      outcome:
-        m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no llegó al objetivo" : m.status === "bust" ? "sin fondos (bancarrota)" : "cancelada",
+      outcome: outcomeLabel(m),
       reviewed: m.review_origin !== null || m.reviewed_at !== null,
     };
   });
 }
 
+/** Cómo terminó una misión, en palabras. Una misión sin objetivo termina por tiempo y se mide por su rendimiento. */
+/** El objetivo, en palabras (para el diario). */
+export const targetText = (m: Pick<Mission, "open_target" | "target_usd">) => (m.open_target ? "sin objetivo" : `objetivo ${m.target_usd} USD`);
+
+export function outcomeLabel(m: Pick<Mission, "status" | "open_target">): string {
+  if (m.status === "bust") return "sin fondos (bancarrota)";
+  if (m.status === "cancelled") return "cancelada";
+  if (m.open_target) return "sin objetivo: terminó por tiempo (cuenta el rendimiento)";
+  return m.status === "succeeded" ? "objetivo conseguido" : m.status === "expired" ? "no llegó al objetivo" : m.status;
+}
+
 function insertMission(args: {
   initialUsd: number;
-  targetUsd: number;
+  /** null: misión sin objetivo (máximo rendimiento en el plazo). */
+  targetUsd: number | null;
   durationMinutes: number;
   instructions?: string;
   allocation: Allocation;
@@ -108,12 +122,12 @@ function insertMission(args: {
   const id = Number(
     db
       .prepare(
-        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target, open_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         now(),
         args.initialUsd,
-        args.targetUsd,
+        args.targetUsd ?? args.initialUsd,
         deadline,
         args.instructions?.trim() || null,
         JSON.stringify(args.allocation),
@@ -121,7 +135,8 @@ function insertMission(args: {
         args.live ? "live" : "sim",
         args.live?.approval ?? null,
         args.live ? JSON.stringify(args.live.limits) : null,
-        args.closeOnTarget === false ? 0 : 1,
+        args.closeOnTarget === false || args.targetUsd === null ? 0 : 1,
+        args.targetUsd === null ? 1 : 0,
       ).lastInsertRowid,
   );
   // En una misión real, los saldos son los de la cadena (holdings es su espejo).
@@ -131,21 +146,22 @@ function insertMission(args: {
     sessionId: null,
     kind: "mission",
     summary:
-      `${args.live ? "Misión REAL" : "Misión"} #${id} iniciada: de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD ` +
+      `${args.live ? "Misión REAL" : "Misión"} #${id} iniciada: ${args.targetUsd === null ? `${args.initialUsd.toFixed(2)} USD, sin objetivo (máximo rendimiento)` : `de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD`} ` +
       `en ${Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)} min (el reloj arranca cuando el agente empieza a trabajar)`,
   });
   return id;
 }
 
-function validate(initialUsd: number, targetUsd: number, durationMinutes: number) {
-  if (!(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
+function validate(initialUsd: number, targetUsd: number | null, durationMinutes: number) {
+  if (targetUsd !== null && !(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
   if (!(durationMinutes > 0)) throw new Error("La duración debe ser positiva");
 }
 
 /** Crea una misión (cancela la anterior si seguía activa). */
 export async function createMission(
   initialUsd: number,
-  targetUsd: number,
+  /** null: sin objetivo (máximo rendimiento en el plazo; no se cierra al llegar a nada). */
+  targetUsd: number | null,
   durationMinutes: number,
   instructions?: string,
   allocation: Allocation = DEFAULT_ALLOCATION,
@@ -184,16 +200,17 @@ export function createLiveMission(args: {
   holdings: Holding[];
   totalUsd: number;
   byChain: Record<ChainId, number>;
-  targetPct: number;
+  /** null: sin objetivo (el máximo rendimiento en el plazo). */
+  targetPct: number | null;
   durationMinutes: number;
   instructions?: string;
   approval: "manual" | "auto";
   limits: MissionLimits;
 }): Mission {
   if (!(args.totalUsd >= 1)) throw new Error(`La cartera real vale ${args.totalUsd.toFixed(2)} USD: envíale fondos antes de empezar`);
-  if (!(args.targetPct > 0)) throw new Error("El objetivo debe ser una subida positiva");
+  if (args.targetPct !== null && !(args.targetPct > 0)) throw new Error("El objetivo debe ser una subida positiva");
   if (!(args.limits.maxTradeUsd > 0) || !(args.limits.maxLossPct > 0 && args.limits.maxLossPct <= 100)) throw new Error("Límites no válidos");
-  const targetUsd = Number((args.totalUsd * (1 + args.targetPct / 100)).toFixed(2));
+  const targetUsd = args.targetPct === null ? null : Number((args.totalUsd * (1 + args.targetPct / 100)).toFixed(2));
   validate(args.totalUsd, targetUsd, args.durationMinutes);
   const allocation = Object.fromEntries(
     Object.entries(args.byChain)
@@ -250,7 +267,7 @@ export async function missionStatus(missionId?: number) {
         status: mission.status,
         mode: mission.mode,
         initialUsd: mission.initial_usd,
-        targetUsd: mission.target_usd,
+        targetUsd: mission.open_target ? null : mission.target_usd,
         finalUsd: mission.final_usd,
         deadline: mission.deadline,
         endedAt: mission.ended_at,
@@ -266,18 +283,23 @@ export async function missionStatus(missionId?: number) {
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
-    targetUsd: mission.target_usd,
+    ...(mission.open_target
+      ? { goal: "SIN OBJETIVO: el usuario quiere el máximo rendimiento posible al final del plazo. No hay una meta que alcanzar ni cierre al llegar a nada: cuenta lo que valga la cartera al acabar." }
+      : {
+          targetUsd: mission.target_usd,
+          missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
+          progressPct: Number((((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd)) * 100).toFixed(1)),
+        }),
     currentUsd: Number(v.totalUsd.toFixed(2)),
     currentUsdNote: "Valor de liquidación con cotizaciones de hasta 10 s: en tokens que se mueven rápido, vender puede dar algo distinto.",
-    missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
-    progressPct: Number((((v.totalUsd - mission.initial_usd) / (mission.target_usd - mission.initial_usd)) * 100).toFixed(1)),
     now: new Date().toISOString(),
     deadline: mission.deadline,
     timeLeft: left.text,
     secondsLeft: left.seconds,
     resultPct: Number((((v.totalUsd - mission.initial_usd) / mission.initial_usd) * 100).toFixed(1)),
-    closesOnTarget:
-      mission.close_on_target !== 0
+    closesOnTarget: mission.open_target
+      ? "no hay objetivo: la misión dura hasta el plazo y al final se vende todo"
+      : mission.close_on_target !== 0
         ? "sí: al llegar al objetivo se vende todo y la misión termina conseguida"
         : "no: la misión dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o más. Llegar antes no la termina: qué hacer entonces lo decides tú",
     userInstructions: mission.instructions ?? "ninguna: modo libre",
@@ -316,7 +338,7 @@ export async function stopMission(closePositions: boolean, missionId?: number): 
     kind: "mission",
     summary:
       `Misión #${mission.id} detenida por el usuario ${closePositions ? "cerrando posiciones" : "sin cerrar posiciones"}: ` +
-      `${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD (objetivo ${mission.target_usd} USD)`,
+      `${mission.initial_usd} → ${final.totalUsd.toFixed(2)} USD (${targetText(mission)})`,
     details: { problems },
   });
   return { missionId: mission.id, finalUsd: final.totalUsd, problems };
@@ -337,7 +359,7 @@ export function minutesSinceLastTrade(mission: Mission): number {
  * a operar contra las instrucciones del usuario. Qué hacer con él lo decide el agente.
  */
 export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuation>>, secondsLeft: number): string | null {
-  if (mission.status !== "active" || v.totalUsd >= mission.target_usd || secondsLeft < 90 || v.totalUsd <= 0) return null;
+  if (mission.status !== "active" || (!mission.open_target && v.totalUsd >= mission.target_usd) || secondsLeft < 90 || v.totalUsd <= 0) return null;
   const natives = new Set(allChains().map((c) => `${c.id}:${c.native.address}`));
   const cash = v.holdings.filter((h) => h.valuedBy === "stable" || natives.has(`${h.venue}:${h.asset}`)).reduce((s, h) => s + h.usd, 0);
   const cashPct = (cash / v.totalUsd) * 100;
@@ -346,7 +368,9 @@ export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuati
   if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
   const needPct = ((mission.target_usd - v.totalUsd) / v.totalUsd) * 100;
   return (
-    `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; te falta un +${needPct.toFixed(0)} % y quedan ${Math.round(secondsLeft / 60)} min.` +
+    `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; ` +
+    (mission.open_target ? "" : `te falta un +${needPct.toFixed(0)} % y `) +
+    `quedan ${Math.round(secondsLeft / 60)} min.` +
     (mission.instructions ? " Las instrucciones del usuario mandan." : "")
   );
 }
@@ -468,13 +492,14 @@ async function checkOne(mission: Mission): Promise<string[]> {
   }
 
   // Sin cierre al objetivo, al acabar el plazo cuenta lo que vale la cartera ya vendida.
-  const succeeded = reached || (!closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd);
+  // Una misión sin objetivo no se "consigue": termina por tiempo y cuenta su rendimiento.
+  const succeeded = !mission.open_target && (reached || (!closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd));
   const finalStatus = succeeded ? "succeeded" : status;
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(finalStatus, now(), final.totalUsd, mission.id);
   const resultPct = ((final.totalUsd - mission.initial_usd) / mission.initial_usd) * 100;
   const summary =
     `Misión #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +
-    `(${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; objetivo ${mission.target_usd} USD)`;
+    `(${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; ${targetText(mission)})`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }

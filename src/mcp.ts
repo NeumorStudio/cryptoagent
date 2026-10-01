@@ -7,7 +7,7 @@ import { slimToolList } from "./tools/schema-slim.js";
 import { z } from "zod";
 import { checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard, stopDashboard } from "./dashboard/server.js";
-import { checkMission, createLiveMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission } from "./sim/mission.js";
+import { checkMission, createLiveMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission, targetText } from "./sim/mission.js";
 import { liveWalletSnapshot } from "./live/sync.js";
 import { config } from "./config.js";
 import { db, holdsTickLease, supersededBy } from "./db.js";
@@ -116,23 +116,29 @@ server.registerTool(
         .boolean()
         .default(true)
         .describe("Solo sim. true: al tocar el objetivo se vende todo y la misión termina. false: dura hasta el plazo y cuenta como conseguida si al final vale el objetivo o más"),
+      open_target: z
+        .boolean()
+        .default(false)
+        .describe("true: misión sin objetivo (el máximo rendimiento posible en el plazo); no se pasa target_usd ni target_pct. Vale en sim y en live"),
       allocation: z
         .object(Object.fromEntries(VENUES.map((v) => [v, z.number().min(0).max(100).optional()])))
         .optional()
         .describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`),
     },
   },
-  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target, open_target }) => {
     const active = getActiveMission();
     if (active && !replace) {
       return {
-        ...text(`Ya hay una misión activa (#${active.id}, objetivo ${active.target_usd} USD, plazo ${active.deadline}). Pregunta al usuario si quiere reemplazarla.`),
+        ...text(`Ya hay una misión activa (#${active.id}, ${targetText(active)}, plazo ${active.deadline}). Pregunta al usuario si quiere reemplazarla.`),
         isError: true,
       };
     }
     try {
       if (mode === "live") {
-        if (!target_pct || !approval || !max_trade_usd || !max_loss_pct) throw new Error("En una misión real hacen falta target_pct, approval, max_trade_usd y max_loss_pct");
+        if ((!target_pct && !open_target) || !approval || !max_trade_usd || !max_loss_pct) {
+          throw new Error("En una misión real hacen falta target_pct (u open_target: true), approval, max_trade_usd y max_loss_pct");
+        }
         const running = await signerStatus();
         if (!running?.status.unlocked || running.status.stopped) throw new Error("La cartera real no está desbloqueada: usa start_wallet y pide al usuario que la desbloquee en su página");
         // Antes de la foto inicial, se recupera la renta de las cuentas de token que quedaron vacías (si se hiciera
@@ -144,7 +150,7 @@ server.registerTool(
           holdings: snap.holdings,
           totalUsd: snap.totalUsd,
           byChain: snap.byChain,
-          targetPct: target_pct,
+          targetPct: open_target ? null : target_pct!,
           durationMinutes: duration_minutes,
           instructions,
           approval,
@@ -153,8 +159,8 @@ server.registerTool(
         return text(JSON.stringify(cleaned ? { ...mission, accountsClosed: `${cleaned.closed} cuentas de token vacías cerradas: recuperados ${cleaned.recoveredSol} SOL` } : mission));
       }
       if (!capital_usd) throw new Error("Falta capital_usd");
-      const target = target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined);
-      if (!target) throw new Error("Falta target_usd o target_pct");
+      const target = open_target ? null : (target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined));
+      if (target === undefined) throw new Error("Falta target_usd o target_pct (o open_target: true para una misión sin objetivo)");
       const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target });
       return text(JSON.stringify(mission));
     } catch (err) {

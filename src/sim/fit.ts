@@ -54,7 +54,7 @@ export interface FitRow {
   reachTargetPct: number | null;
   /** Riesgo de ruina o de pérdida grande (%), si aplica. */
   ruinPct?: number | null;
-  fit: "encaja" | "posible" | "no encaja" | "sin datos";
+  fit: "encaja" | "posible" | "no encaja" | "sin datos" | "sin objetivo";
   basis: string;
   available: boolean;
 }
@@ -63,7 +63,9 @@ export async function strategyFit(missionOrId: Mission | number) {
   const mission = typeof missionOrId === "number" ? getMission(missionOrId)! : missionOrId;
   const v = await valuation(mission.id);
   const minutesLeft = Math.max(1, (new Date(mission.deadline).getTime() - Date.now()) / 60_000);
-  const need = mission.target_usd / v.totalUsd - 1;
+  // Sin objetivo no hay una probabilidad de llegar que calcular: se dan el recorrido típico y el riesgo de cada una.
+  const open = mission.open_target === 1;
+  const need = open ? 0 : mission.target_usd / v.totalUsd - 1;
   const a = Math.log(1 + Math.max(need, 0));
   const rows: FitRow[] = [];
 
@@ -79,8 +81,8 @@ export async function strategyFit(missionOrId: Mission | number) {
     const spot = probTouch(a, s);
     rows.push({
       strategy: `${sym} al contado`,
-      reachTargetPct: pct(spot),
-      fit: label(spot),
+      reachTargetPct: open ? null : pct(spot),
+      fit: open ? "sin objetivo" : label(spot),
       basis: `movimiento típico en ${Math.round(minutesLeft)} min: ±${(s * 100).toFixed(2)} %; última hora: ${vol.change1hPct > 0 ? "+" : ""}${vol.change1hPct} %`,
       available: true,
     });
@@ -99,10 +101,12 @@ export async function strategyFit(missionOrId: Mission | number) {
       const ruin = probTouch(liq, s);
       rows.push({
         strategy: `Futuros ${sym} ${lev}x`,
-        reachTargetPct: pct(reach),
+        reachTargetPct: open ? null : pct(reach),
         ruinPct: pct(ruin),
-        fit: label(reach * (1 - ruin)),
-        basis: `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
+        fit: open ? "sin objetivo" : label(reach * (1 - ruin)),
+        basis: open
+          ? `movimiento típico con ${lev}x: ±${(s * lev * 100).toFixed(1)} % de la cartera; liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`
+          : `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
         available: true,
       });
     }
@@ -113,13 +117,17 @@ export async function strategyFit(missionOrId: Mission | number) {
   if (closed.length >= 5) {
     const hit = closed.filter((p) => (p.pnlPct ?? 0) >= need * 100).length / closed.length;
     const ruin = closed.filter((p) => (p.pnlPct ?? 0) <= -50).length / closed.length;
+    const sorted = closed.map((p) => p.pnlPct ?? 0).sort((x, y) => x - y);
+    const median = sorted[Math.floor(sorted.length / 2)]!;
+    const winners = sorted.filter((x) => x > 0).length / sorted.length;
     rows.push({
       strategy: "Memecoin joven (< 60 min)",
-      reachTargetPct: pct(hit),
+      reachTargetPct: open ? null : pct(hit),
       ruinPct: pct(ruin),
-      fit: label(hit),
-      basis:
-        `tus ${closed.length} operaciones: ${pct(hit)} % dieron +${(need * 100).toFixed(0)} % o más en una sola operación y ${pct(ruin)} % perdieron la mitad o más` +
+      fit: open ? "sin objetivo" : label(hit),
+      basis: open
+        ? `tus ${closed.length} operaciones: mediana ${median > 0 ? "+" : ""}${median.toFixed(0)} %, ${pct(winners)} % en ganancias y ${pct(ruin)} % perdieron la mitad o más`
+        : `tus ${closed.length} operaciones: ${pct(hit)} % dieron +${(need * 100).toFixed(0)} % o más en una sola operación y ${pct(ruin)} % perdieron la mitad o más` +
         (hit < 0.05 && need > 0.3 ? "; con un objetivo así, solo encadenando varias ganadoras" : ""),
       available: true,
     });
@@ -128,6 +136,16 @@ export async function strategyFit(missionOrId: Mission | number) {
   }
 
   rows.sort((x, y) => (y.reachTargetPct ?? -1) * (1 - (y.ruinPct ?? 0) / 100) - (x.reachTargetPct ?? -1) * (1 - (x.ruinPct ?? 0) / 100));
+  if (open) {
+    return {
+      goal: "sin objetivo: el máximo rendimiento al final del plazo",
+      minutesLeft: Math.round(minutesLeft),
+      note:
+        "Misión sin objetivo: no hay probabilidad de llegar que calcular. Para cada estrategia, el recorrido típico en el tiempo que queda " +
+        "(cripto grande) o tu historial (memecoins), y el riesgo de ruina. Sirve para comparar cuánto puede dar cada una y cuánto arriesga.",
+      strategies: rows,
+    };
+  }
   return {
     needPct: Number((need * 100).toFixed(1)),
     minutesLeft: Math.round(minutesLeft),

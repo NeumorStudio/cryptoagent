@@ -29,14 +29,20 @@ export async function statusReport(missionId?: number): Promise<string> {
       : m.status === "succeeded"
         ? "CONSEGUIDA"
         : m.status === "expired"
-          ? "terminada sin llegar al objetivo"
+          ? m.open_target
+            ? "terminada (sin objetivo: cuenta el rendimiento)"
+            : "terminada sin llegar al objetivo"
           : m.status === "bust"
             ? "SIN FONDOS: se quedó sin dinero para operar"
             : "detenida por el usuario";
 
   const lines: string[] = [];
   lines.push(`Misión #${m.id}: ${statusText}`);
-  lines.push(`Valor: ${usd(current)} (${pct(change)}) · objetivo ${usd(m.target_usd)} · progreso ${Math.round(progress)} %`);
+  lines.push(
+    m.open_target
+      ? `Valor: ${usd(current)} (${pct(change)}) · sin objetivo: el máximo rendimiento en el plazo`
+      : `Valor: ${usd(current)} (${pct(change)}) · objetivo ${usd(m.target_usd)} · progreso ${Math.round(progress)} %`,
+  );
   lines.push(m.instructions ? `Instrucciones: ${m.instructions}` : "Modo libre");
 
   // Posiciones abiertas con su resultado sin realizar (valor de liquidación frente a lo que costaron).

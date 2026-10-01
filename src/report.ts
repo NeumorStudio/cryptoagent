@@ -17,7 +17,7 @@ else
   console.log(
     `Misión #${m.id} ` +
       `${m.status === "succeeded" ? "CONSEGUIDA" : m.status === "expired" ? "TERMINADA POR TIEMPO" : m.status === "bust" ? "SIN FONDOS" : m.status.toUpperCase()}: ` +
-      `${m.initial_usd} → ${m.final_usd?.toFixed(2) ?? "?"} USD (objetivo ${m.target_usd} USD, plazo ${m.deadline}, cerrada ${m.ended_at})`,
+      `${m.initial_usd} → ${m.final_usd?.toFixed(2) ?? "?"} USD (${m.open_target ? "sin objetivo" : `objetivo ${m.target_usd} USD`}, plazo ${m.deadline}, cerrada ${m.ended_at})`,
   );
 
 const v = await valuation(m.id);

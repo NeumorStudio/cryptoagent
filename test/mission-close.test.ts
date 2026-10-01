@@ -44,3 +44,20 @@ test("sin cierre al objetivo: tocarlo no termina la misión; al final del plazo 
   assert.match((await checkMission(down.id)).join("\n"), /TERMINADA POR TIEMPO.*\(-\d+\.\d %/);
   assert.equal(getMission(down.id)!.status, "expired");
 });
+
+test("sin objetivo: no hay meta ni cierre al llegar; termina por tiempo y cuenta el rendimiento, sin contarse como conseguida", async () => {
+  const { missionStatus } = await import("../src/sim/mission.js");
+  const setUsdc = (id: number, usd: number) => db.prepare("UPDATE holdings SET amount = ? WHERE mission_id = ? AND venue = 'solana' AND asset = ?").run(usd, id, USDC_MINT);
+  const m = await createMission(40, null, 30, undefined, { solana: 100 });
+  assert.equal(m.open_target, 1);
+  assert.equal(m.close_on_target, 0);
+  setUsdc(m.id, 60);
+  const st = (await missionStatus(m.id)) as Record<string, unknown>;
+  assert.match(String(st.goal), /SIN OBJETIVO/);
+  assert.equal(st.targetUsd, undefined);
+  assert.equal(st.progressPct, undefined);
+  assert.deepEqual(await checkMission(m.id), [], "ganando mucho, pero sin objetivo: sigue hasta el plazo");
+  db.prepare("UPDATE missions SET deadline = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), m.id);
+  assert.match((await checkMission(m.id)).join("\n"), /TERMINADA POR TIEMPO.*\(\+\d+\.\d %; sin objetivo\)/);
+  assert.equal(getMission(m.id)!.status, "expired");
+});

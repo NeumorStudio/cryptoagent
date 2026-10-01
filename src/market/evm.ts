@@ -30,12 +30,12 @@ export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 
 // ─── RPC ────────────────────────────────────────────────────────────────────
 
-export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>): Promise<unknown[]> {
+export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>, ttlMs = 10_000): Promise<unknown[]> {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
   for (let i = 0; ; i++) {
     try {
-      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(urls[i]!, { method: "POST", body, ttlMs: 10_000 });
+      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(urls[i]!, { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
       return body.map((b) => {
         const r = byId.get(b.id);

@@ -755,8 +755,28 @@ export const SIM_TOOLS = [
       token_in: z.string().describe(`Token que envías (dirección o alias: ${TOKEN_ALIASES})`),
       token_out: z.string().describe("Token que quieres recibir en la cadena de destino (dirección o alias)"),
       amount: z.number().positive(),
+      route: z
+        .enum(["best_amount", "fastest"])
+        .default("best_amount")
+        .describe("Cómo elige Li.Fi la ruta: la que más da (por defecto) o la más rápida"),
+      avoid_bridges: z
+        .array(z.string())
+        .optional()
+        .describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
     }),
-    run: async (i) => json(await transfers.quoteBridge({ fromChain: i.from_chain, toChain: i.to_chain, tokenIn: i.token_in, tokenOut: i.token_out, amount: i.amount })),
+    run: async (i, ctx) =>
+      json(
+        await transfers.quoteBridge({
+          missionId: ctx.missionId,
+          fromChain: i.from_chain,
+          toChain: i.to_chain,
+          tokenIn: i.token_in,
+          tokenOut: i.token_out,
+          amount: i.amount,
+          route: i.route,
+          avoidBridges: i.avoid_bridges,
+        }),
+      ),
   }),
   tool({
     name: "simulate_bridge",
@@ -773,6 +793,14 @@ export const SIM_TOOLS = [
       token_out: z.string().describe("Token que quieres recibir en la cadena de destino (dirección o alias)"),
       amount: z.number().positive(),
       slippage_bps: z.number().int().min(1).max(5000).default(50),
+      route: z
+        .enum(["best_amount", "fastest"])
+        .default("best_amount")
+        .describe("Cómo elige Li.Fi la ruta: la que más da (por defecto) o la más rápida"),
+      avoid_bridges: z
+        .array(z.string())
+        .optional()
+        .describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
       thesis,
     }),
     run: async (i, ctx) =>
@@ -788,6 +816,8 @@ export const SIM_TOOLS = [
           slippageBps: i.slippage_bps,
           reasoning: formatThesis(i.thesis),
           meta: tradeMeta(i.thesis),
+          route: i.route,
+          avoidBridges: i.avoid_bridges,
         }),
       ),
   }),
@@ -807,6 +837,14 @@ export const SIM_TOOLS = [
       token_out: z.string().describe("Estable o nativo que quieres recibir en la cadena de destino"),
       amount: z.number().positive(),
       slippage_bps: z.number().int().min(1).max(5000).default(50),
+      route: z
+        .enum(["best_amount", "fastest"])
+        .default("best_amount")
+        .describe("Cómo elige Li.Fi la ruta: la que más da (por defecto) o la más rápida"),
+      avoid_bridges: z
+        .array(z.string())
+        .optional()
+        .describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
       thesis,
     }),
     run: async (i, ctx) => {
@@ -823,6 +861,8 @@ export const SIM_TOOLS = [
           amount: i.amount,
           slippageBps: i.slippage_bps,
           reasoning: formatThesis(i.thesis),
+          route: i.route,
+          avoidBridges: i.avoid_bridges,
         }),
       );
     },

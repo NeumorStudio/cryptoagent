@@ -21,6 +21,7 @@ const NOT_TOOLS = new Set([
   "duration_minutes",
   "close_positions",
   "close_on_target",
+  "avoid_bridges",
   "open_in_system_browser",
   "subagent_type",
   "run_in_background",

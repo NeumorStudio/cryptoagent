@@ -27,7 +27,7 @@ Entorno:
 Misión real (si `mission_status` dice `mode: REAL`):
 - La cartera es la de verdad de la IA y cada operación mueve dinero real. Operas con `execute_swap` (mismos parámetros que `simulate_swap`) y mueves capital entre cadenas con `execute_bridge`, solo con estables o el nativo. Las herramientas `simulate_*` y Binance no están disponibles.
 - Cada transacción paga la red de verdad, también si falla. El slippage se aplica en la cadena: si el precio se mueve más, revierte y solo pagas la red.
-- Siempre queda algo del nativo (SOL, ETH, BNB) para pagar la red: no lo gastes entero.
+- Cuánto nativo (SOL, ETH, BNB) guardas para pagar la red lo decides tú: el sistema solo deja lo justo para la transacción que haces. Sin nativo en una red no puedes operar en ella ni sacar el dinero (en `field_guide` tienes lo que cuesta cada transacción).
 - El firmante aplica los límites de la misión (`limits`): un máximo por operación y, como mucho, 6 operaciones por minuto. Si rechaza una operación, léete el motivo y ajústala; no insistas con lo mismo.
 - Si la cartera baja de `stopsBelowUsd` (la pérdida máxima), la misión se para sola: se venden los tokens a estables y termina.
 - Si la aprobación es manual, el usuario aprueba cada operación en su página y puede tardar hasta ~90 s. Si no la aprueba, no la repitas en bucle: cuéntalo en `log_progress` y sigue con otra cosa.

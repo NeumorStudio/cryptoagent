@@ -16,8 +16,13 @@ import { pad32, solanaRpc } from "./chain.js";
 import { requestIntent, signTx } from "./client.js";
 import { livePub, syncHoldings } from "./sync.js";
 
-/** Nativo que se deja siempre para pagar la red de las siguientes transacciones. */
-export const NATIVE_RESERVE: Record<ChainId, number> = { solana: 0.01, base: 0.0003, bsc: 0.002 };
+/**
+ * Lo mínimo de nativo para pagar la red de ESTA transacción (en Solana, también la renta de una cuenta de token
+ * nueva). No es una reserva: cuánto guardar para las siguientes lo decide el agente. Antes se reservaban 0,01 SOL,
+ * 0,0003 ETH y 0,002 BNB, y con carteras de pocos dólares eso bloqueaba casi todo el nativo (M21: no pudo hacer el
+ * swap en BNB Chain).
+ */
+export const GAS_FOR_THIS_TX: Record<ChainId, number> = { solana: 0.003, base: 0.000005, bsc: 0.00005 };
 /** Tope de la prioridad que se paga en Solana por transacción (0,001 SOL). */
 const SOLANA_MAX_PRIORITY_LAMPORTS = 1_000_000;
 
@@ -77,18 +82,18 @@ export async function liveSwap(args: LiveSwapArgs) {
 
   const have = balance(m, chain.id, input.address);
   const isNativeIn = input.address === chain.native.address;
-  const spendable = isNativeIn ? Math.max(0, have - NATIVE_RESERVE[chain.id]) : have;
+  const spendable = isNativeIn ? Math.max(0, have - GAS_FOR_THIS_TX[chain.id]) : have;
   let amount = args.sellAll ? spendable : (args.amount ?? 0);
   if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input.symbol} que vender en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
   if (amount > spendable * 1.000001) {
     throw new Error(
-      `Saldo insuficiente: tienes ${have} ${input.symbol}` + (isNativeIn ? ` y se reservan ${NATIVE_RESERVE[chain.id]} para pagar la red` : "") + `; quieres vender ${amount}`,
+      `Saldo insuficiente: tienes ${have} ${input.symbol}` + (isNativeIn ? ` y hacen falta ${GAS_FOR_THIS_TX[chain.id]} para pagar la red de esta transacción` : "") + `; quieres vender ${amount}`,
     );
   }
   amount = Math.min(amount, spendable);
   const nativeLeft = balance(m, chain.id, chain.native.address) - (isNativeIn ? amount : 0);
-  if (nativeLeft < NATIVE_RESERVE[chain.id] / 4) {
-    throw new Error(`No tienes ${chain.native.symbol} suficiente para pagar la red en ${chain.label} (tienes ${nativeLeft.toPrecision(3)}).`);
+  if (nativeLeft < GAS_FOR_THIS_TX[chain.id]) {
+    throw new Error(`No tienes ${chain.native.symbol} suficiente para pagar la red de esta transacción en ${chain.label} (tienes ${nativeLeft.toPrecision(3)}, hacen falta unos ${GAS_FOR_THIS_TX[chain.id]}).`);
   }
 
   // Cotización para describir la operación y medir su tamaño.
@@ -214,6 +219,7 @@ export async function liveSwap(args: LiveSwapArgs) {
     received: `${real.received} ${output.symbol}`,
     effectivePrice: `1 ${output.symbol} = ${(real.sold / real.received).toPrecision(6)} ${input.symbol}`,
     ...(real.networkFee ? { networkFee: real.networkFee } : {}),
+    ...("accountRent" in real && real.accountRent ? { accountRent: real.accountRent } : {}),
     ...("estimated" in real ? { note: "Cantidades estimadas con la cotización: no se pudo leer la transacción todavía" } : {}),
     route: quote.route,
   };
@@ -265,7 +271,7 @@ export async function rawTokenBalance(chain: ChainId, pub: { solana: string; evm
 }
 
 export async function erc20Allowance(chain: EvmChainId, token: string, owner: string, spender: string): Promise<bigint> {
-  const [hex] = (await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token, data: `0xdd62ed3e${pad32(owner)}${pad32(spender)}` }, "latest"] }])) as [string];
+  const [hex] = (await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token, data: `0xdd62ed3e${pad32(owner)}${pad32(spender)}` }, "latest"] }], 0)) as [string];
   return hex && hex !== "0x" ? BigInt(hex) : 0n;
 }
 
@@ -275,7 +281,7 @@ async function evmBalancesAt(chain: EvmChainId, owner: string, tokens: TokenRef[
       ? { method: "eth_getBalance", params: [owner, block] }
       : { method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, block] },
   );
-  const out = (await rpcBatch(chain, calls)) as string[];
+  const out = (await rpcBatch(chain, calls, 0)) as string[];
   return Object.fromEntries(tokens.map((t, i) => [t.address, out[i] && out[i] !== "0x" ? BigInt(out[i]!) : 0n]));
 }
 
@@ -293,13 +299,28 @@ async function reconcile(chain: ChainId, hash: string, pub: { solana: string; ev
         list.filter((b) => b.owner === pub.solana && b.mint === mint).reduce((s, b) => s + Number(b.uiTokenAmount.amount), 0);
       return sum(tx.meta.postTokenBalances ?? []) - sum(tx.meta.preTokenBalances ?? []);
     };
-    // El SOL cuenta la comisión de red (y la renta de cuentas nuevas): para medir el swap se descuenta la comisión.
-    const solDelta = Number(tx.meta.postBalances[0]) - Number(tx.meta.preBalances[0]) + fee;
+    // El SOL de la cartera también paga la comisión de red y la renta de las cuentas de token que se crean (o la
+    // recupera al cerrarlas). Para medir el swap se descuentan las dos: en la M21 la renta de la cuenta de USDC nueva
+    // (0,002 SOL) salía como "SOL vendido" e inflaba un 7 % el coste de la posición. La renta va aparte: se recupera.
+    const ownTokenAccounts = new Set(
+      [...(tx.meta.preTokenBalances ?? []), ...(tx.meta.postTokenBalances ?? [])]
+        .filter((b: any) => b.owner === pub.solana && b.mint !== SOL_MINT)
+        .map((b: any) => Number(b.accountIndex)),
+    );
+    const rentLamports = [...ownTokenAccounts].reduce((s, i) => s + Number(tx.meta.postBalances[i] ?? 0) - Number(tx.meta.preBalances[i] ?? 0), 0);
+    const solDelta = Number(tx.meta.postBalances[0]) - Number(tx.meta.preBalances[0]) + fee + rentLamports;
     const delta = (t: TokenRef) => (t.address === SOL_MINT ? solDelta / 1e9 : tokenDelta(t.address) / 10 ** t.decimals);
-    return { sold: -delta(input), received: delta(output), networkFee: `${fee / 1e9} SOL` };
+    return {
+      sold: -delta(input),
+      received: delta(output),
+      networkFee: `${fee / 1e9} SOL`,
+      ...(rentLamports !== 0
+        ? { accountRent: `${rentLamports > 0 ? "renta de cuenta nueva" : "renta recuperada al cerrar la cuenta"}: ${Math.abs(rentLamports) / 1e9} SOL (no es coste del swap)` }
+        : {}),
+    };
   }
   const c = chain as EvmChainId;
-  const [receipt] = (await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash] }])) as [any];
+  const [receipt] = (await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash] }], 0)) as [any];
   const block = receipt.blockNumber as string;
   const post = await evmBalancesAt(c, pub.evm, [input, output], block);
   const before = pre ?? (await evmBalancesAt(c, pub.evm, [input, output], "0x" + (BigInt(block) - 1n).toString(16)));

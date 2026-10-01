@@ -3,7 +3,7 @@
 // (approve exacto y tope de nativo en EVM; simulación de todas las cuentas en Solana). La llegada se
 // sigue con el estado de Li.Fi; mientras tanto, el dinero cuenta "en tránsito".
 import { db, logJournal, now } from "../db.js";
-import { EVM_CHAINS, type EvmChainId } from "../market/evm.js";
+import { EVM_CHAINS, NATIVE, type EvmChainId } from "../market/evm.js";
 import * as lifi from "../market/lifi.js";
 import { toBaseUnits } from "../market/jupiter.js";
 import { getMission, isLive } from "../sim/mission.js";
@@ -13,7 +13,7 @@ import { getChain } from "../sim/venues/index.js";
 import type { ChainAdapter, TokenRef } from "../sim/venues/types.js";
 import { pad32 } from "./chain.js";
 import { requestIntent, signTx } from "./client.js";
-import { erc20Allowance, explorerTx, logLiveTx, NATIVE_RESERVE, rawTokenBalance, solanaBudget } from "./execute.js";
+import { erc20Allowance, explorerTx, GAS_FOR_THIS_TX, logLiveTx, rawTokenBalance, solanaBudget } from "./execute.js";
 import { livePub, syncHoldings } from "./sync.js";
 
 /** Nativo máximo que puede cobrar un puente EVM como comisión, además de lo enviado. */
@@ -39,7 +39,7 @@ export async function liveBridge(a: {
   amount: number;
   slippageBps: number;
   reasoning: string;
-}) {
+} & lifi.RouteOptions) {
   const m = a.missionId;
   if (!isLive(getMission(m))) throw new Error("execute_bridge solo existe en misiones reales");
   if (a.fromChain === a.toChain) throw new Error("Un puente une dos cadenas distintas: dentro de la misma cadena usa execute_swap");
@@ -52,13 +52,13 @@ export async function liveBridge(a: {
   await syncHoldings(m);
   const have = balance(m, src.id, tin.address);
   const isNativeIn = tin.address === src.native.address;
-  const spendable = isNativeIn ? Math.max(0, have - NATIVE_RESERVE[src.id]) : have;
+  const spendable = isNativeIn ? Math.max(0, have - GAS_FOR_THIS_TX[src.id]) : have;
   if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
   if (a.amount > spendable * 1.000001) {
-    throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}` + (isNativeIn ? ` y se reservan ${NATIVE_RESERVE[src.id]} para la red` : ""));
+    throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}` + (isNativeIn ? ` y hacen falta ${GAS_FOR_THIS_TX[src.id]} para pagar la red de esta transacción` : ""));
   }
   const nativeLeft = balance(m, src.id, src.native.address) - (isNativeIn ? a.amount : 0);
-  if (nativeLeft < NATIVE_RESERVE[src.id] / 4) throw new Error(`No tienes ${src.native.symbol} suficiente para pagar la red en ${src.label}.`);
+  if (nativeLeft < GAS_FOR_THIS_TX[src.id]) throw new Error(`No tienes ${src.native.symbol} suficiente para pagar la red de esta transacción en ${src.label}.`);
 
   const usd = src.isCash(tin.address) ? a.amount : ((await src.priceUsd([tin.address]))[tin.address] ?? 0) * a.amount;
   const summary = `Puente: ${a.amount} ${tin.symbol} de ${src.label} → ${tout.symbol} en ${dst.label} (≈ ${usd.toFixed(2)} $). Motivo: ${a.reasoning.slice(0, 160)}`;
@@ -83,6 +83,8 @@ export async function liveBridge(a: {
     fromAddress: addr(src.id),
     toAddress: addr(dst.id),
     slippage: a.slippageBps / 10_000,
+    route: a.route,
+    avoidBridges: a.avoidBridges,
   });
   const same = (x: string, y: string) => (x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y);
   if (!same(q.fromAddress, addr(src.id)) || !same(q.toAddress, addr(dst.id))) {
@@ -147,6 +149,7 @@ export async function liveBridge(a: {
     willReceive: `~${amountOut} ${tout.symbol} en ${dst.label}`,
     costs,
     note: `Llega hacia las ${hhmm(arrivesAt)} (lo confirma Li.Fi). Mientras tanto aparece como "en tránsito".`,
+    ...noGasWarning(m, dst, tout.address),
   };
   logJournal({
     missionId: m,
@@ -170,6 +173,19 @@ export async function liveBridge(a: {
   return result;
 }
 
+/**
+ * Si lo que llega a una cadena no es su nativo y allí no hay nativo para el gas, no se podrá mover (ni siquiera
+ * devolverlo). Es un dato, no un freno: en la M21 llegaron 4,93 USDC a Base sin ETH y no se podía hacer nada con ellos.
+ */
+function noGasWarning(missionId: number, dst: ChainAdapter, arriving: string) {
+  if (arriving.toLowerCase() === dst.native.address.toLowerCase()) return {};
+  const have = balance(missionId, dst.id, dst.native.address);
+  if (have >= GAS_FOR_THIS_TX[dst.id]) return {};
+  return {
+    warning: `En ${dst.label} tienes ${Number(have.toPrecision(3))} ${dst.native.symbol}: sin ${dst.native.symbol} para el gas no podrás mover lo que llegue (ni devolverlo).`,
+  };
+}
+
 // ─── Llegadas ───────────────────────────────────────────────────────────────
 
 const lastPoll = new Map<number, number>();
@@ -191,9 +207,20 @@ export async function settleLiveTransfers(missionId?: number): Promise<string[]>
     lastPoll.set(t.id, Date.now());
     const st = await lifi.bridgeStatus({ txHash: carry.live.txHash, fromChain: t.from_venue, toChain: t.to_venue, tool: carry.live.tool });
     if (st.status === "DONE") {
-      const received = st.receivedAmount !== undefined ? Number(st.receivedAmount) / 10 ** t.decimals_in : t.amount_in;
-      if (!db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, t.id).changes) continue;
-      const summary = `Llegan ${Number(received.toPrecision(8))} ${t.symbol_in} a ${getChain(t.to_venue).label} (puente real #${t.id})`;
+      // Lo que llegó de verdad: con PARTIAL el puente puede entregar otro token (y con otros decimales).
+      const native = (a: string) => /^0x0{40}$/i.test(a) || a.toLowerCase() === NATIVE || a === "11111111111111111111111111111111";
+      const got = st.receivedToken;
+      const sameToken = !got || got.address.toLowerCase() === String(t.asset_in).toLowerCase() || (native(got.address) && native(String(t.asset_in)));
+      const decimals = got && !sameToken ? got.decimals : t.decimals_in;
+      const received = st.receivedAmount !== undefined ? Number(st.receivedAmount) / 10 ** decimals : t.amount_in;
+      const changed = got && !sameToken;
+      const update = changed
+        ? db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ?, asset_in = ?, symbol_in = ?, decimals_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, got.address.toLowerCase(), got.symbol, got.decimals, t.id)
+        : db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, t.id);
+      if (!update.changes) continue;
+      const summary = changed
+        ? `Llegan ${Number(received.toPrecision(8))} ${got!.symbol} a ${getChain(t.to_venue).label} en lugar de ${t.symbol_in} (puente real #${t.id}, ${st.substatus ?? "otro token"}): el puente no hizo el cambio final`
+        : `Llegan ${Number(received.toPrecision(8))} ${t.symbol_in} a ${getChain(t.to_venue).label} (puente real #${t.id})`;
       logJournal({
         missionId: t.mission_id,
         sessionId: null,
@@ -202,7 +229,9 @@ export async function settleLiveTransfers(missionId?: number): Promise<string[]>
         details: st.receivingTxHash ? { txHash: st.receivingTxHash, explorer: explorerTx(t.to_venue, st.receivingTxHash) } : undefined,
       });
       await syncHoldings(t.mission_id).catch(() => undefined);
-      log.push(summary);
+      const gas = noGasWarning(t.mission_id, getChain(t.to_venue), changed ? got!.address : String(t.asset_in));
+      if (gas.warning) logJournal({ missionId: t.mission_id, sessionId: null, kind: "mission", summary: gas.warning });
+      log.push(gas.warning ? `${summary}. ${gas.warning}` : summary);
     } else if (st.status === "FAILED" || st.status === "INVALID") {
       if (!db.prepare("UPDATE transfers SET status = 'failed', settled_at = ? WHERE id = ? AND status = 'pending'").run(now(), t.id).changes) continue;
       const summary = `El puente real #${t.id} ha fallado (${st.substatus ?? st.status}). Normalmente el dinero vuelve a ${getChain(t.from_venue).label}: revisa el explorador.`;

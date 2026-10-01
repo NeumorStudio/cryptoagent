@@ -10,7 +10,7 @@ import * as market from "../market/binance.js";
 import * as evm from "../market/evm.js";
 import { fromBaseUnits, toBaseUnits } from "../market/jupiter.js";
 import * as lifi from "../market/lifi.js";
-import { applyDeltas, assertSimulated, balance, evmAddress } from "./portfolio.js";
+import { applyDeltas, assertSimulated, balance, evmAddress, isLiveMission } from "./portfolio.js";
 import { attachPosition, buyIntoPosition, detachPosition, sellFromPosition, type Carry } from "./positions.js";
 import type { ChainId, TradeMeta, VenueId } from "./types.js";
 import { getChain, getVenue, type Delta, type TokenRef } from "./venues/index.js";
@@ -263,8 +263,10 @@ async function staticEstimate(from: ChainId, to: ChainId, tin: TokenRef, tout: T
   };
 }
 
-async function liveEstimate(missionId: number, from: ChainId, to: ChainId, tin: TokenRef, tout: TokenRef, amount: number, slippageBps: number): Promise<BridgeEstimate> {
-  const address = (c: ChainId) => (c === "solana" ? solanaAddress(missionId) : evmAddress(missionId));
+async function liveEstimate(missionId: number, from: ChainId, to: ChainId, tin: TokenRef, tout: TokenRef, amount: number, slippageBps: number, routing: lifi.RouteOptions = {}): Promise<BridgeEstimate> {
+  // En una misión real, cotiza con las direcciones de la cartera de verdad.
+  const real = isLiveMission(missionId) ? (await import("../live/sync.js")).livePub() : null;
+  const address = (c: ChainId) => (c === "solana" ? (real?.solana ?? solanaAddress(missionId)) : (real?.evm ?? evmAddress(missionId)));
   const q = await lifi.bridgeQuote({
     fromChain: from,
     toChain: to,
@@ -274,6 +276,7 @@ async function liveEstimate(missionId: number, from: ChainId, to: ChainId, tin: 
     fromAddress: address(from),
     toAddress: address(to),
     slippage: slippageBps / 10_000,
+    ...routing,
   });
   const native = getChain(from).native;
   return {
@@ -294,9 +297,24 @@ async function resolveBridge(fromChain: ChainId, toChain: ChainId, tokenIn: stri
   return { tin, tout };
 }
 
-/** Cotiza un puente sin gastar el cupo de Li.Fi: es una estimación; el coste real se calcula al ejecutarlo. */
-export async function quoteBridge(a: { fromChain: ChainId; toChain: ChainId; tokenIn: string; tokenOut: string; amount: number }) {
+/**
+ * Cotiza un puente. En simulación es una estimación que no gasta el cupo de Li.Fi (el coste real se calcula al
+ * ejecutarlo); en una misión real, la cotización de Li.Fi con la ruta que elegiría, para verla antes de ejecutar.
+ */
+export async function quoteBridge(a: { missionId?: number | null; fromChain: ChainId; toChain: ChainId; tokenIn: string; tokenOut: string; amount: number } & lifi.RouteOptions) {
   const { tin, tout } = await resolveBridge(a.fromChain, a.toChain, a.tokenIn, a.tokenOut);
+  if (a.missionId != null && isLiveMission(a.missionId)) {
+    const e = await liveEstimate(a.missionId, a.fromChain, a.toChain, tin, tout, a.amount, 50, { route: a.route, avoidBridges: a.avoidBridges });
+    return {
+      from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
+      to: `~${Number(e.amountOut.toPrecision(6))} ${tout.symbol} en ${getChain(a.toChain).label}`,
+      bridge: e.provider,
+      gas: `~${Number(e.gasNative.toPrecision(3))} ${getChain(a.fromChain).native.symbol}`,
+      seconds: e.seconds,
+      fees: e.fees,
+      note: `Cotización real de Li.Fi. Rutas excluidas siempre: ${lifi.ALWAYS_AVOIDED_BRIDGES.join(", ")}. Puedes pedir la más rápida (route: fastest) o excluir otras (avoid_bridges).`,
+    };
+  }
   const e = await staticEstimate(a.fromChain, a.toChain, tin, tout, a.amount);
   return {
     from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
@@ -319,7 +337,7 @@ export async function bridge(a: {
   slippageBps: number;
   reasoning: string;
   meta?: TradeMeta;
-}) {
+} & lifi.RouteOptions) {
   const m = a.missionId;
   assertSimulated(m, "cruzar un puente");
   if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
@@ -331,7 +349,7 @@ export async function bridge(a: {
 
   let e: BridgeEstimate;
   try {
-    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps);
+    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps, { route: a.route, avoidBridges: a.avoidBridges });
   } catch (err) {
     if (!(err instanceof lifi.BudgetExhausted)) throw err;
     e = await staticEstimate(src.id, dst.id, tin, tout, a.amount);

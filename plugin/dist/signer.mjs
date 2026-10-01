@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.40.0";
+    CODE_VERSION = "0.41.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8160,12 +8160,12 @@ var init_jupiter = __esm({
 });
 
 // src/market/evm.ts
-async function rpcBatch(chain2, calls) {
+async function rpcBatch(chain2, calls, ttlMs = 1e4) {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const urls = [EVM_CHAINS[chain2].rpc, ...EVM_CHAINS[chain2].fallbackRpcs];
   for (let i = 0; ; i++) {
     try {
-      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs: 1e4 });
+      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
       return body.map((b) => {
         const r = byId.get(b.id);
@@ -9221,12 +9221,13 @@ async function solanaRpc(method, params, ttlMs = 5e3) {
   return res.result;
 }
 async function solanaHoldings(owner) {
-  const lamports = (await solanaRpc("getBalance", [owner])).value;
+  const lamports = (await solanaRpc("getBalance", [owner, FRESH], 0)).value;
   const holdings = [{ venue: "solana", asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: lamports / 1e9 }];
   for (const programId of TOKEN_PROGRAMS) {
     const { value } = await solanaRpc(
       "getTokenAccountsByOwner",
-      [owner, { programId }, { encoding: "jsonParsed" }]
+      [owner, { programId }, { encoding: "jsonParsed", ...FRESH }],
+      0
     );
     for (const a of value) {
       const { mint, tokenAmount } = a.account.data.parsed.info;
@@ -9250,7 +9251,7 @@ async function evmHoldings(chain2, owner, extraTokens) {
   const results = await rpcBatch(chain2, [
     { method: "eth_getBalance", params: [owner, "latest"] },
     ...tokens.map((t) => ({ method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, "latest"] }))
-  ]);
+  ], 0);
   const holdings = [
     { venue: chain2, asset: NATIVE, symbol: venue.native.symbol, decimals: 18, amount: Number(BigInt(results[0])) / 1e18 }
   ];
@@ -9285,7 +9286,7 @@ async function walletBalances(pub, extraEvmTokens = {}) {
   }
   return out;
 }
-var solanaRpcUrl, TOKEN_PROGRAMS, pad32;
+var solanaRpcUrl, TOKEN_PROGRAMS, FRESH, pad32;
 var init_chain = __esm({
   "src/live/chain.ts"() {
     "use strict";
@@ -9295,6 +9296,7 @@ var init_chain = __esm({
     init_venues();
     solanaRpcUrl = () => process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
     TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
+    FRESH = { commitment: "confirmed" };
     pad32 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
   }
 });
@@ -63502,6 +63504,8 @@ async function writableAccounts(conn, tx) {
   }
   return out;
 }
+var SIMULATION_ATTEMPTS = 3;
+var SIMULATION_RETRY_MS = Number(process.env.SIMULATION_RETRY_MS ?? 2e3);
 var VIEM_CHAINS = { 8453: base2, 56: bsc2 };
 async function sendEvm(accounts, tx, kind, limits) {
   const problems = checkEvmTx(tx, kind, accounts.evm.address, limits);
@@ -63513,12 +63517,17 @@ async function sendEvm(accounts, tx, kind, limits) {
   const wallet = createWalletClient({ account, chain: chain2, transport: http(rpc) });
   const request2 = { to: tx.to, data: tx.data, value: BigInt(tx.value || "0") };
   let gasLimit;
-  try {
-    const estimated = await publicClient.estimateGas({ account, ...request2 });
-    gasLimit = estimated * 13n / 10n;
-  } catch (err) {
-    throw new Error(`La simulaci\xF3n falla, no se env\xEDa: ${err.message.split("\n")[0]}`);
+  let lastError = "";
+  for (let attempt2 = 0; attempt2 < SIMULATION_ATTEMPTS && gasLimit === void 0; attempt2++) {
+    if (attempt2 > 0) await new Promise((r) => setTimeout(r, SIMULATION_RETRY_MS));
+    try {
+      const estimated = await publicClient.estimateGas({ account, ...request2 });
+      gasLimit = estimated * 13n / 10n;
+    } catch (err) {
+      lastError = err.message.split("\n")[0];
+    }
   }
+  if (gasLimit === void 0) throw new Error(`La simulaci\xF3n falla, no se env\xEDa: ${lastError}`);
   const hash3 = await wallet.sendTransaction({ ...request2, gas: gasLimit, chain: chain2 });
   const receipt = await publicClient.waitForTransactionReceipt({ hash: hash3, timeout: 12e4 });
   return receipt.status === "success" ? { hash: hash3, ok: true } : { hash: hash3, ok: false, error: "la transacci\xF3n revirti\xF3 en la cadena (se pag\xF3 el gas)" };

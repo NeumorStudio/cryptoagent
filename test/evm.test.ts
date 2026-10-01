@@ -117,7 +117,7 @@ test("la misión empieza repartida en las cuatro cuentas", async () => {
   const v = await valuation(m);
   assert.ok(Math.abs(v.totalUsd - 1000) < 1, `${v.totalUsd}`);
   assert.equal(v.reliable, true);
-  assert.match(v.evmWallet, /^0x[0-9a-f]{40}$/);
+  assert.match(String(v.evmWallet), /^0x[0-9a-f]{40}$/);
   assert.match(v.benchmarkLabel, /sin operar/);
 });
 

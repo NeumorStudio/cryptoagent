@@ -8359,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.40.0";
+    CODE_VERSION = "0.41.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8775,12 +8775,12 @@ var init_binance2 = __esm({
 });
 
 // src/market/evm.ts
-async function rpcBatch(chain, calls) {
+async function rpcBatch(chain, calls, ttlMs = 1e4) {
   const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
   for (let i = 0; ; i++) {
     try {
-      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs: 1e4 });
+      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
       return body.map((b) => {
         const r = byId.get(b.id);
@@ -10306,7 +10306,7 @@ async function bridgeQuote(q) {
   if (!process.env.LIFI_API_KEY && !takeBudget(HOST, BUDGET, WINDOW_MS)) {
     throw new BudgetExhausted("Se ha agotado el cupo gratuito de Li.Fi (75 consultas cada 2 horas)");
   }
-  const url2 = `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}`;
+  const url2 = `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}` + routeQuery(q);
   const res = await fetchJson(url2, {
     ttlMs: 3e4,
     timeoutMs: 3e4,
@@ -10334,7 +10334,7 @@ async function bridgeTx(q) {
   if (!process.env.LIFI_API_KEY && !takeBudget(HOST, BUDGET, WINDOW_MS)) {
     throw new BudgetExhausted("Se ha agotado el cupo gratuito de Li.Fi (75 consultas cada 2 horas): int\xE9ntalo m\xE1s tarde");
   }
-  const url2 = `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}`;
+  const url2 = `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}` + routeQuery(q);
   const res = await fetchJson(url2, {
     ttlMs: 0,
     timeoutMs: 3e4,
@@ -10361,10 +10361,11 @@ async function bridgeStatus(a) {
     status: res.status ?? "PENDING",
     substatus: res.substatus,
     receivedAmount: res.receiving?.amount ? BigInt(res.receiving.amount) : void 0,
+    receivedToken: res.receiving?.token?.address && typeof res.receiving.token.decimals === "number" ? { address: String(res.receiving.token.address), symbol: String(res.receiving.token.symbol ?? "?"), decimals: res.receiving.token.decimals } : void 0,
     receivingTxHash: res.receiving?.txHash
   };
 }
-var HOST, WINDOW_MS, BUDGET, LIFI_CHAIN, LIFI_NATIVE, BudgetExhausted;
+var HOST, WINDOW_MS, BUDGET, LIFI_CHAIN, LIFI_NATIVE, BudgetExhausted, ALWAYS_AVOIDED_BRIDGES, routeQuery;
 var init_lifi = __esm({
   "src/market/lifi.ts"() {
     "use strict";
@@ -10380,6 +10381,8 @@ var init_lifi = __esm({
     };
     BudgetExhausted = class extends Error {
     };
+    ALWAYS_AVOIDED_BRIDGES = ["mayanFastMCTP", "mayanMCTP"];
+    routeQuery = (o = {}) => `&denyBridges=${[.../* @__PURE__ */ new Set([...ALWAYS_AVOIDED_BRIDGES, ...o.avoidBridges ?? []])].join(",")}` + (o.route === "fastest" ? "&order=FASTEST" : "");
   }
 });
 
@@ -10394,12 +10397,13 @@ async function solanaRpc(method, params, ttlMs = 5e3) {
   return res.result;
 }
 async function solanaHoldings(owner) {
-  const lamports = (await solanaRpc("getBalance", [owner])).value;
+  const lamports = (await solanaRpc("getBalance", [owner, FRESH], 0)).value;
   const holdings = [{ venue: "solana", asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: lamports / 1e9 }];
   for (const programId of TOKEN_PROGRAMS) {
     const { value } = await solanaRpc(
       "getTokenAccountsByOwner",
-      [owner, { programId }, { encoding: "jsonParsed" }]
+      [owner, { programId }, { encoding: "jsonParsed", ...FRESH }],
+      0
     );
     for (const a of value) {
       const { mint, tokenAmount } = a.account.data.parsed.info;
@@ -10423,7 +10427,7 @@ async function evmHoldings(chain, owner, extraTokens) {
   const results = await rpcBatch(chain, [
     { method: "eth_getBalance", params: [owner, "latest"] },
     ...tokens.map((t) => ({ method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, "latest"] }))
-  ]);
+  ], 0);
   const holdings = [
     { venue: chain, asset: NATIVE, symbol: venue.native.symbol, decimals: 18, amount: Number(BigInt(results[0])) / 1e18 }
   ];
@@ -10458,7 +10462,7 @@ async function walletBalances(pub, extraEvmTokens = {}) {
   }
   return out;
 }
-var solanaRpcUrl, TOKEN_PROGRAMS, pad32;
+var solanaRpcUrl, TOKEN_PROGRAMS, FRESH, pad32;
 var init_chain = __esm({
   "src/live/chain.ts"() {
     "use strict";
@@ -10468,28 +10472,91 @@ var init_chain = __esm({
     init_venues();
     solanaRpcUrl = () => process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
     TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
+    FRESH = { commitment: "confirmed" };
     pad32 = (addr) => addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
   }
 });
 
-// src/live/paths.ts
+// src/live/keystore.ts
+import { existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync, writeFileSync } from "node:fs";
 import path5 from "node:path";
+function readWalletPublic(dir2) {
+  const f = files(dir2).pub;
+  return existsSync2(f) ? JSON.parse(readFileSync(f, "utf8")) : null;
+}
+var SCRYPT, files;
+var init_keystore = __esm({
+  "src/live/keystore.ts"() {
+    "use strict";
+    SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
+    files = (dir2) => ({ secret: path5.join(dir2, "wallet.enc"), pub: path5.join(dir2, "wallet.json") });
+  }
+});
+
+// src/live/paths.ts
+import path6 from "node:path";
 var liveDir, signerInfoFile;
 var init_paths2 = __esm({
   "src/live/paths.ts"() {
     "use strict";
     init_config();
-    liveDir = () => path5.join(config2.dataDir, "live");
-    signerInfoFile = () => path5.join(liveDir(), "signer.json");
+    liveDir = () => path6.join(config2.dataDir, "live");
+    signerInfoFile = () => path6.join(liveDir(), "signer.json");
+  }
+});
+
+// src/live/sync.ts
+var sync_exports = {};
+__export(sync_exports, {
+  livePub: () => livePub,
+  liveWalletSnapshot: () => liveWalletSnapshot,
+  syncHoldings: () => syncHoldings
+});
+function livePub() {
+  const pub = readWalletPublic(liveDir());
+  if (!pub) throw new Error("No hay cartera real. El usuario debe crearla con /cryptoagent:cartera");
+  return pub;
+}
+function missionTokens(missionId) {
+  const rows = db.prepare("SELECT DISTINCT p.venue, p.asset, p.symbol, t.decimals FROM positions p JOIN token_meta t ON t.chain = p.venue AND t.address = p.asset WHERE p.mission_id = ? AND p.venue IN ('base', 'bsc')").all(missionId);
+  const out = {};
+  for (const r of rows) (out[r.venue] ??= []).push({ address: r.asset, symbol: r.symbol, decimals: r.decimals });
+  return out;
+}
+async function syncHoldings(missionId, extra = {}) {
+  const mission = getMission(missionId);
+  if (!isLive(mission)) return;
+  const tokens = missionTokens(missionId);
+  for (const [c, list] of Object.entries(extra)) (tokens[c] ??= []).push(...list);
+  const { holdings, errors } = await readHoldings(livePub(), tokens);
+  const keep = db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ?").all(missionId).filter((h) => h.venue in errors);
+  resetPortfolio(missionId, [...holdings.filter((h) => h.amount > 0), ...keep]);
+  return { errors };
+}
+async function liveWalletSnapshot() {
+  const pub = livePub();
+  const b = await walletBalances(pub);
+  if (Object.keys(b.errors).length) throw new Error(`No se pudieron leer los saldos de: ${Object.keys(b.errors).join(", ")}. Int\xE9ntalo de nuevo.`);
+  return { pub, ...b, holdings: b.balances.filter((x) => x.amount > 0).map(({ usd: _u, valuedBy: _v, ...h }) => h) };
+}
+var init_sync = __esm({
+  "src/live/sync.ts"() {
+    "use strict";
+    init_db();
+    init_mission();
+    init_portfolio();
+    init_chain();
+    init_keystore();
+    init_paths2();
   }
 });
 
 // src/live/client.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync2, readFileSync } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
 function readInfo() {
   try {
-    return existsSync2(signerInfoFile()) ? JSON.parse(readFileSync(signerInfoFile(), "utf8")) : null;
+    return existsSync3(signerInfoFile()) ? JSON.parse(readFileSync2(signerInfoFile(), "utf8")) : null;
   } catch {
     return null;
   }
@@ -10551,68 +10618,6 @@ var init_client = __esm({
   }
 });
 
-// src/live/keystore.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync } from "node:fs";
-import path6 from "node:path";
-function readWalletPublic(dir2) {
-  const f = files(dir2).pub;
-  return existsSync3(f) ? JSON.parse(readFileSync2(f, "utf8")) : null;
-}
-var SCRYPT, files;
-var init_keystore = __esm({
-  "src/live/keystore.ts"() {
-    "use strict";
-    SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
-    files = (dir2) => ({ secret: path6.join(dir2, "wallet.enc"), pub: path6.join(dir2, "wallet.json") });
-  }
-});
-
-// src/live/sync.ts
-var sync_exports = {};
-__export(sync_exports, {
-  livePub: () => livePub,
-  liveWalletSnapshot: () => liveWalletSnapshot,
-  syncHoldings: () => syncHoldings
-});
-function livePub() {
-  const pub = readWalletPublic(liveDir());
-  if (!pub) throw new Error("No hay cartera real. El usuario debe crearla con /cryptoagent:cartera");
-  return pub;
-}
-function missionTokens(missionId) {
-  const rows = db.prepare("SELECT DISTINCT p.venue, p.asset, p.symbol, t.decimals FROM positions p JOIN token_meta t ON t.chain = p.venue AND t.address = p.asset WHERE p.mission_id = ? AND p.venue IN ('base', 'bsc')").all(missionId);
-  const out = {};
-  for (const r of rows) (out[r.venue] ??= []).push({ address: r.asset, symbol: r.symbol, decimals: r.decimals });
-  return out;
-}
-async function syncHoldings(missionId, extra = {}) {
-  const mission = getMission(missionId);
-  if (!isLive(mission)) return;
-  const tokens = missionTokens(missionId);
-  for (const [c, list] of Object.entries(extra)) (tokens[c] ??= []).push(...list);
-  const { holdings, errors } = await readHoldings(livePub(), tokens);
-  const keep = db.prepare("SELECT venue, asset, symbol, decimals, amount FROM holdings WHERE mission_id = ?").all(missionId).filter((h) => h.venue in errors);
-  resetPortfolio(missionId, [...holdings.filter((h) => h.amount > 0), ...keep]);
-  return { errors };
-}
-async function liveWalletSnapshot() {
-  const pub = livePub();
-  const b = await walletBalances(pub);
-  if (Object.keys(b.errors).length) throw new Error(`No se pudieron leer los saldos de: ${Object.keys(b.errors).join(", ")}. Int\xE9ntalo de nuevo.`);
-  return { pub, ...b, holdings: b.balances.filter((x) => x.amount > 0).map(({ usd: _u, valuedBy: _v, ...h }) => h) };
-}
-var init_sync = __esm({
-  "src/live/sync.ts"() {
-    "use strict";
-    init_db();
-    init_mission();
-    init_portfolio();
-    init_chain();
-    init_keystore();
-    init_paths2();
-  }
-});
-
 // src/live/bridge.ts
 var bridge_exports = {};
 __export(bridge_exports, {
@@ -10632,13 +10637,13 @@ async function liveBridge(a) {
   await syncHoldings(m);
   const have = balance(m, src.id, tin.address);
   const isNativeIn = tin.address === src.native.address;
-  const spendable = isNativeIn ? Math.max(0, have - NATIVE_RESERVE[src.id]) : have;
+  const spendable = isNativeIn ? Math.max(0, have - GAS_FOR_THIS_TX[src.id]) : have;
   if (!(a.amount > 0)) throw new Error("La cantidad debe ser positiva");
   if (a.amount > spendable * 1.000001) {
-    throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}` + (isNativeIn ? ` y se reservan ${NATIVE_RESERVE[src.id]} para la red` : ""));
+    throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}` + (isNativeIn ? ` y hacen falta ${GAS_FOR_THIS_TX[src.id]} para pagar la red de esta transacci\xF3n` : ""));
   }
   const nativeLeft = balance(m, src.id, src.native.address) - (isNativeIn ? a.amount : 0);
-  if (nativeLeft < NATIVE_RESERVE[src.id] / 4) throw new Error(`No tienes ${src.native.symbol} suficiente para pagar la red en ${src.label}.`);
+  if (nativeLeft < GAS_FOR_THIS_TX[src.id]) throw new Error(`No tienes ${src.native.symbol} suficiente para pagar la red de esta transacci\xF3n en ${src.label}.`);
   const usd2 = src.isCash(tin.address) ? a.amount : ((await src.priceUsd([tin.address]))[tin.address] ?? 0) * a.amount;
   const summary = `Puente: ${a.amount} ${tin.symbol} de ${src.label} \u2192 ${tout.symbol} en ${dst.label} (\u2248 ${usd2.toFixed(2)} $). Motivo: ${a.reasoning.slice(0, 160)}`;
   let ticket;
@@ -10659,7 +10664,9 @@ async function liveBridge(a) {
     fromAmount: amountIn,
     fromAddress: addr(src.id),
     toAddress: addr(dst.id),
-    slippage: a.slippageBps / 1e4
+    slippage: a.slippageBps / 1e4,
+    route: a.route,
+    avoidBridges: a.avoidBridges
   });
   const same = (x, y) => x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
   if (!same(q.fromAddress, addr(src.id)) || !same(q.toAddress, addr(dst.id))) {
@@ -10718,7 +10725,8 @@ async function liveBridge(a) {
     sent: `${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} desde ${src.label}`,
     willReceive: `~${amountOut} ${tout.symbol} en ${dst.label}`,
     costs,
-    note: `Llega hacia las ${hhmm(arrivesAt)} (lo confirma Li.Fi). Mientras tanto aparece como "en tr\xE1nsito".`
+    note: `Llega hacia las ${hhmm(arrivesAt)} (lo confirma Li.Fi). Mientras tanto aparece como "en tr\xE1nsito".`,
+    ...noGasWarning(m, dst, tout.address)
   };
   logJournal({
     missionId: m,
@@ -10741,6 +10749,14 @@ async function liveBridge(a) {
   await syncHoldings(m).catch(() => void 0);
   return result;
 }
+function noGasWarning(missionId, dst, arriving) {
+  if (arriving.toLowerCase() === dst.native.address.toLowerCase()) return {};
+  const have = balance(missionId, dst.id, dst.native.address);
+  if (have >= GAS_FOR_THIS_TX[dst.id]) return {};
+  return {
+    warning: `En ${dst.label} tienes ${Number(have.toPrecision(3))} ${dst.native.symbol}: sin ${dst.native.symbol} para el gas no podr\xE1s mover lo que llegue (ni devolverlo).`
+  };
+}
 async function settleLiveTransfers(missionId) {
   const rows = db.prepare(
     `SELECT t.* FROM transfers t JOIN missions m ON m.id = t.mission_id
@@ -10754,9 +10770,15 @@ async function settleLiveTransfers(missionId) {
     lastPoll.set(t.id, Date.now());
     const st = await bridgeStatus({ txHash: carry.live.txHash, fromChain: t.from_venue, toChain: t.to_venue, tool: carry.live.tool });
     if (st.status === "DONE") {
-      const received = st.receivedAmount !== void 0 ? Number(st.receivedAmount) / 10 ** t.decimals_in : t.amount_in;
-      if (!db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, t.id).changes) continue;
-      const summary = `Llegan ${Number(received.toPrecision(8))} ${t.symbol_in} a ${getChain(t.to_venue).label} (puente real #${t.id})`;
+      const native = (a) => /^0x0{40}$/i.test(a) || a.toLowerCase() === NATIVE || a === "11111111111111111111111111111111";
+      const got = st.receivedToken;
+      const sameToken = !got || got.address.toLowerCase() === String(t.asset_in).toLowerCase() || native(got.address) && native(String(t.asset_in));
+      const decimals = got && !sameToken ? got.decimals : t.decimals_in;
+      const received = st.receivedAmount !== void 0 ? Number(st.receivedAmount) / 10 ** decimals : t.amount_in;
+      const changed = got && !sameToken;
+      const update = changed ? db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ?, asset_in = ?, symbol_in = ?, decimals_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, got.address.toLowerCase(), got.symbol, got.decimals, t.id) : db.prepare("UPDATE transfers SET status = 'settled', settled_at = ?, amount_in = ? WHERE id = ? AND status = 'pending'").run(now(), received, t.id);
+      if (!update.changes) continue;
+      const summary = changed ? `Llegan ${Number(received.toPrecision(8))} ${got.symbol} a ${getChain(t.to_venue).label} en lugar de ${t.symbol_in} (puente real #${t.id}, ${st.substatus ?? "otro token"}): el puente no hizo el cambio final` : `Llegan ${Number(received.toPrecision(8))} ${t.symbol_in} a ${getChain(t.to_venue).label} (puente real #${t.id})`;
       logJournal({
         missionId: t.mission_id,
         sessionId: null,
@@ -10765,7 +10787,9 @@ async function settleLiveTransfers(missionId) {
         details: st.receivingTxHash ? { txHash: st.receivingTxHash, explorer: explorerTx(t.to_venue, st.receivingTxHash) } : void 0
       });
       await syncHoldings(t.mission_id).catch(() => void 0);
-      log.push(summary);
+      const gas = noGasWarning(t.mission_id, getChain(t.to_venue), changed ? got.address : String(t.asset_in));
+      if (gas.warning) logJournal({ missionId: t.mission_id, sessionId: null, kind: "mission", summary: gas.warning });
+      log.push(gas.warning ? `${summary}. ${gas.warning}` : summary);
     } else if (st.status === "FAILED" || st.status === "INVALID") {
       if (!db.prepare("UPDATE transfers SET status = 'failed', settled_at = ? WHERE id = ? AND status = 'pending'").run(now(), t.id).changes) continue;
       const summary = `El puente real #${t.id} ha fallado (${st.substatus ?? st.status}). Normalmente el dinero vuelve a ${getChain(t.from_venue).label}: revisa el explorador.`;
@@ -10962,8 +10986,9 @@ async function staticEstimate(from, to, tin, tout, amount) {
     estimated: true
   };
 }
-async function liveEstimate(missionId, from, to, tin, tout, amount, slippageBps) {
-  const address = (c) => c === "solana" ? solanaAddress(missionId) : evmAddress(missionId);
+async function liveEstimate(missionId, from, to, tin, tout, amount, slippageBps, routing = {}) {
+  const real = isLiveMission(missionId) ? (await Promise.resolve().then(() => (init_sync(), sync_exports))).livePub() : null;
+  const address = (c) => c === "solana" ? real?.solana ?? solanaAddress(missionId) : real?.evm ?? evmAddress(missionId);
   const q = await bridgeQuote({
     fromChain: from,
     toChain: to,
@@ -10972,7 +10997,8 @@ async function liveEstimate(missionId, from, to, tin, tout, amount, slippageBps)
     fromAmount: toBaseUnits(amount, tin.decimals),
     fromAddress: address(from),
     toAddress: address(to),
-    slippage: slippageBps / 1e4
+    slippage: slippageBps / 1e4,
+    ...routing
   });
   const native = getChain(from).native;
   return {
@@ -10993,6 +11019,18 @@ async function resolveBridge(fromChain, toChain, tokenIn, tokenOut) {
 }
 async function quoteBridge(a) {
   const { tin, tout } = await resolveBridge(a.fromChain, a.toChain, a.tokenIn, a.tokenOut);
+  if (a.missionId != null && isLiveMission(a.missionId)) {
+    const e2 = await liveEstimate(a.missionId, a.fromChain, a.toChain, tin, tout, a.amount, 50, { route: a.route, avoidBridges: a.avoidBridges });
+    return {
+      from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
+      to: `~${Number(e2.amountOut.toPrecision(6))} ${tout.symbol} en ${getChain(a.toChain).label}`,
+      bridge: e2.provider,
+      gas: `~${Number(e2.gasNative.toPrecision(3))} ${getChain(a.fromChain).native.symbol}`,
+      seconds: e2.seconds,
+      fees: e2.fees,
+      note: `Cotizaci\xF3n real de Li.Fi. Rutas excluidas siempre: ${ALWAYS_AVOIDED_BRIDGES.join(", ")}. Puedes pedir la m\xE1s r\xE1pida (route: fastest) o excluir otras (avoid_bridges).`
+    };
+  }
   const e = await staticEstimate(a.fromChain, a.toChain, tin, tout, a.amount);
   return {
     from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
@@ -11013,7 +11051,7 @@ async function bridge(a) {
   if (a.amount > have + DUST4) throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}`);
   let e;
   try {
-    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps);
+    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps, { route: a.route, avoidBridges: a.avoidBridges });
   } catch (err) {
     if (!(err instanceof BudgetExhausted)) throw err;
     e = await staticEstimate(src.id, dst.id, tin, tout, a.amount);
@@ -11372,7 +11410,12 @@ async function checkOne(mission) {
   const closesOnTarget = mission.close_on_target !== 0;
   let reached = closesOnTarget && value >= mission.target_usd && v.reliable;
   let fresh = null;
-  if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
+  if (reached && remaining(mission.deadline).ms > 0) {
+    if (isLive(mission)) {
+      const { syncHoldings: syncHoldings2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
+      await syncHoldings2(mission.id);
+      lastSync.set(mission.id, Date.now());
+    }
     fresh = await valuation(mission.id, false, { fresh: true });
     value = fresh.totalUsd;
     reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
@@ -11413,7 +11456,7 @@ async function checkOne(mission) {
   }
   if (!closes) {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
-    const summary2 = problems.length ? `Misi\xF3n #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misi\xF3n contin\xFAa y se reintentar\xE1.` : `Misi\xF3n #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
+    const summary2 = problems.length ? `Misi\xF3n #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misi\xF3n contin\xFAa y se reintentar\xE1.` : `Misi\xF3n #${mission.id}: al cerrar posiciones lo realizado (${realizedUsd.toFixed(2)} USD, de ${final.totalUsd.toFixed(2)} USD en total) qued\xF3 por debajo del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misi\xF3n contin\xFAa.`;
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary: summary2, details: { problems } });
     return [summary2];
   }
@@ -11460,7 +11503,7 @@ var init_mission = __esm({
 // src/live/execute.ts
 var execute_exports = {};
 __export(execute_exports, {
-  NATIVE_RESERVE: () => NATIVE_RESERVE,
+  GAS_FOR_THIS_TX: () => GAS_FOR_THIS_TX,
   SOLANA_FEE_ALLOWANCE: () => SOLANA_FEE_ALLOWANCE,
   erc20Allowance: () => erc20Allowance,
   explorerTx: () => explorerTx,
@@ -11498,18 +11541,18 @@ async function liveSwap(args) {
   await syncHoldings(m, evmChain ? { [evmChain]: [input2, output2].filter((t) => t.address !== NATIVE) } : {});
   const have = balance(m, chain.id, input2.address);
   const isNativeIn = input2.address === chain.native.address;
-  const spendable = isNativeIn ? Math.max(0, have - NATIVE_RESERVE[chain.id]) : have;
+  const spendable = isNativeIn ? Math.max(0, have - GAS_FOR_THIS_TX[chain.id]) : have;
   let amount = args.sellAll ? spendable : args.amount ?? 0;
   if (!(amount > 0)) throw new Error(args.sellAll ? `No tienes ${input2.symbol} que vender en ${chain.label}` : "La cantidad debe ser positiva (o usa sell_all)");
   if (amount > spendable * 1.000001) {
     throw new Error(
-      `Saldo insuficiente: tienes ${have} ${input2.symbol}` + (isNativeIn ? ` y se reservan ${NATIVE_RESERVE[chain.id]} para pagar la red` : "") + `; quieres vender ${amount}`
+      `Saldo insuficiente: tienes ${have} ${input2.symbol}` + (isNativeIn ? ` y hacen falta ${GAS_FOR_THIS_TX[chain.id]} para pagar la red de esta transacci\xF3n` : "") + `; quieres vender ${amount}`
     );
   }
   amount = Math.min(amount, spendable);
   const nativeLeft = balance(m, chain.id, chain.native.address) - (isNativeIn ? amount : 0);
-  if (nativeLeft < NATIVE_RESERVE[chain.id] / 4) {
-    throw new Error(`No tienes ${chain.native.symbol} suficiente para pagar la red en ${chain.label} (tienes ${nativeLeft.toPrecision(3)}).`);
+  if (nativeLeft < GAS_FOR_THIS_TX[chain.id]) {
+    throw new Error(`No tienes ${chain.native.symbol} suficiente para pagar la red de esta transacci\xF3n en ${chain.label} (tienes ${nativeLeft.toPrecision(3)}, hacen falta unos ${GAS_FOR_THIS_TX[chain.id]}).`);
   }
   const quote2 = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps: args.slippageBps });
   if (args.minOut !== void 0 && quote2.amountOut < args.minOut) throw new LimitNotReached(quote2.amountOut, args.minOut);
@@ -11619,6 +11662,7 @@ async function liveSwap(args) {
     received: `${real.received} ${output2.symbol}`,
     effectivePrice: `1 ${output2.symbol} = ${(real.sold / real.received).toPrecision(6)} ${input2.symbol}`,
     ...real.networkFee ? { networkFee: real.networkFee } : {},
+    ..."accountRent" in real && real.accountRent ? { accountRent: real.accountRent } : {},
     ..."estimated" in real ? { note: "Cantidades estimadas con la cotizaci\xF3n: no se pudo leer la transacci\xF3n todav\xEDa" } : {},
     route: quote2.route
   };
@@ -11661,14 +11705,14 @@ async function rawTokenBalance(chain, pub, token2) {
   return value.reduce((s, a) => s + BigInt(a.account.data.parsed.info.tokenAmount.amount), 0n);
 }
 async function erc20Allowance(chain, token2, owner, spender) {
-  const [hex3] = await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token2, data: `0xdd62ed3e${pad32(owner)}${pad32(spender)}` }, "latest"] }]);
+  const [hex3] = await rpcBatch(chain, [{ method: "eth_call", params: [{ to: token2, data: `0xdd62ed3e${pad32(owner)}${pad32(spender)}` }, "latest"] }], 0);
   return hex3 && hex3 !== "0x" ? BigInt(hex3) : 0n;
 }
 async function evmBalancesAt(chain, owner, tokens, block) {
   const calls = tokens.map(
     (t) => t.address === NATIVE ? { method: "eth_getBalance", params: [owner, block] } : { method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, block] }
   );
-  const out = await rpcBatch(chain, calls);
+  const out = await rpcBatch(chain, calls, 0);
   return Object.fromEntries(tokens.map((t, i) => [t.address, out[i] && out[i] !== "0x" ? BigInt(out[i]) : 0n]));
 }
 async function reconcile(chain, hash2, pub, input2, output2, pre) {
@@ -11684,12 +11728,21 @@ async function reconcile(chain, hash2, pub, input2, output2, pre) {
       const sum = (list) => list.filter((b) => b.owner === pub.solana && b.mint === mint).reduce((s, b) => s + Number(b.uiTokenAmount.amount), 0);
       return sum(tx.meta.postTokenBalances ?? []) - sum(tx.meta.preTokenBalances ?? []);
     };
-    const solDelta = Number(tx.meta.postBalances[0]) - Number(tx.meta.preBalances[0]) + fee;
+    const ownTokenAccounts = new Set(
+      [...tx.meta.preTokenBalances ?? [], ...tx.meta.postTokenBalances ?? []].filter((b) => b.owner === pub.solana && b.mint !== SOL_MINT).map((b) => Number(b.accountIndex))
+    );
+    const rentLamports = [...ownTokenAccounts].reduce((s, i) => s + Number(tx.meta.postBalances[i] ?? 0) - Number(tx.meta.preBalances[i] ?? 0), 0);
+    const solDelta = Number(tx.meta.postBalances[0]) - Number(tx.meta.preBalances[0]) + fee + rentLamports;
     const delta2 = (t) => t.address === SOL_MINT ? solDelta / 1e9 : tokenDelta(t.address) / 10 ** t.decimals;
-    return { sold: -delta2(input2), received: delta2(output2), networkFee: `${fee / 1e9} SOL` };
+    return {
+      sold: -delta2(input2),
+      received: delta2(output2),
+      networkFee: `${fee / 1e9} SOL`,
+      ...rentLamports !== 0 ? { accountRent: `${rentLamports > 0 ? "renta de cuenta nueva" : "renta recuperada al cerrar la cuenta"}: ${Math.abs(rentLamports) / 1e9} SOL (no es coste del swap)` } : {}
+    };
   }
   const c = chain;
-  const [receipt] = await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash2] }]);
+  const [receipt] = await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash2] }], 0);
   const block = receipt.blockNumber;
   const post = await evmBalancesAt(c, pub.evm, [input2, output2], block);
   const before = pre ?? await evmBalancesAt(c, pub.evm, [input2, output2], "0x" + (BigInt(block) - 1n).toString(16));
@@ -11701,7 +11754,7 @@ async function reconcile(chain, hash2, pub, input2, output2, pre) {
   };
   return { sold: -delta(input2), received: delta(output2), networkFee: `${fromBaseUnits(gas, 18)} ${getChain(chain).native.symbol}` };
 }
-var NATIVE_RESERVE, SOLANA_MAX_PRIORITY_LAMPORTS, explorerTx, SOLANA_FEE_ALLOWANCE;
+var GAS_FOR_THIS_TX, SOLANA_MAX_PRIORITY_LAMPORTS, explorerTx, SOLANA_FEE_ALLOWANCE;
 var init_execute = __esm({
   "src/live/execute.ts"() {
     "use strict";
@@ -11716,7 +11769,7 @@ var init_execute = __esm({
     init_chain();
     init_client();
     init_sync();
-    NATIVE_RESERVE = { solana: 0.01, base: 3e-4, bsc: 2e-3 };
+    GAS_FOR_THIS_TX = { solana: 3e-3, base: 5e-6, bsc: 5e-5 };
     SOLANA_MAX_PRIORITY_LAMPORTS = 1e6;
     explorerTx = (chain, hash2) => chain === "solana" ? `https://solscan.io/tx/${hash2}` : chain === "base" ? `https://basescan.org/tx/${hash2}` : `https://bscscan.com/tx/${hash2}`;
     SOLANA_FEE_ALLOWANCE = 10000000n;
@@ -12057,6 +12110,15 @@ async function binanceMarketOrder(args) {
   }).catch((err) => console.error(`No se pudo registrar la posici\xF3n: ${err.message}`));
   return result;
 }
+async function walletAddresses(missionId) {
+  if (!isLiveMission(missionId)) return { evmWallet: evmAddress(missionId) };
+  try {
+    const pub = (await Promise.resolve().then(() => (init_sync(), sync_exports))).livePub();
+    return { evmWallet: pub.evm, solanaWallet: pub.solana };
+  } catch {
+    return {};
+  }
+}
 async function valuation(missionId, recordSnapshot = false, opts = {}) {
   let holdings = [];
   let pending = [];
@@ -12116,7 +12178,9 @@ async function valuation(missionId, recordSnapshot = false, opts = {}) {
     pnlPct: (totalUsd - initialUsd) / initialUsd * 100,
     benchmarkUsd,
     benchmarkLabel,
-    evmWallet: evmAddress(missionId),
+    // En una misión real, las direcciones de la cartera de verdad. Antes salía la EVM simulada de la misión y el
+    // agente creyó que un puente había ido a una dirección ajena (M21).
+    ...await walletAddresses(missionId),
     holdings: lines.map((l) => ({
       venue: l.venue,
       symbol: l.symbol,
@@ -43750,9 +43814,22 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       to_chain: chainParam,
       token_in: external_exports.string().describe(`Token que env\xEDas (direcci\xF3n o alias: ${TOKEN_ALIASES})`),
       token_out: external_exports.string().describe("Token que quieres recibir en la cadena de destino (direcci\xF3n o alias)"),
-      amount: external_exports.number().positive()
+      amount: external_exports.number().positive(),
+      route: external_exports.enum(["best_amount", "fastest"]).default("best_amount").describe("C\xF3mo elige Li.Fi la ruta: la que m\xE1s da (por defecto) o la m\xE1s r\xE1pida"),
+      avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`)
     }),
-    run: async (i) => json2(await quoteBridge({ fromChain: i.from_chain, toChain: i.to_chain, tokenIn: i.token_in, tokenOut: i.token_out, amount: i.amount }))
+    run: async (i, ctx) => json2(
+      await quoteBridge({
+        missionId: ctx.missionId,
+        fromChain: i.from_chain,
+        toChain: i.to_chain,
+        tokenIn: i.token_in,
+        tokenOut: i.token_out,
+        amount: i.amount,
+        route: i.route,
+        avoidBridges: i.avoid_bridges
+      })
+    )
   }),
   tool({
     name: "simulate_bridge",
@@ -43766,6 +43843,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       token_out: external_exports.string().describe("Token que quieres recibir en la cadena de destino (direcci\xF3n o alias)"),
       amount: external_exports.number().positive(),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
+      route: external_exports.enum(["best_amount", "fastest"]).default("best_amount").describe("C\xF3mo elige Li.Fi la ruta: la que m\xE1s da (por defecto) o la m\xE1s r\xE1pida"),
+      avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
       thesis
     }),
     run: async (i, ctx) => json2(
@@ -43779,7 +43858,9 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         amount: i.amount,
         slippageBps: i.slippage_bps,
         reasoning: formatThesis(i.thesis),
-        meta: tradeMeta(i.thesis)
+        meta: tradeMeta(i.thesis),
+        route: i.route,
+        avoidBridges: i.avoid_bridges
       })
     )
   }),
@@ -43795,6 +43876,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       token_out: external_exports.string().describe("Estable o nativo que quieres recibir en la cadena de destino"),
       amount: external_exports.number().positive(),
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
+      route: external_exports.enum(["best_amount", "fastest"]).default("best_amount").describe("C\xF3mo elige Li.Fi la ruta: la que m\xE1s da (por defecto) o la m\xE1s r\xE1pida"),
+      avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
       thesis
     }),
     run: async (i, ctx) => {
@@ -43810,7 +43893,9 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
           tokenOut: i.token_out,
           amount: i.amount,
           slippageBps: i.slippage_bps,
-          reasoning: formatThesis(i.thesis)
+          reasoning: formatThesis(i.thesis),
+          route: i.route,
+          avoidBridges: i.avoid_bridges
         })
       );
     }

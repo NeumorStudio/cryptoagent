@@ -47,11 +47,21 @@ BNB Chain.
 - **Swaps:** con `execute_swap`, Jupiter en Solana y KyberSwap en Base y BNB Chain.
 - **Puentes entre las propias cadenas:** con `execute_bridge` (Li.Fi), solo con estables o el nativo.
   - La llegada la confirma Li.Fi; mientras tanto el dinero aparece "en tránsito".
-  - Si un puente falla, normalmente el dinero vuelve a la cadena de origen.
+  - Si un puente falla, normalmente el dinero vuelve a la cadena de origen. Algunos (los que pasan por USDC y cambian al
+    final) pueden entregar USDC en destino en lugar del token pedido: el resultado lo dice, y avisa si allí no tienes
+    nativo para el gas.
+  - Li.Fi elige el puente. Con `route: fastest` pide el más rápido y con `avoid_bridges` excluyes los que no quieras;
+    `quote_bridge` te dice cuál elegiría antes de ejecutar. Las rutas de Mayan MCTP están excluidas siempre (en la
+    primera misión real fallaron dos veces y cobraron de más).
+  - Medido en la primera misión real: Gas.zip (para llevar nativo) llega en segundos; el USDC por CCTP estándar
+    (Polymer) de Base a Solana tardó 20 minutos.
 - **Binance y `simulate_transfer`:** no están disponibles.
 - Cada transacción paga la red real, también si revierte. El slippage se aplica en la cadena.
 - En Base y BNB Chain, la primera venta de un token necesita un approve, que es otra transacción con su gas.
-- Siempre se reserva algo del nativo para el gas: 0,01 SOL, 0,0003 ETH o 0,002 BNB.
+- No hay reserva de nativo: cuánto guardar para el gas lo decides tú. Solo se deja lo justo para pagar la transacción que
+  haces (0,003 SOL, que incluye la renta de una cuenta de token nueva; 0,000005 ETH; 0,00005 BNB). Referencias medidas en
+  la primera misión real: una transacción cuesta ~0,00002 SOL (+0,002 SOL de renta por cada token nuevo), ~0,000002 ETH
+  en Base y ~0,00002 BNB en BNB Chain. Sin nativo en una red no puedes hacer nada en ella, ni siquiera sacar el dinero.
 - El firmante (un proceso aparte que tiene la clave) valida cada transacción y aplica los límites de la misión. En
   aprobación manual, espera hasta ~90 s a que el usuario la apruebe.
 - Al terminar, los tokens se venden a estables y el nativo se queda.

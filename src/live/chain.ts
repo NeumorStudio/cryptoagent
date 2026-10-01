@@ -23,13 +23,20 @@ export async function solanaRpc<T>(method: string, params: unknown[], ttlMs = 5_
   return res.result as T;
 }
 
+// Los saldos se leen sin caché y con el nivel "confirmed", el mismo con el que el firmante da por hecha una
+// transacción. Con el nivel por defecto ("finalized", unos 13 s por detrás) y la caché, la sincronización de justo
+// después de un puente devolvía el saldo de antes: el dinero contaba en origen y en tránsito a la vez, y en la
+// primera misión real (M21) eso hizo creer cuatro veces que se había llegado al objetivo.
+const FRESH = { commitment: "confirmed" };
+
 async function solanaHoldings(owner: string): Promise<Holding[]> {
-  const lamports = (await solanaRpc<{ value: number }>("getBalance", [owner])).value;
+  const lamports = (await solanaRpc<{ value: number }>("getBalance", [owner, FRESH], 0)).value;
   const holdings: Holding[] = [{ venue: "solana", asset: SOL_MINT, symbol: "SOL", decimals: 9, amount: lamports / 1e9 }];
   for (const programId of TOKEN_PROGRAMS) {
     const { value } = await solanaRpc<{ value: Array<{ account: { data: { parsed: { info: { mint: string; tokenAmount: { amount: string; decimals: number } } } } } }> }>(
       "getTokenAccountsByOwner",
-      [owner, { programId }, { encoding: "jsonParsed" }],
+      [owner, { programId }, { encoding: "jsonParsed", ...FRESH }],
+      0,
     );
     for (const a of value) {
       const { mint, tokenAmount } = a.account.data.parsed.info;
@@ -58,7 +65,7 @@ async function evmHoldings(chain: EvmChainId, owner: string, extraTokens: Array<
   const results = (await rpcBatch(chain, [
     { method: "eth_getBalance", params: [owner, "latest"] },
     ...tokens.map((t) => ({ method: "eth_call", params: [{ to: t.address, data: `0x70a08231${pad32(owner)}` }, "latest"] })),
-  ])) as string[];
+  ], 0)) as string[];
   const holdings: Holding[] = [
     { venue: chain, asset: NATIVE, symbol: venue.native.symbol, decimals: 18, amount: Number(BigInt(results[0]!)) / 1e18 },
   ];

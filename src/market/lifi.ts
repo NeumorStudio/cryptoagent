@@ -30,6 +30,20 @@ export interface BridgeQuote {
 
 export class BudgetExhausted extends Error {}
 
+/**
+ * Cómo elegir la ruta. Por defecto, la que más da (lo que elige Li.Fi); con "fastest", la más rápida. Las rutas de
+ * Mayan MCTP se excluyen siempre: en la primera misión real (M21) Mayan Fast MCTP falló dos veces de SOL a ETH en Base
+ * (devolvió USDC en destino, sin gas) y cobró ~0,0033 SOL de más por puente; en su explorador, 44 de 47 órdenes así
+ * acabaron igual ese día. El agente puede excluir otras con avoidBridges.
+ */
+export interface RouteOptions {
+  route?: "best_amount" | "fastest";
+  avoidBridges?: string[];
+}
+export const ALWAYS_AVOIDED_BRIDGES = ["mayanFastMCTP", "mayanMCTP"];
+const routeQuery = (o: RouteOptions = {}) =>
+  `&denyBridges=${[...new Set([...ALWAYS_AVOIDED_BRIDGES, ...(o.avoidBridges ?? [])])].join(",")}` + (o.route === "fastest" ? "&order=FASTEST" : "");
+
 export async function bridgeQuote(q: {
   fromChain: string;
   toChain: string;
@@ -39,14 +53,15 @@ export async function bridgeQuote(q: {
   fromAddress: string;
   toAddress: string;
   slippage: number;
-}): Promise<BridgeQuote> {
+} & RouteOptions): Promise<BridgeQuote> {
   if (!process.env.LIFI_API_KEY && !takeBudget(HOST, BUDGET, WINDOW_MS)) {
     throw new BudgetExhausted("Se ha agotado el cupo gratuito de Li.Fi (75 consultas cada 2 horas)");
   }
   const url =
     `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}` +
     `&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}` +
-    `&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}`;
+    `&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}` +
+    routeQuery(q);
   const res = await fetchJson<Record<string, any>>(url, {
     ttlMs: 30_000,
     timeoutMs: 30_000,
@@ -90,7 +105,8 @@ export async function bridgeTx(q: Parameters<typeof bridgeQuote>[0]): Promise<Br
   const url =
     `https://li.quest/v1/quote?fromChain=${LIFI_CHAIN[q.fromChain]}&toChain=${LIFI_CHAIN[q.toChain]}` +
     `&fromToken=${q.fromToken}&toToken=${q.toToken}&fromAmount=${q.fromAmount}` +
-    `&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}`;
+    `&fromAddress=${q.fromAddress}&toAddress=${q.toAddress}&slippage=${q.slippage}` +
+    routeQuery(q);
   const res = await fetchJson<Record<string, any>>(url, {
     ttlMs: 0,
     timeoutMs: 30_000,
@@ -113,6 +129,11 @@ export interface BridgeStatus {
   substatus?: string;
   /** Lo recibido en destino (unidades base), si ya ha llegado. */
   receivedAmount?: bigint;
+  /**
+   * El token que llegó de verdad. Puede no ser el pedido: con substatus PARTIAL (o un reembolso en destino), el
+   * puente entrega otro, como Mayan Fast MCTP en la M21, que devolvió USDC en Base en lugar de ETH.
+   */
+  receivedToken?: { address: string; symbol: string; decimals: number };
   receivingTxHash?: string;
 }
 
@@ -128,6 +149,10 @@ export async function bridgeStatus(a: { txHash: string; fromChain: string; toCha
     status: res.status ?? "PENDING",
     substatus: res.substatus,
     receivedAmount: res.receiving?.amount ? BigInt(res.receiving.amount) : undefined,
+    receivedToken:
+      res.receiving?.token?.address && typeof res.receiving.token.decimals === "number"
+        ? { address: String(res.receiving.token.address), symbol: String(res.receiving.token.symbol ?? "?"), decimals: res.receiving.token.decimals }
+        : undefined,
     receivingTxHash: res.receiving?.txHash,
   };
 }

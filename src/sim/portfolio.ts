@@ -530,6 +530,17 @@ export async function binanceMarketOrder(args: {
  * Dirección del monedero EVM de la misión (la misma en Base y BNB Chain, como en MetaMask).
  * Es ficticia: se deriva del id de la misión y no corresponde a ninguna clave real.
  */
+/** Direcciones de la misión: las de la cartera real si la misión es real; si no, las simuladas. */
+export async function walletAddresses(missionId: number): Promise<{ evmWallet?: string; solanaWallet?: string }> {
+  if (!isLiveMission(missionId)) return { evmWallet: evmAddress(missionId) };
+  try {
+    const pub = (await import("../live/sync.js")).livePub();
+    return { evmWallet: pub.evm, solanaWallet: pub.solana };
+  } catch {
+    return {}; // sin el archivo de la cartera no hay direcciones que mostrar (nunca las simuladas)
+  }
+}
+
 export const evmAddress = (missionId: number) => `0x${createHash("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
 
 // ─── Valoración a precio de mercado ─────────────────────────────────────────
@@ -608,7 +619,9 @@ export async function valuation(missionId: number, recordSnapshot = false, opts:
     pnlPct: ((totalUsd - initialUsd) / initialUsd) * 100,
     benchmarkUsd,
     benchmarkLabel,
-    evmWallet: evmAddress(missionId),
+    // En una misión real, las direcciones de la cartera de verdad. Antes salía la EVM simulada de la misión y el
+    // agente creyó que un puente había ido a una dirección ajena (M21).
+    ...(await walletAddresses(missionId)),
     holdings: lines.map((l) => ({
       venue: l.venue,
       symbol: l.symbol,

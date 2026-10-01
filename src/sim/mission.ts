@@ -387,7 +387,14 @@ async function checkOne(mission: Mission): Promise<string[]> {
   // de una cotización de hace unos segundos, y en un token que se mueve un 40 % por minuto ya no vale. En la M4 de
   // la v0.36.1 se dio por alcanzado con 57,46 $, la venta dio 47,46 y se llevó por delante la toma de beneficio.
   let fresh: Awaited<ReturnType<typeof valuation>> | null = null;
-  if (reached && remaining(mission.deadline).ms > 0 && !isLive(mission)) {
+  if (reached && remaining(mission.deadline).ms > 0) {
+    // En una misión real, antes se releen los saldos de la cadena: en la M21, tras cada puente, el saldo de origen
+    // aún sin descontar más lo que estaba en tránsito hicieron creer cuatro veces que se había llegado al objetivo.
+    if (isLive(mission)) {
+      const { syncHoldings } = await import("../live/sync.js");
+      await syncHoldings(mission.id);
+      lastSync.set(mission.id, Date.now());
+    }
     fresh = await valuation(mission.id, false, { fresh: true });
     value = fresh.totalUsd;
     reached = fresh.totalUsd >= mission.target_usd && fresh.reliable;
@@ -454,7 +461,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
     db.prepare("UPDATE missions SET status = 'active' WHERE id = ?").run(mission.id);
     const summary = problems.length
       ? `Misión #${mission.id}: objetivo alcanzado, pero no se pudo vender todo (${problems.join("; ")}). La misión continúa y se reintentará.`
-      : `Misión #${mission.id}: al cerrar posiciones el resultado realizado (${final.totalUsd.toFixed(2)} USD) quedó por debajo ` +
+      : `Misión #${mission.id}: al cerrar posiciones lo realizado (${realizedUsd.toFixed(2)} USD, de ${final.totalUsd.toFixed(2)} USD en total) quedó por debajo ` +
         `del objetivo (${mission.target_usd} USD) por comisiones y slippage. La misión continúa.`;
     logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
     return [summary];

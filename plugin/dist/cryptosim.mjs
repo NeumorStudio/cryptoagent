@@ -8402,7 +8402,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.53.0";
+    CODE_VERSION = "0.54.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9298,16 +9298,20 @@ function evmAdapter(cfg) {
           [() => gecko("trending_pools"), () => gecko("new_pools"), boosts].map((fn, i) => fn().then((c) => `${sources[i]}: ${c}`, (e) => `${sources[i]}: ${e.message.slice(0, 120)}`))
         );
         const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
-        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
+        const all = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
           const lp = launchpadOf(cfg.id, c.token);
           return lp ? { ...c, launchpad: lp } : c;
-        }).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+        });
+        const candidates = [...all].sort((a, b) => b.sources.length - a.sources.length || (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0)).slice(0, limit);
+        const shown = new Set(candidates.map((c) => c.token));
+        const newest = all.filter((c) => !shown.has(c.token) && typeof c.ageMinutes === "number" && c.ageMinutes < 180).sort((a, b) => (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0)).slice(0, 8);
         return {
           chain: cfg.id,
-          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
+          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero; a igualdad, los de m\xE1s volumen en 1 h). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
           sourcesStatus: status,
           totalUnique: merged.size,
-          candidates
+          candidates,
+          ...newest.length ? { newest } : {}
         };
       },
       async report(token2) {
@@ -43061,7 +43065,7 @@ var init_skipped = __esm({
     "use strict";
     init_db();
     init_venues();
-    SEEN_PER_SCAN = 10;
+    SEEN_PER_SCAN = 20;
   }
 });
 
@@ -75871,13 +75875,14 @@ var SIM_TOOLS = [
         const scan = compactScan(await getChain(c).research.scan(n3));
         if (Array.isArray(scan.candidates)) {
           recordScan(c, scan.candidates.slice(0, 15));
-          void Promise.resolve().then(() => (init_skipped(), skipped_exports)).then(({ recordSeen: recordSeen2 }) => recordSeen2(ctx.missionId, c, scan.candidates)).catch(() => void 0);
+          const seen = [...scan.candidates.slice(0, 10), ...scan.newest ?? []];
+          void Promise.resolve().then(() => (init_skipped(), skipped_exports)).then(({ recordSeen: recordSeen2 }) => recordSeen2(ctx.missionId, c, seen)).catch(() => void 0);
         }
         if (top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(c, scan.candidates, top, ctx.missionId);
         return scan;
       };
       if (chain !== "all") return toText(await one2(chain, limit, check_top));
-      const perChain = Math.max(5, Math.ceil(limit / CHAINS.length));
+      const perChain = Math.max(8, Math.ceil(limit / CHAINS.length));
       const results = await Promise.all(
         CHAINS.map(async (c) => {
           const scan = await one2(c, perChain, Math.min(check_top, 3)).catch((err) => ({ error: err.message }));

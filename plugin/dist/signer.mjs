@@ -39500,7 +39500,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.53.0";
+    CODE_VERSION = "0.54.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -40291,16 +40291,20 @@ function evmAdapter(cfg) {
           [() => gecko("trending_pools"), () => gecko("new_pools"), boosts].map((fn, i) => fn().then((c) => `${sources[i]}: ${c}`, (e) => `${sources[i]}: ${e.message.slice(0, 120)}`))
         );
         const skip = /* @__PURE__ */ new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
-        const candidates = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
+        const all = [...merged.values()].filter((c) => !skip.has(c.token)).map((c) => {
           const lp = launchpadOf(cfg.id, c.token);
           return lp ? { ...c, launchpad: lp } : c;
-        }).sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, limit);
+        });
+        const candidates = [...all].sort((a, b) => b.sources.length - a.sources.length || (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0)).slice(0, limit);
+        const shown = new Set(candidates.map((c) => c.token));
+        const newest = all.filter((c) => !shown.has(c.token) && typeof c.ageMinutes === "number" && c.ageMinutes < 180).sort((a, b) => (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0)).slice(0, 8);
         return {
           chain: cfg.id,
-          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
+          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en m\xE1s fuentes van primero; a igualdad, los de m\xE1s volumen en 1 h). Para uno a fondo: token_report con chain: ${cfg.id} y su direcci\xF3n.`,
           sourcesStatus: status,
           totalUnique: merged.size,
-          candidates
+          candidates,
+          ...newest.length ? { newest } : {}
         };
       },
       async report(token2) {

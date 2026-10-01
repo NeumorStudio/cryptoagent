@@ -458,14 +458,15 @@ export const SIM_TOOLS = [
         if (Array.isArray(scan.candidates)) {
           recordScan(c, scan.candidates.slice(0, 15));
           // Lo que ve, con su precio de ahora: al acabar la misión se mide cómo les fue a los que no compró.
-          void import("../sim/skipped.js").then(({ recordSeen }) => recordSeen(ctx.missionId, c, scan.candidates!)).catch(() => undefined);
+          const seen = [...scan.candidates.slice(0, 10), ...(((scan as { newest?: Array<Record<string, unknown>> }).newest ?? []) as Array<Record<string, unknown>>)];
+          void import("../sim/skipped.js").then(({ recordSeen }) => recordSeen(ctx.missionId, c, seen)).catch(() => undefined);
         }
         if (top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(c, scan.candidates, top, ctx.missionId);
         return scan;
       };
       if (chain !== "all") return toText(await one(chain as ChainId, limit, check_top));
       // Las tres a la vez: los mejores de cada una, con el efectivo que hay allí y lo que cuesta llevarlo.
-      const perChain = Math.max(5, Math.ceil(limit / CHAINS.length));
+      const perChain = Math.max(8, Math.ceil(limit / CHAINS.length));
       const results = await Promise.all(
         CHAINS.map(async (c) => {
           const scan = await one(c, perChain, Math.min(check_top, 3)).catch((err: Error) => ({ error: err.message }));

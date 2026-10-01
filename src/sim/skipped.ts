@@ -5,7 +5,7 @@ import type { ChainId } from "./types.js";
 import { getChain } from "./venues/index.js";
 
 /** Cuántos candidatos de cada escaneo se guardan (los primeros, que son los que mira). */
-const SEEN_PER_SCAN = 10;
+const SEEN_PER_SCAN = 20;
 
 /** Guarda los primeros candidatos de un escaneo con su precio de ese momento (solo la primera vez que aparece cada uno). */
 export async function recordSeen(missionId: number | null, chain: ChainId, candidates: Array<Record<string, unknown>>) {

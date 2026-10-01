@@ -314,20 +314,28 @@ function evmAdapter(cfg: EvmChainConfig): ChainAdapter {
         );
         // Fuera el nativo envuelto y las stablecoins: no son candidatos.
         const skip = new Set([...cash, ...Object.values(cfg.aliases).map((t) => t.address)]);
-        const candidates = [...merged.values()]
+        const all = [...merged.values()]
           .filter((c) => !skip.has(c.token))
           .map((c) => {
             const lp = launchpadOf(cfg.id, c.token);
             return lp ? { ...c, launchpad: lp } : c;
-          })
-          .sort((a, b) => b.sources.length - a.sources.length || (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
-          .slice(0, limit);
+          });
+        // Por actividad (volumen de la última hora), no por liquidez: ordenar por liquidez dejaba arriba solo los tokens
+        // establecidos y el agente concluía que en Base y BNB Chain no había tokens nuevos (v0.53, M1-M9).
+        const candidates = [...all].sort((a, b) => b.sources.length - a.sources.length || (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0)).slice(0, limit);
+        const shown = new Set(candidates.map((c) => c.token));
+        // Los recién lanzados (menos de 3 h) que no entran en la lista, como "newest" en Solana.
+        const newest = all
+          .filter((c) => !shown.has(c.token) && typeof c.ageMinutes === "number" && c.ageMinutes < 180)
+          .sort((a, b) => (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0))
+          .slice(0, 8);
         return {
           chain: cfg.id,
-          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en más fuentes van primero). Para uno a fondo: token_report con chain: ${cfg.id} y su dirección.`,
+          note: `Candidatos de ${cfg.label} de varias fuentes (los que aparecen en más fuentes van primero; a igualdad, los de más volumen en 1 h). Para uno a fondo: token_report con chain: ${cfg.id} y su dirección.`,
           sourcesStatus: status,
           totalUnique: merged.size,
           candidates,
+          ...(newest.length ? { newest } : {}),
         };
       },
 

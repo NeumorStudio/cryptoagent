@@ -185,14 +185,3 @@ Solo datos, sin veredicto: qué significan para tus resultados lo decides tú co
   frente a pocas ventas grandes dan un número alto y un volumen bajo. `token_report` con un token trae `memoryData`: los
   valores exactos con los que se evalúan las condiciones de tus creencias; no hace falta calcularlos a mano.
 - **Condiciones para tus creencias.** Todos se pueden usar: `volume1hJupiterVsDexRatio`, `creatorTokens`, `creatorGraduated`, `creatorGraduationPct`, `creatorTradesWithYou`, `creatorWorstPnlWithYouPct`, `creatorIsLaunchpadDeployer`, `devHoldingPct`, `creatorHoneypots`, `insidersDetected`, `lpLockedPct` y `launchpad`.
-
-## 6. Futuros perpetuos (simulados con datos de Hyperliquid)
-
-- **Qué son.** `open_perp` abre una posición larga (ganas si sube) o corta (ganas si baja) con apalancamiento sobre BTC, ETH, SOL, BNB y muchas más. Es la única forma de ganar cuando el mercado cae. `close_perp` la cierra. Las abiertas salen en `portfolio`, en `perps`.
-- **Apalancamiento máximo por moneda** (dato de Hyperliquid): BTC 40x, ETH 25x, SOL 20x, BNB 10x…
-- **De dónde sale el margen.** Del efectivo (USDC/USDT) de una de tus cadenas, y al cerrar vuelve a ella.
-- **Costes.** Depósito 0,3 $; comisión del 0,045 % del nocional al abrir y al cerrar; funding cada hora (si es positivo, los largos pagan a los cortos); retirada 1 $.
-- **Liquidación.** Si el capital de la posición (margen + resultado − funding) baja del mantenimiento (la mitad del margen inicial al apalancamiento máximo), pierdes el margen. Con SOL (máximo 20x): a 10x, un ~7,5 % en contra; a 20x, solo un ~2,5 %. La respuesta de `open_perp` da el precio de liquidación.
-- **Take profit y stop loss.** Son opcionales y se vigilan solos. Se pueden fijar al abrir o después con `set_perp_exits` (con el precio de entrada real; 0 quita la salida).
-- **Lo que no se simula:** el slippage exacto en momentos de mucha volatilidad ni las cascadas de liquidaciones. En misiones reales no están disponibles.
-- **Cuándo encaja.** `strategy_fit` calcula, para tu objetivo y el tiempo que queda, la probabilidad de llegar con cada apalancamiento y el riesgo de liquidación, con la volatilidad real de ahora.

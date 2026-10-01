@@ -8367,7 +8367,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.49.0";
+    CODE_VERSION = "0.50.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -44106,10 +44106,6 @@ async function strategyFit(missionOrId) {
   const need = open2 ? 0 : mission.target_usd / v.totalUsd - 1;
   const a = Math.log(1 + Math.max(need, 0));
   const rows = [];
-  const perpMax = await perpMarkets().then(
-    (m) => new Map([...m.values()].map((x) => [x.coin, x.maxLeverage])),
-    () => /* @__PURE__ */ new Map()
-  );
   for (const sym of MAJORS) {
     const vol = await volatility(`${sym}USDT`).catch(() => null);
     if (vol === null) continue;
@@ -44122,24 +44118,6 @@ async function strategyFit(missionOrId) {
       basis: `movimiento t\xEDpico en ${Math.round(minutesLeft)} min: \xB1${(s * 100).toFixed(2)} %; \xFAltima hora: ${vol.change1hPct > 0 ? "+" : ""}${vol.change1hPct} %`,
       available: true
     });
-    const maxLev = perpMax.get(sym) ?? 0;
-    for (const lev of LEVERAGES.filter((l) => l <= maxLev)) {
-      const margin = Math.max(1, v.totalUsd - PERP_DEPOSIT_FEE_USD);
-      const needMove = perpMoveNeeded(v.totalUsd, mission.target_usd, lev);
-      const move = Math.log(1 + Math.max(needMove, 0));
-      const liqDistance = 1 / lev - 1 / (2 * maxLev);
-      const liq = -Math.log(1 - liqDistance);
-      const reach = probTouch(move, s);
-      const ruin = probTouch(liq, s);
-      rows.push({
-        strategy: `Futuros ${sym} ${lev}x`,
-        reachTargetPct: open2 ? null : pct(reach),
-        ruinPct: pct(ruin),
-        fit: open2 ? "sin objetivo" : label(reach * (1 - ruin)),
-        basis: open2 ? `movimiento t\xEDpico con ${lev}x: \xB1${(s * lev * 100).toFixed(1)} % de la cartera; liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp` : `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidaci\xF3n a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
-        available: true
-      });
-    }
   }
   const closed = listPositions().filter((p) => p.status === "closed" && (p.entry.ageMinutes ?? Infinity) < 60 && p.pnlPct !== null);
   if (closed.length >= 5) {
@@ -44175,18 +44153,16 @@ async function strategyFit(missionOrId) {
     strategies: rows
   };
 }
-var MAJORS, LEVERAGES, probTouch, pct, label;
+var MAJORS, probTouch, pct, label;
 var init_fit = __esm({
   "src/sim/fit.ts"() {
     "use strict";
     init_binance();
-    init_hyperliquid();
     init_perps();
     init_mission();
     init_portfolio();
     init_positions();
     MAJORS = ["SOL", "ETH", "BNB"];
-    LEVERAGES = [5, 10, 20];
     probTouch = (a, s) => a <= 0 ? 1 : s <= 0 ? 0 : Math.min(1, 2 * (1 - phi(a / s)));
     pct = (p) => Math.round(p * 100);
     label = (p) => p >= 0.25 ? "encaja" : p >= 0.05 ? "posible" : "no encaja";
@@ -74259,7 +74235,6 @@ function explorationMap() {
     closedTrades: closed.length,
     byVenue,
     spotByAgeAndLiquidity,
-    ...perps.length ? { perpsByCoin } : {},
     note: 'Operaciones cerradas por zona. "sin probar" = ninguna operaci\xF3n ah\xED; con 1-2 operaciones una zona no est\xE1 probada.'
   };
 }
@@ -75424,7 +75399,7 @@ var SIM_TOOLS = [
     kind: "research",
     role: "both",
     researchTarget: () => void 0,
-    description: "Encaje de estrategias con la misi\xF3n: con lo que te falta para el objetivo y el tiempo que queda, la probabilidad estimada de llegar con cada estrategia (cripto grande al contado, futuros con apalancamiento, memecoins j\xF3venes) y su riesgo de ruina. Usa la volatilidad real de ahora (Binance) y tu propio historial. Sirve para elegir con l\xF3gica: no todas encajan con cada misi\xF3n.",
+    description: "Encaje de estrategias con la misi\xF3n: con lo que te falta para el objetivo y el tiempo que queda, la probabilidad estimada de llegar con cada estrategia (cripto grande al contado, memecoins j\xF3venes) y su riesgo de ruina. Usa la volatilidad real de ahora (Binance) y tu propio historial. Sirve para elegir con l\xF3gica: no todas encajan con cada misi\xF3n.",
     schema: external_exports.object({}),
     run: async (_i, ctx) => {
       const { strategyFit: strategyFit2 } = await Promise.resolve().then(() => (init_fit(), fit_exports));
@@ -75744,67 +75719,6 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     }
   }),
   tool({
-    name: "open_perp",
-    kind: "trade",
-    journaled: true,
-    description: "Futuros perpetuos (simulados con datos reales de Hyperliquid): abre una posici\xF3n larga (gana si sube) o corta (gana si baja) con apalancamiento sobre BTC, ETH, SOL, BNB y muchas m\xE1s (cada moneda tiene su apalancamiento m\xE1ximo: strategy_fit y el error te lo dicen). El margen sale del efectivo (USDC/USDT) de una de tus cadenas (from_chain, o la que m\xE1s tenga) y vuelve a ella al cerrar. Costes: dep\xF3sito 0,3 $, comisi\xF3n 0,045 % del nocional al abrir y al cerrar, funding cada hora y retirada 1 $. Si el capital de la posici\xF3n baja del mantenimiento, se liquida y pierdes el margen: la respuesta dice el precio de liquidaci\xF3n. Opcional: take_profit y stop_loss (precios) que se vigilan solos. M\xEDnimo 10 $ de nocional. Solo en misiones simuladas.",
-    schema: external_exports.object({
-      coin: external_exports.string().describe("Moneda del perpetuo: BTC, ETH, SOL, BNB\u2026"),
-      side: external_exports.enum(["long", "short"]),
-      leverage: external_exports.number().min(1).max(50),
-      margin_usd: external_exports.number().positive().describe("Cu\xE1nto de tu efectivo pones como margen"),
-      from_chain: chainParam.optional().describe("De qu\xE9 cadena sale el margen (por defecto, la que m\xE1s efectivo tenga)"),
-      take_profit: external_exports.number().positive().optional(),
-      stop_loss: external_exports.number().positive().optional(),
-      thesis
-    }),
-    run: async (i, ctx) => {
-      const { openPerp: openPerp2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
-      return json2(
-        await openPerp2({
-          missionId: mid(ctx),
-          sessionId: ctx.sessionId,
-          coin: i.coin,
-          side: i.side,
-          leverage: i.leverage,
-          marginUsd: i.margin_usd,
-          fromChain: i.from_chain,
-          takeProfit: i.take_profit,
-          stopLoss: i.stop_loss,
-          reasoning: formatThesis(i.thesis),
-          meta: tradeMeta(i.thesis)
-        })
-      );
-    }
-  }),
-  tool({
-    name: "close_perp",
-    kind: "trade",
-    journaled: true,
-    description: "Cierra un futuro abierto (id en portfolio \u2192 perps) al precio mark del momento; el margen m\xE1s el resultado vuelve a su cadena.",
-    schema: external_exports.object({ perp_id: external_exports.number().int(), reasoning: external_exports.string().min(1) }),
-    run: async (i, ctx) => {
-      const { closePerp: closePerp2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
-      return json2(await closePerp2({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, reasoning: i.reasoning }));
-    }
-  }),
-  tool({
-    name: "set_perp_exits",
-    kind: "trade",
-    journaled: true,
-    description: "Pone, cambia o quita la toma de beneficio y el stop de un futuro ya abierto (id en portfolio \u2192 perps). As\xED puedes calcularlos con el precio de entrada real que te devolvi\xF3 open_perp. Un precio fija la salida; 0 la quita; si no pasas uno, se queda como estaba.",
-    schema: external_exports.object({
-      perp_id: external_exports.number().int(),
-      take_profit: external_exports.number().min(0).optional(),
-      stop_loss: external_exports.number().min(0).optional(),
-      reasoning: external_exports.string().min(1)
-    }),
-    run: async (i, ctx) => {
-      const { setPerpExits: setPerpExits2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
-      return json2(await setPerpExits2({ missionId: mid(ctx), sessionId: ctx.sessionId, perpId: i.perp_id, takeProfit: i.take_profit, stopLoss: i.stop_loss, reasoning: i.reasoning }));
-    }
-  }),
-  tool({
     name: "place_swap_trigger_order",
     kind: "trade",
     journaled: true,
@@ -76006,7 +75920,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     name: "exploration_map",
     kind: "memory",
     role: "both",
-    description: 'Mapa de lo que has probado: operaciones cerradas por cadena, por edad y liquidez del token al entrar (contado) y por moneda (futuros), con ganadas, perdidas y resultado medio. Las casillas "sin probar" son zonas en las que nunca has operado.',
+    description: 'Mapa de lo que has probado: operaciones cerradas por cadena, y por edad y liquidez del token al entrar, con ganadas, perdidas y resultado medio. Las casillas "sin probar" son zonas en las que nunca has operado.',
     schema: external_exports.object({}),
     run: async () => json2(explorationMap())
   }),

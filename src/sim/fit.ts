@@ -3,16 +3,14 @@
 // - cripto grande al contado y futuros: con la volatilidad real de los últimos minutos (Binance);
 // - memecoins: con el historial de las propias operaciones del agente.
 // Es una estimación (movimiento aleatorio sin tendencia, principio de reflexión), pero ordena bien: pedir
-// un +10 % a SOL en 15 min es casi imposible; con futuros a 10x basta un +1 %, a cambio de liquidación.
+// un +10 % a SOL en 15 min es casi imposible.
 import * as binance from "../market/binance.js";
-import { perpMarkets } from "../market/hyperliquid.js";
 import { PERP_DEPOSIT_FEE_USD, PERP_TAKER_FEE, PERP_WITHDRAW_FEE_USD } from "./perps.js";
 import { getMission, type Mission } from "./mission.js";
 import { valuation } from "./portfolio.js";
 import { listPositions } from "./positions.js";
 
 const MAJORS = ["SOL", "ETH", "BNB"] as const;
-const LEVERAGES = [5, 10, 20];
 
 /** Φ, la normal estándar acumulada (aproximación de Abramowitz-Stegun). */
 function phi(x: number) {
@@ -69,11 +67,7 @@ export async function strategyFit(missionOrId: Mission | number) {
   const a = Math.log(1 + Math.max(need, 0));
   const rows: FitRow[] = [];
 
-  // Cripto grande al contado y con futuros (solo los apalancamientos que permite Hyperliquid para cada moneda).
-  const perpMax = await perpMarkets().then(
-    (m) => new Map([...m.values()].map((x) => [x.coin, x.maxLeverage])),
-    () => new Map<string, number>(),
-  );
+  // Cripto grande al contado. (Los futuros se quitaron en la v0.50: no existen con dinero real.)
   for (const sym of MAJORS) {
     const vol = await volatility(`${sym}USDT`).catch(() => null);
     if (vol === null) continue;
@@ -86,30 +80,6 @@ export async function strategyFit(missionOrId: Mission | number) {
       basis: `movimiento típico en ${Math.round(minutesLeft)} min: ±${(s * 100).toFixed(2)} %; última hora: ${vol.change1hPct > 0 ? "+" : ""}${vol.change1hPct} %`,
       available: true,
     });
-    const maxLev = perpMax.get(sym) ?? 0;
-    for (const lev of LEVERAGES.filter((l) => l <= maxLev)) {
-      // Con todo como margen (menos el depósito), el movimiento necesario cubre lo que falta más los costes
-      // fijos (depósito y retirada) y la comisión de apertura y cierre sobre el nocional: sin ellos, a 20x
-      // parecía que bastaba un +0,5 % cuando hacía falta un +0,75 %. La liquidación llega cuando la pérdida
-      // se come el margen hasta el mantenimiento: 1/L − 1/(2·apalancamiento máximo de la moneda).
-      const margin = Math.max(1, v.totalUsd - PERP_DEPOSIT_FEE_USD);
-      const needMove = perpMoveNeeded(v.totalUsd, mission.target_usd, lev);
-      const move = Math.log(1 + Math.max(needMove, 0));
-      const liqDistance = 1 / lev - 1 / (2 * maxLev);
-      const liq = -Math.log(1 - liqDistance);
-      const reach = probTouch(move, s);
-      const ruin = probTouch(liq, s);
-      rows.push({
-        strategy: `Futuros ${sym} ${lev}x`,
-        reachTargetPct: open ? null : pct(reach),
-        ruinPct: pct(ruin),
-        fit: open ? "sin objetivo" : label(reach * (1 - ruin)),
-        basis: open
-          ? `movimiento típico con ${lev}x: ±${(s * lev * 100).toFixed(1)} % de la cartera; liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`
-          : `necesita ${(needMove * 100).toFixed(2)} % a favor contando costes (~${(PERP_DEPOSIT_FEE_USD + PERP_WITHDRAW_FEE_USD + 2 * PERP_TAKER_FEE * margin * lev).toFixed(2)} $); liquidación a ~${(liqDistance * 100).toFixed(1)} % en contra; open_perp`,
-        available: true,
-      });
-    }
   }
 
   // Memecoins jóvenes: con el historial propio.

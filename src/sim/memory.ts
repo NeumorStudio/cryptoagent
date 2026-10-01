@@ -447,7 +447,6 @@ export function explorationMap() {
     closedTrades: closed.length,
     byVenue,
     spotByAgeAndLiquidity,
-    ...(perps.length ? { perpsByCoin } : {}),
     note: "Operaciones cerradas por zona. \"sin probar\" = ninguna operación ahí; con 1-2 operaciones una zona no está probada.",
   };
 }

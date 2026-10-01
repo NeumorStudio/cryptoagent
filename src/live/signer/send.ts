@@ -8,7 +8,10 @@ import { EVM_CHAINS } from "../../market/evm.js";
 import { solanaRpcUrl } from "../chain.js";
 import type { Accounts } from "../keystore.js";
 import {
+  ata,
   checkEvmTx,
+  checkSolanaBridgeRecipient,
+  checkSolanaReceive,
   checkSolanaSpend,
   checkSolanaTx,
   parseTokenAccount,
@@ -36,12 +39,19 @@ const TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQd
 export interface SolanaSendOptions {
   bridge: boolean;
   budget: SolanaSpendBudget;
+  /** Swap: el token comprado y lo mínimo que tiene que llegar a la cartera (unidades base). */
+  expectOut?: { mint: string; min: bigint };
+  /** Puente: nombre de la ruta en Li.Fi. */
+  route?: string;
 }
 
 export async function sendSolana(accounts: Accounts, txBase64: string, opts: SolanaSendOptions): Promise<SendResult> {
   const tx = VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
   const owner = accounts.solana.address;
-  const problems = checkSolanaTx(tx, owner, { bridge: opts.bridge });
+  const problems = [
+    ...checkSolanaTx(tx, owner, { bridge: opts.bridge }),
+    ...(opts.bridge ? checkSolanaBridgeRecipient(tx.message.serialize(), accounts.evm.address, opts.route) : []),
+  ];
   if (problems.length) throw new PolicyError(`El firmante rechaza la transacción: ${problems.join("; ")}`);
   const conn = new Connection(solanaRpcUrl(), "confirmed");
   tx.sign([Keypair.fromSecretKey(accounts.solana.secretKey)]);
@@ -60,7 +70,14 @@ export async function sendSolana(accounts: Accounts, txBase64: string, opts: Sol
       if (t) pre.push({ address: a.pubkey.toBase58(), lamports: BigInt(a.account.lamports), ...t });
     }
   }
-  if (pre.length > 15) throw new PolicyError("La transacción toca demasiadas cuentas de la cartera para comprobarla: no se firma");
+  // Las cuentas donde debe llegar lo comprado, aunque aún no existan (la transacción las crea).
+  if (opts.expectOut) {
+    for (const programId of TOKEN_PROGRAMS) {
+      const address = ata(ownerKey, opts.expectOut.mint, programId);
+      if (!pre.some((a) => a.address === address)) pre.push({ address, lamports: 0n, mint: opts.expectOut.mint, amount: 0n });
+    }
+  }
+  if (pre.length > 17) throw new PolicyError("La transacción toca demasiadas cuentas de la cartera para comprobarla: no se firma");
   // Si la simulación falla, no se envía (no se paga nada).
   const sim = await conn.simulateTransaction(tx, {
     sigVerify: false,
@@ -75,7 +92,10 @@ export async function sendSolana(accounts: Accounts, txBase64: string, opts: Sol
     const data = Buffer.from(acc.data[0], "base64");
     post.set(a.address, { address: a.address, lamports: BigInt(acc.lamports), ...(a.mint ? (parseTokenAccount(data) ?? {}) : {}) });
   });
-  const spend = checkSolanaSpend(owner, pre, post, opts.budget);
+  const spend = [
+    ...checkSolanaSpend(owner, pre, post, opts.budget),
+    ...(opts.expectOut ? checkSolanaReceive(owner, pre, post, opts.expectOut, opts.budget.lamports) : []),
+  ];
   if (spend.length) throw new PolicyError(`El firmante rechaza la transacción: ${spend.join("; ")}`);
   const raw = tx.serialize();
   const hash = await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });

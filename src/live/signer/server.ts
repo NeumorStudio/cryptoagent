@@ -217,10 +217,22 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
           lamports: BigInt(b.lamports ?? "0"),
           tokens: Object.fromEntries(Object.entries(b.tokens ?? {}).map(([k, v]) => [k, BigInt(v)])),
         };
-        return await deps.sendSolana(accounts, String(body.solanaTx ?? ""), { bridge: kind === "bridge", budget });
+        const out = body.expectOut as { mint?: string; min?: string } | undefined;
+        return await deps.sendSolana(accounts, String(body.solanaTx ?? ""), {
+          bridge: kind === "bridge",
+          budget,
+          ...(kind === "swap" && out?.mint ? { expectOut: { mint: out.mint, min: BigInt(out.min ?? "1") } } : {}),
+          ...(typeof body.route === "string" ? { route: body.route } : {}),
+        });
       }
-      const l = (body.evmLimits ?? {}) as { maxValue?: string; destEvm?: boolean };
-      return await deps.sendEvm(accounts, body.evmTx as EvmTxRequest, kind, { maxValue: BigInt(l.maxValue ?? "0"), destEvm: l.destEvm === true });
+      const l = (body.evmLimits ?? {}) as { maxValue?: string; destEvm?: boolean; destSolana?: boolean; route?: string };
+      return await deps.sendEvm(accounts, body.evmTx as EvmTxRequest, kind, {
+        maxValue: BigInt(l.maxValue ?? "0"),
+        destEvm: l.destEvm === true,
+        // La dirección de Solana la pone el firmante (la suya), no el servidor MCP.
+        ...(l.destSolana ? { destSolana: accounts.solana.address } : {}),
+        ...(typeof l.route === "string" ? { route: l.route } : {}),
+      });
     } catch (err) {
       if (err instanceof PolicyError) throw new HttpError(403, err.message);
       throw err;
@@ -258,6 +270,11 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
         if (!sameSecret(auth, opts.token)) return send(res, 401, { error: "Token no válido" });
         if (url.pathname === "/api/status" && req.method === "GET") {
           return send(res, 200, { ...publicState(false), pid: process.pid, pendingApprovals: state.pending.size });
+        }
+        // Parada de emergencia pedida por el servidor MCP (p. ej. un puente con un destinatario ajeno): como "Parar todo".
+        if (url.pathname === "/api/stop" && req.method === "POST") {
+          state.stopped = true;
+          return send(res, 200, { stopped: true });
         }
         if (url.pathname === "/api/intent" && req.method === "POST") {
           const b = await readBody(req);

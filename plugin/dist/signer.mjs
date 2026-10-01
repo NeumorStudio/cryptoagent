@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.46.0";
+    CODE_VERSION = "0.47.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -40976,6 +40976,153 @@ Message: ${transactionMessage}.
   }
 });
 
+// src/live/policy.ts
+function checkSolanaTx(tx, ownerAddress, opts = {}) {
+  const bridge = opts.bridge === true;
+  const problems = [];
+  const owner = new import_web3.PublicKey(ownerAddress);
+  const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+  const key = (i) => keys[i] ?? null;
+  if (keys[0] !== ownerAddress) problems.push("quien paga la transacci\xF3n no es la cartera de la IA");
+  const ownAccounts = /* @__PURE__ */ new Set([ownerAddress, ata(owner, WSOL_MINT, TOKEN_PROGRAM), ata(owner, WSOL_MINT, TOKEN_2022)]);
+  for (const ix of tx.message.compiledInstructions) {
+    const program = key(ix.programIdIndex);
+    const data = ix.data;
+    if (!program || !SOLANA_ALLOWED_PROGRAMS.has(program) && !bridge) {
+      problems.push(`programa no permitido: ${program ?? "(desde una tabla de direcciones)"}`);
+      continue;
+    }
+    if (program === SYSTEM_PROGRAM) {
+      const type = data.length >= 4 ? new DataView(data.buffer, data.byteOffset).getUint32(0, true) : -1;
+      const to = key(ix.accountKeyIndexes[1] ?? -1);
+      if (type === 2 && to && ownAccounts.has(to)) continue;
+      if (bridge && (type === 0 || type === 2)) continue;
+      problems.push("transferencia de SOL a una cuenta que no es de la IA");
+    } else if (program === TOKEN_PROGRAM || program === TOKEN_2022) {
+      const op = data[0];
+      if (op === 17) continue;
+      if (op === 9) {
+        if (key(ix.accountKeyIndexes[1] ?? -1) !== ownerAddress) problems.push("cierre de cuenta de token hacia otra cartera");
+        continue;
+      }
+      if (bridge && (op === 3 || op === 12 || op === 1 || op === 16 || op === 18)) continue;
+      problems.push(`instrucci\xF3n de token no permitida (${op})`);
+    } else if (program === ATA_PROGRAM) {
+      const payer = key(ix.accountKeyIndexes[0] ?? -1);
+      const wallet = key(ix.accountKeyIndexes[2] ?? -1);
+      if (payer !== ownerAddress || wallet !== ownerAddress && !bridge) problems.push("crea una cuenta de token para otra cartera");
+    }
+  }
+  return problems;
+}
+function checkSolanaBridgeRecipient(messageBytes, evmOwner, route) {
+  if (route && TRUSTED_OFFCHAIN_ROUTES.has(route)) return [];
+  const needle = evmOwner.toLowerCase().replace(/^0x/, "");
+  return Buffer.from(messageBytes).toString("hex").includes(needle) ? [] : ["el destinatario del puente no es la cartera de la IA"];
+}
+function checkSolanaSpend(ownerAddress, pre, post, budget) {
+  const problems = [];
+  const spentByMint = /* @__PURE__ */ new Map();
+  for (const a of pre) {
+    const after = post.get(a.address);
+    if (a.address === ownerAddress) {
+      const spent2 = a.lamports - (after?.lamports ?? 0n);
+      if (spent2 > budget.lamports) problems.push(`gastar\xEDa ${spent2} lamports de SOL, m\xE1s de lo aprobado (${budget.lamports})`);
+      continue;
+    }
+    if (!a.mint || a.amount === void 0) continue;
+    const spent = a.amount - (after?.amount ?? 0n);
+    if (spent > 0n) spentByMint.set(a.mint, (spentByMint.get(a.mint) ?? 0n) + spent);
+  }
+  for (const [mint, spent] of spentByMint) {
+    const allowed = budget.tokens[mint] ?? 0n;
+    if (spent > allowed) problems.push(`sacar\xEDa ${spent} unidades del token ${mint}, m\xE1s de lo aprobado (${allowed})`);
+  }
+  return problems;
+}
+function checkSolanaReceive(ownerAddress, pre, post, expect, feeAllowance) {
+  let received = 0n;
+  for (const a of pre) {
+    const after = post.get(a.address);
+    if (a.address === ownerAddress) {
+      if (expect.mint === WSOL_MINT) received += (after?.lamports ?? 0n) - a.lamports + feeAllowance;
+      continue;
+    }
+    if (a.mint === expect.mint || after?.mint === expect.mint && a.amount === void 0) received += (after?.amount ?? 0n) - (a.amount ?? 0n);
+  }
+  return received >= expect.min ? [] : [`lo comprado no llega a la cartera de la IA (llegar\xEDan ${received} unidades de ${expect.mint}, m\xEDnimo ${expect.min})`];
+}
+function parseTokenAccount(data) {
+  if (data.length < 72) return null;
+  return { mint: new import_web3.PublicKey(data.slice(0, 32)).toBase58(), amount: new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) };
+}
+function checkEvmTx(tx, kind, ownerAddress, limits) {
+  const problems = [];
+  const routers = EVM_ROUTERS[tx.chainId];
+  if (!routers) return [`cadena no permitida (${tx.chainId})`];
+  const data = tx.data.toLowerCase();
+  const owner = ownerAddress.toLowerCase().replace(/^0x/, "");
+  if (kind === "approve") {
+    if (!data.startsWith(APPROVE) || data.length !== 2 + 8 + 128) return ["no es un approve est\xE1ndar"];
+    if (BigInt(tx.value || "0") !== 0n) problems.push("un approve no env\xEDa nativo");
+    const spender = "0x" + data.slice(10 + 24, 10 + 64);
+    const amount = BigInt("0x" + data.slice(10 + 64));
+    if (!routers.has(spender) && spender !== LIFI_DIAMOND) problems.push(`approve a un contrato no permitido (${spender})`);
+    if (amount === MAX_UINT) problems.push("approve ilimitado: solo se aprueba la cantidad exacta");
+    return problems;
+  }
+  if (kind === "bridge") {
+    if (!limits) return ["faltan los l\xEDmites del puente"];
+    if (tx.to.toLowerCase() !== LIFI_DIAMOND) problems.push(`un puente solo puede ir al contrato de Li.Fi (va a ${tx.to})`);
+    if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el puente env\xEDa m\xE1s nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
+    const trusted = limits.route !== void 0 && TRUSTED_OFFCHAIN_ROUTES.has(limits.route) && data.includes(Buffer.from(limits.route).toString("hex"));
+    if (limits.destSolana) {
+      if (!trusted && !data.includes(solanaHex(limits.destSolana))) problems.push("el destinatario del puente no es la cartera de la IA en Solana");
+    } else if (!data.includes(owner)) problems.push("el destinatario del puente no es la cartera de la IA");
+    return problems;
+  }
+  if (!routers.has(tx.to.toLowerCase())) problems.push(`contrato no permitido (${tx.to})`);
+  if (!data.includes(owner)) problems.push("el destinatario del swap no es la cartera de la IA");
+  if (!limits) problems.push("faltan los l\xEDmites del swap");
+  else if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el swap env\xEDa m\xE1s nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
+  return problems;
+}
+function checkLimits(c) {
+  if (c.side === "sell" || c.side === "move") return [];
+  const problems = [];
+  if (c.usd > c.maxTradeUsd * 1.02) problems.push(`la operaci\xF3n (${c.usd.toFixed(2)} $) supera el m\xE1ximo por operaci\xF3n (${c.maxTradeUsd.toFixed(2)} $)`);
+  const floor = c.initialUsd * (1 - c.maxLossPct / 100);
+  if (c.currentUsd < floor) {
+    problems.push(`la cartera (${c.currentUsd.toFixed(2)} $) est\xE1 por debajo de la p\xE9rdida m\xE1xima de la misi\xF3n (${floor.toFixed(2)} $): solo se puede vender a estables`);
+  }
+  return problems;
+}
+var import_web3, JUPITER_PROGRAM, SYSTEM_PROGRAM, COMPUTE_BUDGET, TOKEN_PROGRAM, TOKEN_2022, ATA_PROGRAM, WSOL_MINT, SOLANA_ALLOWED_PROGRAMS, ata, TRUSTED_OFFCHAIN_ROUTES, solanaHex, EVM_ROUTERS, LIFI_DIAMOND, APPROVE, MAX_UINT;
+var init_policy = __esm({
+  "src/live/policy.ts"() {
+    "use strict";
+    import_web3 = __toESM(require_index_cjs(), 1);
+    JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+    SYSTEM_PROGRAM = "11111111111111111111111111111111";
+    COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
+    TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+    ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+    WSOL_MINT = "So11111111111111111111111111111111111111112";
+    SOLANA_ALLOWED_PROGRAMS = /* @__PURE__ */ new Set([JUPITER_PROGRAM, SYSTEM_PROGRAM, COMPUTE_BUDGET, TOKEN_PROGRAM, TOKEN_2022, ATA_PROGRAM]);
+    ata = (owner, mint, tokenProgram) => import_web3.PublicKey.findProgramAddressSync([owner.toBuffer(), new import_web3.PublicKey(tokenProgram).toBuffer(), new import_web3.PublicKey(mint).toBuffer()], new import_web3.PublicKey(ATA_PROGRAM))[0].toBase58();
+    TRUSTED_OFFCHAIN_ROUTES = /* @__PURE__ */ new Set(["relaydepository", "layerswap"]);
+    solanaHex = (address) => Buffer.from(new import_web3.PublicKey(address).toBytes()).toString("hex");
+    EVM_ROUTERS = {
+      8453: /* @__PURE__ */ new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"]),
+      56: /* @__PURE__ */ new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"])
+    };
+    LIFI_DIAMOND = "0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae";
+    APPROVE = "0x095ea7b3";
+    MAX_UINT = (1n << 256n) - 1n;
+  }
+});
+
 // node_modules/abitype/dist/esm/version.js
 var version3;
 var init_version3 = __esm({
@@ -51206,125 +51353,7 @@ load();
 
 // src/live/signer/server.ts
 init_mission();
-
-// src/live/policy.ts
-var import_web3 = __toESM(require_index_cjs(), 1);
-var JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-var SYSTEM_PROGRAM = "11111111111111111111111111111111";
-var COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
-var TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-var TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-var ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-var WSOL_MINT = "So11111111111111111111111111111111111111112";
-var SOLANA_ALLOWED_PROGRAMS = /* @__PURE__ */ new Set([JUPITER_PROGRAM, SYSTEM_PROGRAM, COMPUTE_BUDGET, TOKEN_PROGRAM, TOKEN_2022, ATA_PROGRAM]);
-var ata = (owner, mint, tokenProgram) => import_web3.PublicKey.findProgramAddressSync([owner.toBuffer(), new import_web3.PublicKey(tokenProgram).toBuffer(), new import_web3.PublicKey(mint).toBuffer()], new import_web3.PublicKey(ATA_PROGRAM))[0].toBase58();
-function checkSolanaTx(tx, ownerAddress, opts = {}) {
-  const bridge = opts.bridge === true;
-  const problems = [];
-  const owner = new import_web3.PublicKey(ownerAddress);
-  const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
-  const key = (i) => keys[i] ?? null;
-  if (keys[0] !== ownerAddress) problems.push("quien paga la transacci\xF3n no es la cartera de la IA");
-  const ownAccounts = /* @__PURE__ */ new Set([ownerAddress, ata(owner, WSOL_MINT, TOKEN_PROGRAM), ata(owner, WSOL_MINT, TOKEN_2022)]);
-  for (const ix of tx.message.compiledInstructions) {
-    const program = key(ix.programIdIndex);
-    const data = ix.data;
-    if (!program || !SOLANA_ALLOWED_PROGRAMS.has(program) && !bridge) {
-      problems.push(`programa no permitido: ${program ?? "(desde una tabla de direcciones)"}`);
-      continue;
-    }
-    if (program === SYSTEM_PROGRAM) {
-      const type = data.length >= 4 ? new DataView(data.buffer, data.byteOffset).getUint32(0, true) : -1;
-      const to = key(ix.accountKeyIndexes[1] ?? -1);
-      if (type === 2 && to && ownAccounts.has(to)) continue;
-      if (bridge && (type === 0 || type === 2)) continue;
-      problems.push("transferencia de SOL a una cuenta que no es de la IA");
-    } else if (program === TOKEN_PROGRAM || program === TOKEN_2022) {
-      const op = data[0];
-      if (op === 17) continue;
-      if (op === 9) {
-        if (key(ix.accountKeyIndexes[1] ?? -1) !== ownerAddress) problems.push("cierre de cuenta de token hacia otra cartera");
-        continue;
-      }
-      if (bridge && (op === 3 || op === 12 || op === 1 || op === 16 || op === 18)) continue;
-      problems.push(`instrucci\xF3n de token no permitida (${op})`);
-    } else if (program === ATA_PROGRAM) {
-      const payer = key(ix.accountKeyIndexes[0] ?? -1);
-      const wallet = key(ix.accountKeyIndexes[2] ?? -1);
-      if (payer !== ownerAddress || wallet !== ownerAddress && !bridge) problems.push("crea una cuenta de token para otra cartera");
-    }
-  }
-  return problems;
-}
-function checkSolanaSpend(ownerAddress, pre, post, budget) {
-  const problems = [];
-  const spentByMint = /* @__PURE__ */ new Map();
-  for (const a of pre) {
-    const after = post.get(a.address);
-    if (a.address === ownerAddress) {
-      const spent2 = a.lamports - (after?.lamports ?? 0n);
-      if (spent2 > budget.lamports) problems.push(`gastar\xEDa ${spent2} lamports de SOL, m\xE1s de lo aprobado (${budget.lamports})`);
-      continue;
-    }
-    if (!a.mint || a.amount === void 0) continue;
-    const spent = a.amount - (after?.amount ?? 0n);
-    if (spent > 0n) spentByMint.set(a.mint, (spentByMint.get(a.mint) ?? 0n) + spent);
-  }
-  for (const [mint, spent] of spentByMint) {
-    const allowed = budget.tokens[mint] ?? 0n;
-    if (spent > allowed) problems.push(`sacar\xEDa ${spent} unidades del token ${mint}, m\xE1s de lo aprobado (${allowed})`);
-  }
-  return problems;
-}
-function parseTokenAccount(data) {
-  if (data.length < 72) return null;
-  return { mint: new import_web3.PublicKey(data.slice(0, 32)).toBase58(), amount: new DataView(data.buffer, data.byteOffset).getBigUint64(64, true) };
-}
-var EVM_ROUTERS = {
-  8453: /* @__PURE__ */ new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"]),
-  56: /* @__PURE__ */ new Set(["0x6131b5fae19ea4f9d964eac0408e4408b66337b5"])
-};
-var LIFI_DIAMOND = "0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae";
-var APPROVE = "0x095ea7b3";
-var MAX_UINT = (1n << 256n) - 1n;
-function checkEvmTx(tx, kind, ownerAddress, limits) {
-  const problems = [];
-  const routers = EVM_ROUTERS[tx.chainId];
-  if (!routers) return [`cadena no permitida (${tx.chainId})`];
-  const data = tx.data.toLowerCase();
-  const owner = ownerAddress.toLowerCase().replace(/^0x/, "");
-  if (kind === "approve") {
-    if (!data.startsWith(APPROVE) || data.length !== 2 + 8 + 128) return ["no es un approve est\xE1ndar"];
-    if (BigInt(tx.value || "0") !== 0n) problems.push("un approve no env\xEDa nativo");
-    const spender = "0x" + data.slice(10 + 24, 10 + 64);
-    const amount = BigInt("0x" + data.slice(10 + 64));
-    if (!routers.has(spender) && spender !== LIFI_DIAMOND) problems.push(`approve a un contrato no permitido (${spender})`);
-    if (amount === MAX_UINT) problems.push("approve ilimitado: solo se aprueba la cantidad exacta");
-    return problems;
-  }
-  if (kind === "bridge") {
-    if (!limits) return ["faltan los l\xEDmites del puente"];
-    if (tx.to.toLowerCase() !== LIFI_DIAMOND) problems.push(`un puente solo puede ir al contrato de Li.Fi (va a ${tx.to})`);
-    if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el puente env\xEDa m\xE1s nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
-    if (limits.destEvm && !data.includes(owner)) problems.push("el destinatario del puente no es la cartera de la IA");
-    return problems;
-  }
-  if (!routers.has(tx.to.toLowerCase())) problems.push(`contrato no permitido (${tx.to})`);
-  if (!data.includes(owner)) problems.push("el destinatario del swap no es la cartera de la IA");
-  if (!limits) problems.push("faltan los l\xEDmites del swap");
-  else if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el swap env\xEDa m\xE1s nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
-  return problems;
-}
-function checkLimits(c) {
-  if (c.side === "sell" || c.side === "move") return [];
-  const problems = [];
-  if (c.usd > c.maxTradeUsd * 1.02) problems.push(`la operaci\xF3n (${c.usd.toFixed(2)} $) supera el m\xE1ximo por operaci\xF3n (${c.maxTradeUsd.toFixed(2)} $)`);
-  const floor = c.initialUsd * (1 - c.maxLossPct / 100);
-  if (c.currentUsd < floor) {
-    problems.push(`la cartera (${c.currentUsd.toFixed(2)} $) est\xE1 por debajo de la p\xE9rdida m\xE1xima de la misi\xF3n (${floor.toFixed(2)} $): solo se puede vender a estables`);
-  }
-  return problems;
-}
+init_policy();
 
 // src/live/signer/send.ts
 var import_web32 = __toESM(require_index_cjs(), 1);
@@ -63506,6 +63535,7 @@ var bsc2 = /* @__PURE__ */ defineChain({
 // src/live/signer/send.ts
 init_evm();
 init_chain();
+init_policy();
 var PolicyError = class extends Error {
 };
 var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -63513,7 +63543,10 @@ var TOKEN_PROGRAMS2 = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdB
 async function sendSolana(accounts, txBase64, opts) {
   const tx = import_web32.VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
   const owner = accounts.solana.address;
-  const problems = checkSolanaTx(tx, owner, { bridge: opts.bridge });
+  const problems = [
+    ...checkSolanaTx(tx, owner, { bridge: opts.bridge }),
+    ...opts.bridge ? checkSolanaBridgeRecipient(tx.message.serialize(), accounts.evm.address, opts.route) : []
+  ];
   if (problems.length) throw new PolicyError(`El firmante rechaza la transacci\xF3n: ${problems.join("; ")}`);
   const conn = new import_web32.Connection(solanaRpcUrl(), "confirmed");
   tx.sign([import_web32.Keypair.fromSecretKey(accounts.solana.secretKey)]);
@@ -63528,7 +63561,13 @@ async function sendSolana(accounts, txBase64, opts) {
       if (t) pre.push({ address: a.pubkey.toBase58(), lamports: BigInt(a.account.lamports), ...t });
     }
   }
-  if (pre.length > 15) throw new PolicyError("La transacci\xF3n toca demasiadas cuentas de la cartera para comprobarla: no se firma");
+  if (opts.expectOut) {
+    for (const programId of TOKEN_PROGRAMS2) {
+      const address = ata(ownerKey, opts.expectOut.mint, programId);
+      if (!pre.some((a) => a.address === address)) pre.push({ address, lamports: 0n, mint: opts.expectOut.mint, amount: 0n });
+    }
+  }
+  if (pre.length > 17) throw new PolicyError("La transacci\xF3n toca demasiadas cuentas de la cartera para comprobarla: no se firma");
   const sim = await conn.simulateTransaction(tx, {
     sigVerify: false,
     replaceRecentBlockhash: false,
@@ -63542,7 +63581,10 @@ async function sendSolana(accounts, txBase64, opts) {
     const data = Buffer.from(acc.data[0], "base64");
     post.set(a.address, { address: a.address, lamports: BigInt(acc.lamports), ...a.mint ? parseTokenAccount(data) ?? {} : {} });
   });
-  const spend = checkSolanaSpend(owner, pre, post, opts.budget);
+  const spend = [
+    ...checkSolanaSpend(owner, pre, post, opts.budget),
+    ...opts.expectOut ? checkSolanaReceive(owner, pre, post, opts.expectOut, opts.budget.lamports) : []
+  ];
   if (spend.length) throw new PolicyError(`El firmante rechaza la transacci\xF3n: ${spend.join("; ")}`);
   const raw = tx.serialize();
   const hash3 = await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
@@ -63741,10 +63783,22 @@ function createSignerServer(opts) {
           lamports: BigInt(b.lamports ?? "0"),
           tokens: Object.fromEntries(Object.entries(b.tokens ?? {}).map(([k, v]) => [k, BigInt(v)]))
         };
-        return await deps.sendSolana(accounts, String(body.solanaTx ?? ""), { bridge: kind === "bridge", budget });
+        const out = body.expectOut;
+        return await deps.sendSolana(accounts, String(body.solanaTx ?? ""), {
+          bridge: kind === "bridge",
+          budget,
+          ...kind === "swap" && out?.mint ? { expectOut: { mint: out.mint, min: BigInt(out.min ?? "1") } } : {},
+          ...typeof body.route === "string" ? { route: body.route } : {}
+        });
       }
       const l = body.evmLimits ?? {};
-      return await deps.sendEvm(accounts, body.evmTx, kind, { maxValue: BigInt(l.maxValue ?? "0"), destEvm: l.destEvm === true });
+      return await deps.sendEvm(accounts, body.evmTx, kind, {
+        maxValue: BigInt(l.maxValue ?? "0"),
+        destEvm: l.destEvm === true,
+        // La dirección de Solana la pone el firmante (la suya), no el servidor MCP.
+        ...l.destSolana ? { destSolana: accounts.solana.address } : {},
+        ...typeof l.route === "string" ? { route: l.route } : {}
+      });
     } catch (err) {
       if (err instanceof PolicyError) throw new HttpError(403, err.message);
       throw err;
@@ -63775,6 +63829,10 @@ function createSignerServer(opts) {
         if (!sameSecret(auth, opts.token)) return send(res, 401, { error: "Token no v\xE1lido" });
         if (url.pathname === "/api/status" && req.method === "GET") {
           return send(res, 200, { ...publicState(false), pid: process.pid, pendingApprovals: state.pending.size });
+        }
+        if (url.pathname === "/api/stop" && req.method === "POST") {
+          state.stopped = true;
+          return send(res, 200, { stopped: true });
         }
         if (url.pathname === "/api/intent" && req.method === "POST") {
           const b = await readBody(req);

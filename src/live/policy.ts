@@ -1,7 +1,11 @@
 // Política del firmante: qué transacciones acepta firmar. Es la última barrera, independiente del
 // modelo y del servidor MCP: aunque un prompt manipulado consiguiera pedir otra cosa, solo se firman
-// swaps en agregadores conocidos que devuelven los fondos a la propia cartera, y approves a esos routers.
-// No hay forma de enviar fondos a una dirección ajena.
+// swaps en agregadores conocidos que devuelven los fondos a la propia cartera, approves a esos routers y
+// puentes de Li.Fi cuyo destinatario es la propia cartera en la otra cadena.
+//
+// Excepción: las rutas de TRUSTED_OFFCHAIN_ROUTES (Relay, Layerswap) registran el destinatario en su servidor, no en
+// la transacción, y no se puede comprobar antes de firmar. Se admiten por decisión del usuario y se comprueban justo
+// después de enviar (live/bridge.ts): si el destinatario no es la cartera, se para todo.
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 
 // ─── Solana ─────────────────────────────────────────────────────────────────
@@ -16,7 +20,7 @@ const WSOL_MINT = "So11111111111111111111111111111111111111112";
 
 export const SOLANA_ALLOWED_PROGRAMS = new Set([JUPITER_PROGRAM, SYSTEM_PROGRAM, COMPUTE_BUDGET, TOKEN_PROGRAM, TOKEN_2022, ATA_PROGRAM]);
 
-const ata = (owner: PublicKey, mint: string, tokenProgram: string) =>
+export const ata = (owner: PublicKey, mint: string, tokenProgram: string) =>
   PublicKey.findProgramAddressSync([owner.toBuffer(), new PublicKey(tokenProgram).toBuffer(), new PublicKey(mint).toBuffer()], new PublicKey(ATA_PROGRAM))[0].toBase58();
 
 /**
@@ -71,6 +75,22 @@ export function checkSolanaTx(tx: VersionedTransaction, ownerAddress: string, op
   return problems;
 }
 
+/** Rutas de Li.Fi cuyo destinatario no va en la transacción (lo guarda su servidor): se comprueban después de enviar. */
+export const TRUSTED_OFFCHAIN_ROUTES = new Set(["relaydepository", "layerswap"]);
+
+/** Bytes de una dirección de Solana en hexadecimal (como aparece, en bytes32, en la calldata de un puente EVM). */
+export const solanaHex = (address: string) => Buffer.from(new PublicKey(address).toBytes()).toString("hex");
+
+/**
+ * Puente desde Solana (siempre hacia una cadena EVM propia): la dirección EVM de la IA (20 bytes) tiene que aparecer
+ * en la transacción, salvo en las rutas que la guardan fuera de la cadena.
+ */
+export function checkSolanaBridgeRecipient(messageBytes: Uint8Array, evmOwner: string, route: string | undefined): string[] {
+  if (route && TRUSTED_OFFCHAIN_ROUTES.has(route)) return [];
+  const needle = evmOwner.toLowerCase().replace(/^0x/, "");
+  return Buffer.from(messageBytes).toString("hex").includes(needle) ? [] : ["el destinatario del puente no es la cartera de la IA"];
+}
+
 /** Lo máximo que una transacción puede hacer bajar en la cartera (unidades base). */
 export interface SolanaSpendBudget {
   /** SOL de la cuenta principal: lo enviado si es SOL, más comisiones, prioridad y renta de cuentas nuevas. */
@@ -114,6 +134,30 @@ export function checkSolanaSpend(ownerAddress: string, pre: AccountState[], post
   return problems;
 }
 
+/**
+ * Swap en Solana: lo comprado tiene que llegar a la cartera. Con el estado simulado, las cuentas de la IA de ese token
+ * (o su SOL, si se compra SOL) suben al menos lo mínimo de la cotización. En SOL, la subida neta descuenta comisiones
+ * y renta: se compara sumándole lo que se permite gastar en eso.
+ */
+export function checkSolanaReceive(
+  ownerAddress: string,
+  pre: AccountState[],
+  post: Map<string, AccountState | null>,
+  expect: { mint: string; min: bigint },
+  feeAllowance: bigint,
+): string[] {
+  let received = 0n;
+  for (const a of pre) {
+    const after = post.get(a.address);
+    if (a.address === ownerAddress) {
+      if (expect.mint === WSOL_MINT) received += (after?.lamports ?? 0n) - a.lamports + feeAllowance;
+      continue;
+    }
+    if (a.mint === expect.mint || (after?.mint === expect.mint && a.amount === undefined)) received += (after?.amount ?? 0n) - (a.amount ?? 0n);
+  }
+  return received >= expect.min ? [] : [`lo comprado no llega a la cartera de la IA (llegarían ${received} unidades de ${expect.mint}, mínimo ${expect.min})`];
+}
+
 /** Lee una cuenta de token SPL (mint en los bytes 0-32, saldo en 64-72). */
 export function parseTokenAccount(data: Uint8Array): { mint: string; amount: bigint } | null {
   if (data.length < 72) return null;
@@ -144,6 +188,10 @@ export interface EvmTxLimits {
   maxValue: bigint;
   /** Si el destino es una cadena EVM, el destinatario (la misma dirección) debe aparecer en la calldata. */
   destEvm?: boolean;
+  /** Puente hacia Solana: la dirección de la IA en Solana, que debe aparecer (bytes32) en la calldata. */
+  destSolana?: string;
+  /** Nombre de la ruta en Li.Fi (va en la calldata): las de TRUSTED_OFFCHAIN_ROUTES no llevan el destinatario. */
+  route?: string;
 }
 
 export function checkEvmTx(tx: EvmTxRequest, kind: "swap" | "approve" | "bridge", ownerAddress: string, limits?: EvmTxLimits): string[] {
@@ -165,7 +213,10 @@ export function checkEvmTx(tx: EvmTxRequest, kind: "swap" | "approve" | "bridge"
     if (!limits) return ["faltan los límites del puente"];
     if (tx.to.toLowerCase() !== LIFI_DIAMOND) problems.push(`un puente solo puede ir al contrato de Li.Fi (va a ${tx.to})`);
     if (BigInt(tx.value || "0") > limits.maxValue) problems.push(`el puente envía más nativo (${BigInt(tx.value || "0")}) del aprobado (${limits.maxValue})`);
-    if (limits.destEvm && !data.includes(owner)) problems.push("el destinatario del puente no es la cartera de la IA");
+    const trusted = limits.route !== undefined && TRUSTED_OFFCHAIN_ROUTES.has(limits.route) && data.includes(Buffer.from(limits.route).toString("hex"));
+    if (limits.destSolana) {
+      if (!trusted && !data.includes(solanaHex(limits.destSolana))) problems.push("el destinatario del puente no es la cartera de la IA en Solana");
+    } else if (!data.includes(owner)) problems.push("el destinatario del puente no es la cartera de la IA");
     return problems;
   }
   if (!routers.has(tx.to.toLowerCase())) problems.push(`contrato no permitido (${tx.to})`);

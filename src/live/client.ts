@@ -70,6 +70,12 @@ export interface SignResult {
   block?: string;
 }
 
+/** Para todo en el firmante (como el botón de la página): no firma nada más hasta que el usuario desbloquee. */
+export async function stopSigner(): Promise<void> {
+  const info = await runningSigner();
+  await api(info, "/api/stop", { method: "POST", body: "{}" });
+}
+
 /** Firma y envía una transacción ya aprobada (el firmante la valida con su política y la simula antes). */
 export async function signTx(body: {
   ticket: string;
@@ -80,8 +86,12 @@ export async function signTx(body: {
   /** Solana: lo máximo que puede bajar en la cartera (unidades base, como texto). */
   budget?: { lamports: string; tokens: Record<string, string> };
   evmTx?: { chainId: number; to: string; data: string; value: string };
-  /** EVM: nativo máximo de la transacción y si el destino (puente) es EVM. */
-  evmLimits?: { maxValue: string; destEvm?: boolean };
+  /** EVM: nativo máximo de la transacción, si el destino (puente) es EVM o Solana y la ruta de Li.Fi. */
+  evmLimits?: { maxValue: string; destEvm?: boolean; destSolana?: boolean; route?: string };
+  /** Swap en Solana: el token comprado y lo mínimo que debe llegar a la cartera (unidades base, como texto). */
+  expectOut?: { mint: string; min: string };
+  /** Puente desde Solana: la ruta de Li.Fi. */
+  route?: string;
 }): Promise<SignResult> {
   const info = await runningSigner();
   const res = await api<SignResult>(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 180_000);

@@ -150,7 +150,17 @@ export async function liveSwap(args: LiveSwapArgs) {
       },
     });
     if (!built.swapTransaction) throw new Error(`Jupiter no construyó la transacción: ${built.error ?? "sin respuesta"}`);
-    res = await signTx({ ticket, chain: "solana", kind: "swap", usd, solanaTx: built.swapTransaction, budget: solanaBudget(input, amountIn) });
+    res = await signTx({
+      ticket,
+      chain: "solana",
+      kind: "swap",
+      usd,
+      solanaTx: built.swapTransaction,
+      budget: solanaBudget(input, amountIn),
+      // El firmante comprueba en la simulación que lo comprado llega a una cuenta de la IA: al menos la mitad del mínimo
+      // de la cotización (lo que importa es a dónde llega; un token con comisión de transferencia puede dar algo menos).
+      expectOut: { mint: output.address, min: String(BigInt(q.otherAmountThreshold ?? "2") / 2n) },
+    });
   } else {
     const c = EVM_CHAINS[evmChain!];
     const headers = { "x-client-id": "cryptoagent" };

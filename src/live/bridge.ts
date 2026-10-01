@@ -13,7 +13,8 @@ import type { ChainId } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
 import type { ChainAdapter, TokenRef } from "../sim/venues/types.js";
 import { pad32 } from "./chain.js";
-import { requestIntent, signTx } from "./client.js";
+import { requestIntent, signTx, stopSigner } from "./client.js";
+import { checkSolanaBridgeRecipient, solanaHex, TRUSTED_OFFCHAIN_ROUTES } from "./policy.js";
 import { erc20Allowance, explorerTx, GAS_FOR_THIS_TX, logLiveTx, rawTokenBalance, solanaBudget } from "./execute.js";
 import { livePub, syncHoldings } from "./sync.js";
 
@@ -28,7 +29,7 @@ const lifiToken = (chain: ChainAdapter, t: TokenRef) => (t.address === chain.nat
 const hhmm = (iso: string) => `${new Date(iso).toISOString().slice(11, 16)} UTC (${new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} hora local)`;
 
 interface LiveCarry {
-  live: { txHash: string; tool: string; baseline: number };
+  live: { txHash: string; tool: string; baseline: number; recipientChecked?: boolean };
 }
 
 export async function liveBridge(a: {
@@ -75,20 +76,31 @@ export async function liveBridge(a: {
   const pub = livePub();
   const addr = (c: ChainId) => (c === "solana" ? pub.solana : pub.evm);
   const amountIn = !isNativeIn && a.amount >= have * 0.999999 ? await rawTokenBalance(src.id, pub, tin) : toBaseUnits(a.amount * (1 - 1e-9), tin.decimals);
-  // La cotización (con la transacción) se pide tras la aprobación: el precio es el del momento.
-  const q = await lifi.bridgeTx({
-    fromChain: src.id,
-    toChain: dst.id,
-    fromToken: lifiToken(src, tin),
-    toToken: lifiToken(dst, tout),
-    fromAmount: amountIn,
-    fromAddress: addr(src.id),
-    toAddress: addr(dst.id),
-    slippage: a.slippageBps / 10_000,
-    route: a.route,
-    avoidBridges: a.avoidBridges,
-    bridge: a.bridge,
-  });
+  // La cotización (con la transacción) se pide tras la aprobación: el precio es el del momento. El firmante solo firma
+  // puentes que llevan la dirección de destino en la transacción (salvo las rutas de confianza, que se comprueban al
+  // enviar): si Li.Fi elige una que no la lleva, se pide otra excluyéndola, para no gastar la aprobación en un rechazo.
+  const avoid = [...(a.avoidBridges ?? [])];
+  let q!: Awaited<ReturnType<typeof lifi.bridgeTx>>;
+  for (let attempt = 0; ; attempt++) {
+    q = await lifi.bridgeTx({
+      fromChain: src.id,
+      toChain: dst.id,
+      fromToken: lifiToken(src, tin),
+      toToken: lifiToken(dst, tout),
+      fromAmount: amountIn,
+      fromAddress: addr(src.id),
+      toAddress: addr(dst.id),
+      slippage: a.slippageBps / 10_000,
+      route: a.route,
+      avoidBridges: avoid,
+      bridge: a.bridge,
+    });
+    if (recipientInTx(q, src.id, dst.id, pub)) break;
+    if (a.bridge || attempt >= 2) {
+      throw new Error(`La ruta ${q.tool} no lleva tu dirección de destino en la transacción y el firmante no la firmaría: prueba con otra (avoid_bridges o bridge).`);
+    }
+    avoid.push(q.tool);
+  }
   const same = (x: string, y: string) => (x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y);
   if (!same(q.fromAddress, addr(src.id)) || !same(q.toAddress, addr(dst.id))) {
     throw new Error(`Li.Fi ha devuelto otras direcciones (${q.fromAddress} → ${q.toAddress}): no se envía`);
@@ -97,7 +109,7 @@ export async function liveBridge(a: {
 
   let res: { hash: string; ok: boolean; error?: string };
   if (src.id === "solana") {
-    res = await signTx({ ticket, chain: "solana", kind: "bridge", usd, solanaTx: q.transactionRequest.data, budget: solanaBudget(tin, amountIn, SOLANA_BRIDGE_EXTRA) });
+    res = await signTx({ ticket, chain: "solana", kind: "bridge", usd, solanaTx: q.transactionRequest.data, budget: solanaBudget(tin, amountIn, SOLANA_BRIDGE_EXTRA), route: q.tool });
   } else {
     const c = EVM_CHAINS[src.id as EvmChainId];
     if (!isNativeIn) {
@@ -116,7 +128,7 @@ export async function liveBridge(a: {
       kind: "bridge",
       usd,
       evmTx: { chainId: c.chainId, to: q.transactionRequest.to!, data: q.transactionRequest.data, value: String(BigInt(q.transactionRequest.value ?? "0")) },
-      evmLimits: { maxValue: ((isNativeIn ? amountIn : 0n) + fee).toString(), destEvm: dst.id !== "solana" },
+      evmLimits: { maxValue: ((isNativeIn ? amountIn : 0n) + fee).toString(), destEvm: dst.id !== "solana", destSolana: dst.id === "solana", route: q.tool },
     });
   }
 
@@ -142,9 +154,14 @@ export async function liveBridge(a: {
       .run(m, a.sessionId, now(), arrivesAt, src.id, dst.id, `Li.Fi (${q.tool})`, tin.address, tin.symbol, Number(amountIn) / 10 ** tin.decimals, tout.address, tout.symbol, tout.decimals, amountOut, q.toUsd ?? usd, JSON.stringify(costs), JSON.stringify(carry))
       .lastInsertRowid,
   );
+  // Rutas que no llevan el destinatario en la transacción: se comprueba ya con Li.Fi (y Relay) lo que tienen registrado.
+  const recipient = TRUSTED_OFFCHAIN_ROUTES.has(q.tool)
+    ? await verifyOffchainRecipient({ missionId: m, transferId: id, fromChain: src.id, toChain: dst.id, txHash: res.hash, tool: q.tool, expected: addr(dst.id) })
+    : null;
   const result = {
     real: true,
     transferId: id,
+    ...(recipient ? { recipientCheck: recipient } : {}),
     bridge: `Li.Fi (${q.tool})`,
     ...routeChangeWarning(m, src.id, dst.id, q.tool, a.bridge),
     txHash: res.hash,
@@ -175,6 +192,74 @@ export async function liveBridge(a: {
   });
   await syncHoldings(m).catch(() => undefined);
   return result;
+}
+
+/** ¿Lleva la transacción del puente la dirección de destino de la IA? (Lo mismo que exige el firmante.) */
+function recipientInTx(q: { tool: string; transactionRequest: { data: string } }, from: ChainId, to: ChainId, pub: { solana: string; evm: string }): boolean {
+  if (TRUSTED_OFFCHAIN_ROUTES.has(q.tool)) return true;
+  if (from === "solana") return checkSolanaBridgeRecipient(Buffer.from(q.transactionRequest.data, "base64"), pub.evm, q.tool).length === 0;
+  const data = q.transactionRequest.data.toLowerCase();
+  return to === "solana" ? data.includes(solanaHex(pub.solana)) : data.includes(pub.evm.toLowerCase().replace(/^0x/, ""));
+}
+
+const sameAddress = (x: string, y: string) => (x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y);
+
+/** Destinatario de un puente ya enviado según Li.Fi y, en Relay, según el propio Relay. undefined si aún no lo saben. */
+async function reportedRecipient(a: { fromChain: ChainId; toChain: ChainId; txHash: string; tool: string }): Promise<string | undefined> {
+  const st = await lifi.bridgeStatus({ txHash: a.txHash, fromChain: a.fromChain, toChain: a.toChain, tool: a.tool }).catch(() => null);
+  if (st?.toAddress) return st.toAddress;
+  if (a.tool === "relaydepository") {
+    const r = await fetch(`https://api.relay.link/requests/v2?hash=${a.txHash}`, { signal: AbortSignal.timeout(8_000) })
+      .then((x) => x.json() as Promise<{ requests?: Array<{ recipient?: string }> }>)
+      .catch(() => null);
+    return r?.requests?.[0]?.recipient;
+  }
+  return undefined;
+}
+
+/**
+ * Comprueba el destinatario de un puente de una ruta de confianza (no lo lleva la transacción). Si no es la cartera de
+ * la IA, para el firmante y lo deja en el diario. Si aún no se sabe, se vuelve a mirar al llegar (settleLiveTransfers).
+ */
+async function verifyOffchainRecipient(a: {
+  missionId: number;
+  transferId: number;
+  fromChain: ChainId;
+  toChain: ChainId;
+  txHash: string;
+  tool: string;
+  expected: string;
+}): Promise<string | null> {
+  const deadline = Date.now() + RECIPIENT_WAIT_MS;
+  for (;;) {
+    const reported = await reportedRecipient(a);
+    if (reported) {
+      if (sameAddress(reported, a.expected)) {
+        markRecipientChecked(a.transferId);
+        return `destinatario comprobado: ${a.tool} lo tiene registrado como tu cartera`;
+      }
+      return recipientAlarm(a.missionId, a.transferId, reported, a.expected);
+    }
+    if (Date.now() > deadline) return "destinatario aún sin confirmar: se comprueba al llegar";
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+}
+const RECIPIENT_WAIT_MS = Number(process.env.RECIPIENT_WAIT_MS ?? 20_000);
+
+function markRecipientChecked(transferId: number) {
+  const row = db.prepare("SELECT carry FROM transfers WHERE id = ?").get(transferId) as { carry: string | null } | undefined;
+  const carry = JSON.parse(row?.carry ?? "{}") as Partial<LiveCarry>;
+  if (carry.live) db.prepare("UPDATE transfers SET carry = ? WHERE id = ?").run(JSON.stringify({ ...carry, live: { ...carry.live, recipientChecked: true } }), transferId);
+}
+
+async function recipientAlarm(missionId: number, transferId: number, reported: string, expected: string): Promise<string> {
+  await stopSigner().catch(() => undefined);
+  const summary =
+    `ALERTA: el puente real #${transferId} tiene como destinatario ${reported}, que no es tu cartera (${expected}). ` +
+    "Se ha parado el firmante: no firmará nada más hasta que el usuario desbloquee la cartera.";
+  logJournal({ missionId, sessionId: null, kind: "mission", summary });
+  markRecipientChecked(transferId);
+  return summary;
 }
 
 /** Si no se fijó la ruta y Li.Fi ha elegido otra distinta de la última cotizada para este par de cadenas, lo dice. */
@@ -218,6 +303,13 @@ export async function settleLiveTransfers(missionId?: number): Promise<string[]>
     if (Date.now() - (lastPoll.get(t.id) ?? 0) < POLL_MS) continue;
     lastPoll.set(t.id, Date.now());
     const st = await lifi.bridgeStatus({ txHash: carry.live.txHash, fromChain: t.from_venue, toChain: t.to_venue, tool: carry.live.tool });
+    // Ruta de confianza sin comprobar aún al enviar: en cuanto Li.Fi da el destinatario, se mira.
+    if (TRUSTED_OFFCHAIN_ROUTES.has(carry.live.tool) && !carry.live.recipientChecked && st.toAddress) {
+      const pub = livePub();
+      const expected = t.to_venue === "solana" ? pub.solana : pub.evm;
+      if (sameAddress(st.toAddress, expected)) markRecipientChecked(t.id);
+      else log.push(await recipientAlarm(t.mission_id, t.id, st.toAddress, expected));
+    }
     if (st.status === "DONE") {
       // Lo que llegó de verdad: con PARTIAL el puente puede entregar otro token (y con otros decimales).
       const native = (a: string) => /^0x0{40}$/i.test(a) || a.toLowerCase() === NATIVE || a === "11111111111111111111111111111111";

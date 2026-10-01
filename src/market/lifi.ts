@@ -145,6 +145,8 @@ export interface BridgeStatus {
    */
   receivedToken?: { address: string; symbol: string; decimals: number };
   receivingTxHash?: string;
+  /** Destinatario del puente según Li.Fi (para comprobar las rutas que no lo llevan en la transacción). */
+  toAddress?: string;
 }
 
 /** Estado de un puente ya enviado. */
@@ -164,5 +166,6 @@ export async function bridgeStatus(a: { txHash: string; fromChain: string; toCha
         ? { address: String(res.receiving.token.address), symbol: String(res.receiving.token.symbol ?? "?"), decimals: res.receiving.token.decimals }
         : undefined,
     receivingTxHash: res.receiving?.txHash,
+    toAddress: typeof res.toAddress === "string" ? res.toAddress : undefined,
   };
 }

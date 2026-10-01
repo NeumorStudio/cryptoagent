@@ -60,7 +60,7 @@ Crea la misión con `create_mission` (`capital_usd`, `target_usd` en valor absol
 ### 3B. Misión real
 
 1. Llama a `wallet_status`.
-   - Si no hay cartera, o el firmante está apagado, bloqueado o parado: llama a `start_wallet` (abre la página de la cartera en su navegador) y explícale que allí debe crearla o desbloquearla con su contraseña. **Nunca pidas ni aceptes en el chat la frase de recuperación ni la contraseña.** Pregunta con AskUserQuestion si ya está ("Ya está desbloqueada" / "Cancelar") y vuelve a llamar a `wallet_status`.
+   - Si no hay cartera, o el firmante está apagado, bloqueado, parado o es de otra versión (`signerOutdated`): llama a `start_wallet` (si es de otra versión, lo reinicia con la actual) (abre la página de la cartera en su navegador) y explícale que allí debe crearla o desbloquearla con su contraseña. **Nunca pidas ni aceptes en el chat la frase de recuperación ni la contraseña.** Pregunta con AskUserQuestion si ya está ("Ya está desbloqueada" / "Cancelar") y vuelve a llamar a `wallet_status`.
    - Si la cartera vale menos de 5 $, dile que le envíe fondos a las direcciones que aparecen (USDC o USDT, y un poco de SOL, ETH o BNB para el gas) y para aquí.
 2. Enseña el saldo real total y por cadena. Después, una llamada a AskUserQuestion con cuatro preguntas:
    1. **Objetivo** (header "Objetivo"), como ganancia sobre lo que vale la cartera: +5 %, +10 % (Recommended), +25 %.

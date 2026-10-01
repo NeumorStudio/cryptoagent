@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { asset } from "../paths.js";
 import type { WalletPublic } from "./keystore.js";
-import { signerInfoFile, type SignerInfo } from "./paths.js";
+import { codeBuild, signerInfoFile, type SignerInfo } from "./paths.js";
+import { db } from "../db.js";
 import { EVM_CHAINS, requireBlock, type EvmChainId } from "../market/evm.js";
 
 export interface SignerStatus {
@@ -90,18 +91,50 @@ export async function signTx(body: {
   return res;
 }
 
-/** Arranca el firmante como proceso independiente (sobrevive a esta sesión) si no está ya en marcha. */
-export async function ensureSigner(): Promise<{ info: SignerInfo; status: SignerStatus; started: boolean }> {
+const signerEntry = () => asset("signer.mjs", "src/live/signer/main.ts");
+
+/**
+ * El firmante es un proceso aparte que sobrevive a las actualizaciones del plugin: tras actualizar sigue con el código
+ * viejo hasta que se reinicia (en la M22 seguía el de la v0.40 y no tenía los arreglos de la v0.41). Devuelve true si
+ * el que está en marcha es de otra versión que la instalada.
+ */
+export function signerOutdated(info: SignerInfo): boolean {
+  const current = codeBuild(signerEntry());
+  return current !== undefined && info.build !== current;
+}
+
+/** Se puede reiniciar sin perder nada: sin misión real en marcha ni operaciones esperando aprobación. */
+function safeToRestart(status: SignerStatus & { pendingApprovals?: number }): boolean {
+  const live = db.prepare("SELECT 1 FROM missions WHERE mode = 'live' AND status IN ('active', 'closing') LIMIT 1").get();
+  return !live && !status.pendingApprovals;
+}
+
+/**
+ * Arranca el firmante como proceso independiente (sobrevive a esta sesión) si no está ya en marcha. Si el que está en
+ * marcha es de otra versión y se puede, lo reinicia (habrá que volver a desbloquear la cartera).
+ */
+export async function ensureSigner(): Promise<{ info: SignerInfo; status: SignerStatus; started: boolean; restarted?: boolean; outdated?: boolean }> {
   const running = await signerStatus();
-  if (running) return { ...running, started: false };
-  const entry = asset("signer.mjs", "src/live/signer/main.ts");
+  let restarted = false;
+  if (running) {
+    if (!signerOutdated(running.info)) return { ...running, started: false };
+    if (!safeToRestart(running.status)) return { ...running, started: false, outdated: true };
+    try {
+      process.kill(running.info.pid);
+    } catch {
+      // ya no estaba
+    }
+    for (let i = 0; i < 25 && (await signerStatus()); i++) await new Promise((r) => setTimeout(r, 200));
+    restarted = true;
+  }
+  const entry = signerEntry();
   const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
   const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
   child.unref();
   for (let i = 0; i < 50; i++) {
     await new Promise((r) => setTimeout(r, 200));
     const s = await signerStatus();
-    if (s && s.status.pid === child.pid) return { ...s, started: true };
+    if (s && s.status.pid === child.pid) return { ...s, started: true, restarted };
   }
   throw new Error("El firmante no ha arrancado");
 }

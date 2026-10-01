@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.43.0";
+    CODE_VERSION = "0.44.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -9341,7 +9341,16 @@ var init_chain = __esm({
 });
 
 // src/live/paths.ts
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync3 } from "node:fs";
 import path7 from "node:path";
+function codeBuild(file) {
+  try {
+    return createHash("sha256").update(readFileSync3(file)).digest("hex").slice(0, 16);
+  } catch {
+    return void 0;
+  }
+}
 var liveDir, signerInfoFile;
 var init_paths2 = __esm({
   "src/live/paths.ts"() {
@@ -26837,7 +26846,7 @@ var require_websocket = __commonJS({
     var http2 = __require("http");
     var net = __require("net");
     var tls = __require("tls");
-    var { randomBytes: randomBytes7, createHash: createHash3 } = __require("crypto");
+    var { randomBytes: randomBytes7, createHash: createHash4 } = __require("crypto");
     var { Duplex, Readable } = __require("stream");
     var { URL: URL4 } = __require("url");
     var PerMessageDeflate = require_permessage_deflate();
@@ -27518,7 +27527,7 @@ var require_websocket = __commonJS({
           abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
-        const digest = createHash3("sha1").update(key + GUID).digest("base64");
+        const digest = createHash4("sha1").update(key + GUID).digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest) {
           abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
           return;
@@ -27887,7 +27896,7 @@ var require_websocket_server = __commonJS({
     var EventEmitter = __require("events");
     var http2 = __require("http");
     var { Duplex } = __require("stream");
-    var { createHash: createHash3 } = __require("crypto");
+    var { createHash: createHash4 } = __require("crypto");
     var extension = require_extension();
     var PerMessageDeflate = require_permessage_deflate();
     var subprotocol = require_subprotocol();
@@ -28194,7 +28203,7 @@ var require_websocket_server = __commonJS({
           );
         }
         if (this._state > RUNNING) return abortHandshake(socket, 503);
-        const digest = createHash3("sha1").update(key + GUID).digest("base64");
+        const digest = createHash4("sha1").update(key + GUID).digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
           "Upgrade: websocket",
@@ -28661,14 +28670,14 @@ var init_v1ToV6 = __esm({
 });
 
 // node_modules/rpc-websockets/node_modules/uuid/dist-node/md5.js
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 function md52(bytes) {
   if (Array.isArray(bytes)) {
     bytes = Buffer.from(bytes);
   } else if (typeof bytes === "string") {
     bytes = Buffer.from(bytes, "utf8");
   }
-  return createHash("md5").update(bytes).digest();
+  return createHash2("md5").update(bytes).digest();
 }
 var md5_default2;
 var init_md52 = __esm({
@@ -28775,14 +28784,14 @@ var init_v42 = __esm({
 });
 
 // node_modules/rpc-websockets/node_modules/uuid/dist-node/sha1.js
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 function sha12(bytes) {
   if (Array.isArray(bytes)) {
     bytes = Buffer.from(bytes);
   } else if (typeof bytes === "string") {
     bytes = Buffer.from(bytes, "utf8");
   }
-  return createHash2("sha1").update(bytes).digest();
+  return createHash3("sha1").update(bytes).digest();
 }
 var sha1_default2;
 var init_sha12 = __esm({
@@ -63844,7 +63853,7 @@ async function runSigner() {
   const token2 = randomBytes6(32).toString("hex");
   const signer = createSignerServer({ dir, token: token2 });
   const port = await signer.listen();
-  const info = { port, token: token2, pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() };
+  const info = { port, token: token2, pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString(), build: codeBuild(process.argv[1] ?? "") };
   writeFileSync2(signerInfoFile(), JSON.stringify(info), { mode: 384 });
   const cleanup = () => {
     rmSync2(signerInfoFile(), { force: true });

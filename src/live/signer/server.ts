@@ -11,7 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createWallet, readWalletPublic, unlockWallet, walletExists, type Accounts } from "../keystore.js";
 import { walletBalances } from "../chain.js";
-import { liveDir, signerInfoFile, type SignerInfo } from "../paths.js";
+import { liveDir, signerInfoFile, type SignerInfo, codeBuild } from "../paths.js";
 import { WALLET_PAGE } from "./page.js";
 import { getMission, type Mission, type MissionLimits } from "../../sim/mission.js";
 import type { ChainId } from "../../sim/types.js";
@@ -363,7 +363,7 @@ export async function runSigner() {
   const token = randomBytes(32).toString("hex");
   const signer = createSignerServer({ dir, token });
   const port = await signer.listen();
-  const info: SignerInfo = { port, token, pid: process.pid, startedAt: new Date().toISOString() };
+  const info: SignerInfo = { port, token, pid: process.pid, startedAt: new Date().toISOString(), build: codeBuild(process.argv[1] ?? "") };
   writeFileSync(signerInfoFile(), JSON.stringify(info), { mode: 0o600 });
   const cleanup = () => {
     rmSync(signerInfoFile(), { force: true });

@@ -17,7 +17,7 @@ import { DEFAULT_ALLOCATION, VENUES } from "./sim/types.js";
 import { statusReport } from "./sim/status.js";
 import { SIM_TOOLS, runTool } from "./tools/index.js";
 import { walletBalances } from "./live/chain.js";
-import { ensureSigner, signerStatus, walletUrl } from "./live/client.js";
+import { ensureSigner, signerStatus, walletUrl, signerOutdated } from "./live/client.js";
 import { readWalletPublic } from "./live/keystore.js";
 import { liveDir } from "./live/paths.js";
 
@@ -244,10 +244,17 @@ server.registerTool(
   },
   async () => {
     try {
-      const { info, status, started } = await ensureSigner();
+      const { info, status, started, restarted, outdated } = await ensureSigner();
       openInBrowser(walletUrl(info));
       const state = !status.exists ? "todavía no hay cartera: el usuario debe crearla en la página" : status.unlocked ? "cartera desbloqueada" : "cartera bloqueada: el usuario debe desbloquearla en la página";
-      return text(`${started ? "Firmante arrancado" : "El firmante ya estaba en marcha"}; página abierta en el navegador (${walletUrl(info)}). Estado: ${state}.`);
+      const how = restarted
+        ? "El firmante era de una versión anterior del plugin: se ha reiniciado con la actual"
+        : started
+          ? "Firmante arrancado"
+          : outdated
+            ? "El firmante es de una versión anterior del plugin, pero no se reinicia porque hay una misión real en marcha u operaciones pendientes de aprobar; se reiniciará al terminar"
+            : "El firmante ya estaba en marcha";
+      return text(`${how}; página abierta en el navegador (${walletUrl(info)}). Estado: ${state}.`);
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }
@@ -271,6 +278,9 @@ server.registerTool(
       return text(
         JSON.stringify({
           signer: running ? (running.status.stopped ? "parado" : running.status.unlocked ? "desbloqueado" : "bloqueado") : "no está en marcha",
+          ...(running && signerOutdated(running.info)
+            ? { signerOutdated: "El firmante en marcha es de una versión anterior del plugin: start_wallet lo reinicia con la actual (después hay que desbloquear la cartera otra vez)." }
+            : {}),
           addresses: { solana: pub.solana, evm: pub.evm },
           totalUsd: Number(b.totalUsd.toFixed(2)),
           byChain: Object.fromEntries(Object.entries(b.byChain).map(([c, v]) => [c, Number(v.toFixed(2))])),

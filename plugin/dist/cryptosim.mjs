@@ -8359,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.43.0";
+    CODE_VERSION = "0.44.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -10539,7 +10539,16 @@ var init_keystore = __esm({
 });
 
 // src/live/paths.ts
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync3 } from "node:fs";
 import path7 from "node:path";
+function codeBuild(file2) {
+  try {
+    return createHash("sha256").update(readFileSync3(file2)).digest("hex").slice(0, 16);
+  } catch {
+    return void 0;
+  }
+}
 var liveDir, signerInfoFile;
 var init_paths2 = __esm({
   "src/live/paths.ts"() {
@@ -10598,10 +10607,10 @@ var init_sync = __esm({
 
 // src/live/client.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync4, readFileSync as readFileSync3 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
 function readInfo() {
   try {
-    return existsSync4(signerInfoFile()) ? JSON.parse(readFileSync3(signerInfoFile(), "utf8")) : null;
+    return existsSync4(signerInfoFile()) ? JSON.parse(readFileSync4(signerInfoFile(), "utf8")) : null;
   } catch {
     return null;
   }
@@ -10642,28 +10651,48 @@ async function signTx(body) {
   if (res.block && chainId in EVM_CHAINS) requireBlock(chainId, BigInt(res.block));
   return res;
 }
+function signerOutdated(info) {
+  const current = codeBuild(signerEntry());
+  return current !== void 0 && info.build !== current;
+}
+function safeToRestart(status) {
+  const live = db.prepare("SELECT 1 FROM missions WHERE mode = 'live' AND status IN ('active', 'closing') LIMIT 1").get();
+  return !live && !status.pendingApprovals;
+}
 async function ensureSigner() {
   const running2 = await signerStatus();
-  if (running2) return { ...running2, started: false };
-  const entry = asset("signer.mjs", "src/live/signer/main.ts");
+  let restarted = false;
+  if (running2) {
+    if (!signerOutdated(running2.info)) return { ...running2, started: false };
+    if (!safeToRestart(running2.status)) return { ...running2, started: false, outdated: true };
+    try {
+      process.kill(running2.info.pid);
+    } catch {
+    }
+    for (let i = 0; i < 25 && await signerStatus(); i++) await new Promise((r) => setTimeout(r, 200));
+    restarted = true;
+  }
+  const entry = signerEntry();
   const args = entry.endsWith(".ts") ? ["--import", "tsx", entry] : [entry];
   const child2 = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: process.env });
   child2.unref();
   for (let i = 0; i < 50; i++) {
     await new Promise((r) => setTimeout(r, 200));
     const s = await signerStatus();
-    if (s && s.status.pid === child2.pid) return { ...s, started: true };
+    if (s && s.status.pid === child2.pid) return { ...s, started: true, restarted };
   }
   throw new Error("El firmante no ha arrancado");
 }
-var walletUrl;
+var walletUrl, signerEntry;
 var init_client = __esm({
   "src/live/client.ts"() {
     "use strict";
     init_paths();
     init_paths2();
+    init_db();
     init_evm();
     walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
+    signerEntry = () => asset("signer.mjs", "src/live/signer/main.ts");
   }
 });
 
@@ -10884,7 +10913,7 @@ var init_bridge = __esm({
 });
 
 // src/sim/transfers.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 async function sendCost(chain, token2) {
   if (chain === "solana") return config2.solanaTxFeeSol;
   const gas = token2.address === NATIVE ? EVM_SEND_GAS.native : EVM_SEND_GAS.token;
@@ -11011,7 +11040,7 @@ async function cexTransfer(args) {
   return result;
 }
 function solanaAddress(missionId) {
-  const bytes = createHash("sha256").update(`cryptoagent-solana-${missionId}`).digest();
+  const bytes = createHash2("sha256").update(`cryptoagent-solana-${missionId}`).digest();
   const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   let n3 = BigInt(`0x${bytes.toString("hex")}`);
   let out = "";
@@ -11839,7 +11868,7 @@ var init_execute = __esm({
 });
 
 // src/sim/portfolio.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 function isLiveMission(missionId) {
   return db.prepare("SELECT mode FROM missions WHERE id = ?").get(missionId)?.mode === "live";
 }
@@ -12308,7 +12337,7 @@ var init_portfolio = __esm({
     QUOTE_TTL_MS = 6e4;
     QUOTE_AMOUNT_TOLERANCE = 0.25;
     quoteKey = (missionId, chain, input2, output2) => `${missionId}:${chain}:${input2}:${output2}`;
-    evmAddress = (missionId) => `0x${createHash2("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
+    evmAddress = (missionId) => `0x${createHash3("sha256").update(`cryptoagent-mission-${missionId}`).digest("hex").slice(0, 40)}`;
   }
 });
 
@@ -42167,7 +42196,7 @@ async function execute(order, reasoning2, price, log) {
 init_paths();
 init_db();
 import { spawn as spawn2 } from "node:child_process";
-import { readFileSync as readFileSync6 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 import http from "node:http";
 
 // src/sim/memory.ts
@@ -43154,13 +43183,13 @@ init_positions();
 
 // src/dashboard/timeline.ts
 init_db();
-import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync6, statSync as statSync2 } from "node:fs";
 import os2 from "node:os";
 import path8 from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/tools/index.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 init_db();
 init_http();
 init_types();
@@ -43660,7 +43689,7 @@ var SIM_TOOLS = [
     role: "both",
     description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones. Sin sections, el \xEDndice; con sections, el texto de esas secciones.",
     schema: external_exports.object({ sections: external_exports.array(external_exports.number().int().min(1).max(20)).optional().describe("N\xFAmeros de secci\xF3n que quieres leer") }),
-    run: async ({ sections }) => fieldGuide(readFileSync4(FIELD_GUIDE, "utf8"), sections)
+    run: async ({ sections }) => fieldGuide(readFileSync5(FIELD_GUIDE, "utf8"), sections)
   }),
   tool({
     name: "log_progress",
@@ -44617,7 +44646,7 @@ var fileCache = /* @__PURE__ */ new Map();
 function parseTranscript(file2) {
   const events = [];
   const byToolId = /* @__PURE__ */ new Map();
-  for (const line of readFileSync5(file2, "utf8").split("\n")) {
+  for (const line of readFileSync6(file2, "utf8").split("\n")) {
     if (!line.trim()) continue;
     let entry;
     try {
@@ -44715,7 +44744,7 @@ function transcriptEvents(since) {
     for (const f of readdirSync2(subDir)) {
       if (!f.endsWith(".meta.json")) continue;
       try {
-        if (!TRADER_AGENT.test(JSON.parse(readFileSync5(path8.join(subDir, f), "utf8")).agentType ?? "")) continue;
+        if (!TRADER_AGENT.test(JSON.parse(readFileSync6(path8.join(subDir, f), "utf8")).agentType ?? "")) continue;
       } catch {
         continue;
       }
@@ -44886,7 +44915,7 @@ function handler(port) {
     const url2 = new URL(req.url ?? "/", `http://localhost:${port}`);
     try {
       if (url2.pathname === "/") {
-        return send(res, 200, "text/html; charset=utf-8", readFileSync6(INDEX_HTML, "utf8"));
+        return send(res, 200, "text/html; charset=utf-8", readFileSync7(INDEX_HTML, "utf8"));
       }
       if (url2.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
       if (url2.pathname === "/api/shutdown" && req.method === "POST") {
@@ -45313,10 +45342,11 @@ server.registerTool(
   },
   async () => {
     try {
-      const { info, status, started } = await ensureSigner();
+      const { info, status, started, restarted, outdated } = await ensureSigner();
       openInBrowser(walletUrl(info));
       const state2 = !status.exists ? "todav\xEDa no hay cartera: el usuario debe crearla en la p\xE1gina" : status.unlocked ? "cartera desbloqueada" : "cartera bloqueada: el usuario debe desbloquearla en la p\xE1gina";
-      return text(`${started ? "Firmante arrancado" : "El firmante ya estaba en marcha"}; p\xE1gina abierta en el navegador (${walletUrl(info)}). Estado: ${state2}.`);
+      const how = restarted ? "El firmante era de una versi\xF3n anterior del plugin: se ha reiniciado con la actual" : started ? "Firmante arrancado" : outdated ? "El firmante es de una versi\xF3n anterior del plugin, pero no se reinicia porque hay una misi\xF3n real en marcha u operaciones pendientes de aprobar; se reiniciar\xE1 al terminar" : "El firmante ya estaba en marcha";
+      return text(`${how}; p\xE1gina abierta en el navegador (${walletUrl(info)}). Estado: ${state2}.`);
     } catch (err) {
       return { ...text(`Error: ${err.message}`), isError: true };
     }
@@ -45337,6 +45367,7 @@ server.registerTool(
       return text(
         JSON.stringify({
           signer: running2 ? running2.status.stopped ? "parado" : running2.status.unlocked ? "desbloqueado" : "bloqueado" : "no est\xE1 en marcha",
+          ...running2 && signerOutdated(running2.info) ? { signerOutdated: "El firmante en marcha es de una versi\xF3n anterior del plugin: start_wallet lo reinicia con la actual (despu\xE9s hay que desbloquear la cartera otra vez)." } : {},
           addresses: { solana: pub.solana, evm: pub.evm },
           totalUsd: Number(b.totalUsd.toFixed(2)),
           byChain: Object.fromEntries(Object.entries(b.byChain).map(([c, v]) => [c, Number(v.toFixed(2))])),

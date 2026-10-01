@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
 
@@ -11,4 +13,15 @@ export interface SignerInfo {
   token: string;
   pid: number;
   startedAt: string;
+  /** Huella del código del firmante en marcha: si no coincide con la del plugin instalado, es de otra versión. */
+  build?: string;
+}
+
+/** Huella de un archivo de código (el bundle del firmante). */
+export function codeBuild(file: string): string | undefined {
+  try {
+    return createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
+  } catch {
+    return undefined;
+  }
 }

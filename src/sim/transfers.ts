@@ -36,7 +36,8 @@ const DEPOSIT_MINUTES: Record<ChainId, number> = { solana: 1, base: 2, bsc: 1 };
 /** Gas de un envío en cadenas EVM: token ERC-20 o nativo. */
 const EVM_SEND_GAS = { token: 65_000n, native: 21_000n };
 
-const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+/** Hora de llegada: en UTC, como el resto de datos que ve el agente, y la local entre paréntesis. */
+const hhmm = (iso: string) => `${new Date(iso).toISOString().slice(11, 16)} UTC (${new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} hora local)`;
 const inMinutes = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
 
 /** Coste de red de enviar un token desde un monedero propio (en el nativo de la cadena). */

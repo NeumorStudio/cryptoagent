@@ -8359,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.45.0";
+    CODE_VERSION = "0.46.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8811,16 +8811,19 @@ function requiredBlock(chain) {
   return v ? BigInt(v) : void 0;
 }
 async function rpcBatch(chain, calls, ttlMs = 1e4) {
-  const minBlock = ttlMs === 0 ? requiredBlock(chain) : void 0;
-  if (minBlock === void 0 || !calls.some((c) => c.params.includes("latest"))) return rawBatch(chain, calls, ttlMs);
+  if (ttlMs !== 0 || !calls.some(isStateRead)) return rawBatch(chain, calls, ttlMs);
+  const minBlock = requiredBlock(chain);
   const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
   for (; ; ) {
     try {
-      const [head] = await rawBatch(chain, [{ method: "eth_blockNumber", params: [] }], 0);
-      const at = BigInt(head) > minBlock ? BigInt(head) : minBlock;
-      const tag = `0x${at.toString(16)}`;
-      const out = await rawBatch(chain, calls.map((c) => ({ ...c, params: c.params.map((p) => p === "latest" ? tag : p) })), 0);
-      if (out.some((r) => r === null || r === void 0)) throw new Error(`RPC de ${chain}: respuesta vac\xEDa en el bloque ${at}`);
+      let batch = calls;
+      if (minBlock !== void 0 && calls.some((c) => c.params.includes("latest"))) {
+        const [head] = await rawBatch(chain, [{ method: "eth_blockNumber", params: [] }], 0);
+        const tag = `0x${(BigInt(head) > minBlock ? BigInt(head) : minBlock).toString(16)}`;
+        batch = calls.map((c) => ({ ...c, params: c.params.map((p) => p === "latest" ? tag : p) }));
+      }
+      const out = await rawBatch(chain, batch, 0);
+      if (out.some((r, i) => isStateRead(batch[i]) && (r === null || r === void 0))) throw new Error(`RPC de ${chain}: respuesta vac\xEDa`);
       return out;
     } catch (err) {
       if (isRevert(err) || Date.now() > deadline) throw err;
@@ -8975,7 +8978,7 @@ async function dexPairs(chain, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, minBlockKey, NODE_BEHIND_WAIT_MS, isRevert, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, minBlockKey, NODE_BEHIND_WAIT_MS, isRevert, isStateRead, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8990,6 +8993,7 @@ var init_evm = __esm({
     minBlockKey = (chain) => `evm_min_block:${chain}`;
     NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 2e4);
     isRevert = (err) => /revert/i.test(err.message);
+    isStateRead = (c) => c.method === "eth_getBalance" || c.method === "eth_call";
     UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
@@ -10920,7 +10924,7 @@ var init_bridge = __esm({
     SOLANA_BRIDGE_EXTRA = 20000000n;
     isMovable = (chain, t) => chain.isCash(t.address) || t.address === chain.native.address;
     lifiToken = (chain, t) => t.address === chain.native.address ? LIFI_NATIVE[chain.id] : t.address;
-    hhmm = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    hhmm = (iso) => `${new Date(iso).toISOString().slice(11, 16)} UTC (${new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} hora local)`;
     lastPoll = /* @__PURE__ */ new Map();
     POLL_MS = 2e4;
   }
@@ -11277,7 +11281,7 @@ var init_transfers = __esm({
     NETWORK = { solana: "SOL", base: "BASE", bsc: "BSC" };
     DEPOSIT_MINUTES = { solana: 1, base: 2, bsc: 1 };
     EVM_SEND_GAS = { token: 65000n, native: 21000n };
-    hhmm2 = (iso) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    hhmm2 = (iso) => `${new Date(iso).toISOString().slice(11, 16)} UTC (${new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} hora local)`;
     inMinutes = (m) => new Date(Date.now() + m * 6e4).toISOString();
     lifiToken2 = (chain, t) => t.address === getChain(chain).native.address ? LIFI_NATIVE[chain] : t.address;
     STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solana: 5e-5, base: 5e-6, bsc: 3e-5 } };

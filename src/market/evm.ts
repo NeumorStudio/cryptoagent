@@ -49,17 +49,26 @@ function requiredBlock(chain: EvmChainId): bigint | undefined {
 const NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 20_000);
 const isRevert = (err: unknown) => /revert/i.test((err as Error).message);
 
+/** Lecturas de estado (saldos, llamadas): las que dependen del bloque en que se leen. */
+const isStateRead = (c: { method: string }) => c.method === "eth_getBalance" || c.method === "eth_call";
+
 export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>, ttlMs = 10_000): Promise<unknown[]> {
-  const minBlock = ttlMs === 0 ? requiredBlock(chain) : undefined;
-  if (minBlock === undefined || !calls.some((c) => c.params.includes("latest"))) return rawBatch(chain, calls, ttlMs);
+  // Con caché, o sin lecturas de estado (recibos, número de bloque), tal cual.
+  if (ttlMs !== 0 || !calls.some(isStateRead)) return rawBatch(chain, calls, ttlMs);
+  const minBlock = requiredBlock(chain);
   const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
   for (;;) {
     try {
-      const [head] = (await rawBatch(chain, [{ method: "eth_blockNumber", params: [] }], 0)) as [string];
-      const at = BigInt(head) > minBlock ? BigInt(head) : minBlock;
-      const tag = `0x${at.toString(16)}`;
-      const out = await rawBatch(chain, calls.map((c) => ({ ...c, params: c.params.map((p) => (p === "latest" ? tag : p)) })), 0);
-      if (out.some((r) => r === null || r === undefined)) throw new Error(`RPC de ${chain}: respuesta vacía en el bloque ${at}`);
+      let batch = calls;
+      if (minBlock !== undefined && calls.some((c) => c.params.includes("latest"))) {
+        const [head] = (await rawBatch(chain, [{ method: "eth_blockNumber", params: [] }], 0)) as [string];
+        const tag = `0x${(BigInt(head) > minBlock ? BigInt(head) : minBlock).toString(16)}`;
+        batch = calls.map((c) => ({ ...c, params: c.params.map((p) => (p === "latest" ? tag : p)) }));
+      }
+      // Una lectura en un bloque concreto (p. ej. el de un swap, para medir lo que entró) también puede caer en un nodo
+      // que aún no lo tiene: en la M24 eso dejó el swap de Base con cantidades estimadas. Se reintenta igual.
+      const out = await rawBatch(chain, batch, 0);
+      if (out.some((r, i) => isStateRead(batch[i]!) && (r === null || r === undefined))) throw new Error(`RPC de ${chain}: respuesta vacía`);
       return out;
     } catch (err) {
       // Un revert es la respuesta de verdad; cualquier otra cosa puede ser un nodo sin ese bloque todavía.

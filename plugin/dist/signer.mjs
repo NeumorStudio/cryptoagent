@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.45.0";
+    CODE_VERSION = "0.46.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8193,16 +8193,19 @@ function requiredBlock(chain2) {
   return v ? BigInt(v) : void 0;
 }
 async function rpcBatch(chain2, calls, ttlMs = 1e4) {
-  const minBlock = ttlMs === 0 ? requiredBlock(chain2) : void 0;
-  if (minBlock === void 0 || !calls.some((c) => c.params.includes("latest"))) return rawBatch(chain2, calls, ttlMs);
+  if (ttlMs !== 0 || !calls.some(isStateRead)) return rawBatch(chain2, calls, ttlMs);
+  const minBlock = requiredBlock(chain2);
   const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
   for (; ; ) {
     try {
-      const [head] = await rawBatch(chain2, [{ method: "eth_blockNumber", params: [] }], 0);
-      const at = BigInt(head) > minBlock ? BigInt(head) : minBlock;
-      const tag = `0x${at.toString(16)}`;
-      const out = await rawBatch(chain2, calls.map((c) => ({ ...c, params: c.params.map((p) => p === "latest" ? tag : p) })), 0);
-      if (out.some((r) => r === null || r === void 0)) throw new Error(`RPC de ${chain2}: respuesta vac\xEDa en el bloque ${at}`);
+      let batch = calls;
+      if (minBlock !== void 0 && calls.some((c) => c.params.includes("latest"))) {
+        const [head] = await rawBatch(chain2, [{ method: "eth_blockNumber", params: [] }], 0);
+        const tag = `0x${(BigInt(head) > minBlock ? BigInt(head) : minBlock).toString(16)}`;
+        batch = calls.map((c) => ({ ...c, params: c.params.map((p) => p === "latest" ? tag : p) }));
+      }
+      const out = await rawBatch(chain2, batch, 0);
+      if (out.some((r, i) => isStateRead(batch[i]) && (r === null || r === void 0))) throw new Error(`RPC de ${chain2}: respuesta vac\xEDa`);
       return out;
     } catch (err) {
       if (isRevert(err) || Date.now() > deadline) throw err;
@@ -8357,7 +8360,7 @@ async function dexPairs(chain2, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, minBlockKey, NODE_BEHIND_WAIT_MS, isRevert, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, minBlockKey, NODE_BEHIND_WAIT_MS, isRevert, isStateRead, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8372,6 +8375,7 @@ var init_evm = __esm({
     minBlockKey = (chain2) => `evm_min_block:${chain2}`;
     NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 2e4);
     isRevert = (err) => /revert/i.test(err.message);
+    isStateRead = (c) => c.method === "eth_getBalance" || c.method === "eth_call";
     UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;

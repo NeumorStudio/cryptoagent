@@ -24,7 +24,8 @@ const SOLANA_BRIDGE_EXTRA = 20_000_000n;
 
 const isMovable = (chain: ChainAdapter, t: TokenRef) => chain.isCash(t.address) || t.address === chain.native.address;
 const lifiToken = (chain: ChainAdapter, t: TokenRef) => (t.address === chain.native.address ? lifi.LIFI_NATIVE[chain.id]! : t.address);
-const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+/** Hora de llegada: en UTC, como el resto de datos que ve el agente, y la local entre paréntesis. */
+const hhmm = (iso: string) => `${new Date(iso).toISOString().slice(11, 16)} UTC (${new Date(iso).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} hora local)`;
 
 interface LiveCarry {
   live: { txHash: string; tool: string; baseline: number };

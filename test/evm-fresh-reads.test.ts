@@ -49,3 +49,16 @@ test("las lecturas con caché no se ven afectadas, y un revert no se reintenta",
   assert.deepEqual(methods, ["eth_getBalance"]);
   await assert.rejects(rpcBatch("base", [{ method: "eth_call", params: [{}, "latest"] }], 0), /reverted/);
 });
+
+test("una lectura fresca en un bloque concreto (el de un swap) también se reintenta si el nodo aún no lo tiene", async () => {
+  let misses = 2;
+  setFetchImpl((async (_input: string | URL | Request, init?: RequestInit) => {
+    const calls = JSON.parse(String(init?.body)) as Array<{ id: number; method: string }>;
+    return new Response(
+      JSON.stringify(calls.map((c) => (misses-- > 0 ? { id: c.id, error: { message: "header not found" } } : { id: c.id, result: "0x7" }))),
+      { status: 200 },
+    );
+  }) as typeof fetch);
+  const [bal] = await rpcBatch("bsc", [{ method: "eth_getBalance", params: ["0xabc", "0x1234"] }], 0);
+  assert.equal(bal, "0x7");
+});

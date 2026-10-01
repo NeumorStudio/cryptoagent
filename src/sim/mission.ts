@@ -438,8 +438,11 @@ function recordEquityPoint(missionId: number, v: { totalUsd: number; benchmarkUs
 /** Comprueba una misión y la cierra si ha llegado al objetivo o se le ha acabado el plazo. */
 const lastSync = new Map<number, number>();
 
+/** Misiones que el agente ha dado por terminadas: se cierran como si se hubiera acabado el plazo. */
+const endedByAgent = new Set<number>();
+
 async function checkOne(mission: Mission): Promise<string[]> {
-  const expired = remaining(mission.deadline).ms <= 0;
+  const expired = remaining(mission.deadline).ms <= 0 || endedByAgent.has(mission.id);
   // Misión real: los saldos se leen de la cadena (como mucho cada 20 s por proceso).
   if (isLive(mission) && (expired || Date.now() - (lastSync.get(mission.id) ?? 0) > 20_000)) {
     const { syncHoldings } = await import("../live/sync.js");
@@ -558,6 +561,30 @@ const checking = new Set<number>();
  * Comprueba las misiones activas y cierra las que
  * hayan terminado. Devuelve líneas de log. Si se indica una misión, solo comprueba esa.
  */
+/**
+ * El agente da la misión por terminada antes del plazo (ya no va a operar más): se cierra ahora, igual que al acabarse el
+ * tiempo (vende lo que quede, valora y mide lo descartado), y queda registrado con cuántos minutos le quedaban y por qué.
+ * Antes solo cerraba su sesión y la misión seguía corriendo vacía hasta el plazo.
+ */
+export async function finishByAgent(missionId: number, reason: string): Promise<string[]> {
+  const mission = getMission(missionId);
+  if (!mission || mission.status !== "active") throw new Error("No hay ninguna misión activa que terminar");
+  const minutesLeft = Math.max(0, Math.round(remaining(mission.deadline).ms / 60_000));
+  logJournal({
+    missionId,
+    sessionId: null,
+    kind: "mission",
+    summary: `El agente da la misión #${missionId} por terminada con ${minutesLeft} min por delante: ${reason.slice(0, 300)}`,
+    details: { endedByAgent: true, minutesLeft },
+  });
+  endedByAgent.add(missionId);
+  try {
+    return await checkMission(missionId);
+  } finally {
+    endedByAgent.delete(missionId);
+  }
+}
+
 export async function checkMission(missionId?: number): Promise<string[]> {
   const targets = missionId !== undefined ? [getMission(missionId)].filter((m): m is Mission => m?.status === "active") : activeMissions();
   const results = await Promise.all(

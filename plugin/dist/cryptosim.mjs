@@ -8163,6 +8163,13 @@ var init_migrations = __esm({
       )`);
           db2.exec("CREATE UNIQUE INDEX IF NOT EXISTS scan_seen_first ON scan_seen (mission_id, chain, asset)");
         }
+      },
+      {
+        version: 18,
+        description: "Precio de los candidatos descartados al llegar el plazo original, cuando el agente termin\xF3 la misi\xF3n antes",
+        up: (db2) => {
+          db2.exec("ALTER TABLE scan_seen ADD COLUMN deadline_price_usd REAL");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8395,7 +8402,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.52.0";
+    CODE_VERSION = "0.53.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42959,6 +42966,7 @@ var init_transfers = __esm({
 // src/sim/skipped.ts
 var skipped_exports = {};
 __export(skipped_exports, {
+  measureAtDeadline: () => measureAtDeadline,
   measureSkipped: () => measureSkipped,
   recordSeen: () => recordSeen,
   skippedCandidates: () => skippedCandidates
@@ -42995,6 +43003,19 @@ async function measureSkipped(missionId) {
     for (const r of list) if (prices[r.asset]) update.run(prices[r.asset], now(), r.id);
   }
 }
+async function measureAtDeadline() {
+  const rows = db.prepare(
+    `SELECT s.id, s.chain, s.asset FROM scan_seen s JOIN missions m ON m.id = s.mission_id
+       WHERE s.deadline_price_usd IS NULL AND s.end_price_usd IS NOT NULL AND m.status != 'active'
+         AND m.ended_at < m.deadline AND m.deadline <= ? LIMIT 60`
+  ).all(now());
+  const update = db.prepare("UPDATE scan_seen SET deadline_price_usd = ? WHERE id = ?");
+  for (const chain of new Set(rows.map((r) => r.chain))) {
+    const list = rows.filter((r) => r.chain === chain);
+    const prices = await getChain(chain).priceUsd(list.map((r) => r.asset)).catch(() => ({}));
+    for (const r of list) update.run(prices[r.asset] ?? -1, r.id);
+  }
+}
 function skippedCandidates(missionId) {
   const startedAt = db.prepare("SELECT COALESCE(started_at, created_at) AS t FROM missions WHERE id = ?").get(missionId)?.t;
   const bought = new Set(
@@ -43002,17 +43023,30 @@ function skippedCandidates(missionId) {
       (p) => `${p.venue}:${p.asset.toLowerCase()}`
     )
   );
-  const rows = db.prepare("SELECT ts, chain, asset, symbol, price_usd, end_price_usd, features FROM scan_seen WHERE mission_id = ? AND end_price_usd IS NOT NULL").all(missionId).filter((r) => !bought.has(`${r.chain}:${r.asset.toLowerCase()}`));
+  const rows = db.prepare("SELECT ts, chain, asset, symbol, price_usd, end_price_usd, deadline_price_usd, features FROM scan_seen WHERE mission_id = ? AND end_price_usd IS NOT NULL").all(missionId).filter((r) => !bought.has(`${r.chain}:${r.asset.toLowerCase()}`));
   if (!rows.length) return null;
   const list = rows.map((r) => ({
     symbol: r.symbol ?? r.asset.slice(0, 6),
     chain: r.chain,
     ...startedAt ? { seenAtMinute: Math.round((new Date(r.ts).getTime() - new Date(startedAt).getTime()) / 6e4) } : {},
     changeUntilEndPct: Number(((r.end_price_usd - r.price_usd) / r.price_usd * 100).toFixed(1)),
+    // Si terminó antes: cuánto se movió además entre que paró y el plazo original.
+    ...r.deadline_price_usd && r.deadline_price_usd > 0 ? { changeAfterYouStoppedPct: Number(((r.deadline_price_usd - r.end_price_usd) / r.end_price_usd * 100).toFixed(1)) } : {},
     ...JSON.parse(r.features ?? "{}")
   })).sort((a, b) => Math.abs(b.changeUntilEndPct) - Math.abs(a.changeUntilEndPct));
   const changes = list.map((x) => x.changeUntilEndPct).sort((a, b) => a - b);
+  const after = list.map((x) => x.changeAfterYouStoppedPct).filter((x) => x !== void 0).sort((a, b) => a - b);
+  const mission = db.prepare("SELECT ended_at, deadline FROM missions WHERE id = ?").get(missionId);
+  const endedEarly = !!mission?.ended_at && mission.ended_at < mission.deadline;
   return {
+    ...endedEarly ? after.length ? {
+      afterYouStopped: {
+        measured: after.length,
+        medianChangePct: after[Math.floor(after.length / 2)],
+        upMoreThan20Pct: after.filter((x) => x >= 20).length,
+        note: "Terminaste antes del plazo: cu\xE1nto se movieron estos candidatos entre que paraste y el plazo original."
+      }
+    } : { afterYouStopped: `pendiente: se mide al llegar el plazo original (${mission.deadline.slice(11, 16)} UTC)` } : {},
     seenNotBought: list.length,
     medianChangePct: changes[Math.floor(changes.length / 2)],
     upMoreThan20Pct: changes.filter((x) => x >= 20).length,
@@ -43284,7 +43318,7 @@ function recordEquityPoint(missionId, v) {
   );
 }
 async function checkOne(mission) {
-  const expired = remaining(mission.deadline).ms <= 0;
+  const expired = remaining(mission.deadline).ms <= 0 || endedByAgent.has(mission.id);
   if (isLive(mission) && (expired || Date.now() - (lastSync.get(mission.id) ?? 0) > 2e4)) {
     const { syncHoldings: syncHoldings2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
     await syncHoldings2(mission.id);
@@ -43355,6 +43389,24 @@ async function checkOne(mission) {
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
   return [summary, ...problems.map((p) => `No se pudo liquidar: ${p}`)];
 }
+async function finishByAgent(missionId, reason) {
+  const mission = getMission(missionId);
+  if (!mission || mission.status !== "active") throw new Error("No hay ninguna misi\xF3n activa que terminar");
+  const minutesLeft = Math.max(0, Math.round(remaining(mission.deadline).ms / 6e4));
+  logJournal({
+    missionId,
+    sessionId: null,
+    kind: "mission",
+    summary: `El agente da la misi\xF3n #${missionId} por terminada con ${minutesLeft} min por delante: ${reason.slice(0, 300)}`,
+    details: { endedByAgent: true, minutesLeft }
+  });
+  endedByAgent.add(missionId);
+  try {
+    return await checkMission(missionId);
+  } finally {
+    endedByAgent.delete(missionId);
+  }
+}
 async function checkMission(missionId) {
   const targets = missionId !== void 0 ? [getMission(missionId)].filter((m) => m?.status === "active") : activeMissions();
   const results = await Promise.all(
@@ -43372,7 +43424,7 @@ async function checkMission(missionId) {
   );
   return results.flat();
 }
-var isLive, targetText, CONTROL_EVERY, EQUITY_POINT_MS, lastSync, checking;
+var isLive, targetText, CONTROL_EVERY, EQUITY_POINT_MS, lastSync, endedByAgent, checking;
 var init_mission = __esm({
   "src/sim/mission.ts"() {
     "use strict";
@@ -43386,6 +43438,7 @@ var init_mission = __esm({
     CONTROL_EVERY = 10;
     EQUITY_POINT_MS = 6e4;
     lastSync = /* @__PURE__ */ new Map();
+    endedByAgent = /* @__PURE__ */ new Set();
     checking = /* @__PURE__ */ new Set();
   }
 });
@@ -44970,6 +45023,16 @@ function recentApproach(count = 8) {
       resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
+      // Si la terminó él antes del plazo, con cuántos minutos por delante (si parar antes le compensa, se mide así).
+      ...(() => {
+        const r = db.prepare("SELECT details FROM journal WHERE mission_id = ? AND kind = 'mission' AND details LIKE '%endedByAgent%' LIMIT 1").get(m.id);
+        if (!r) return {};
+        const after = skippedCandidates(m.id)?.afterYouStopped;
+        return {
+          endedByAgentMinutesLeft: JSON.parse(r.details).minutesLeft,
+          ...after && typeof after === "object" ? { skippedAfterYouStopped: `mediana ${after.medianChangePct} %, ${after.upMoreThan20Pct} de ${after.measured} subieron +20 % o m\xE1s` } : {}
+        };
+      })(),
       // Qué cadenas escaneó en esa misión (no solo dónde operó): si solo mira la del dinero inicial, se ve aquí.
       scannedChains: [
         ...new Set(
@@ -75896,6 +75959,17 @@ var SIM_TOOLS = [
     run: async (_i, ctx) => json2(await missionStatus(ctx.missionId ?? void 0))
   }),
   tool({
+    name: "finish_mission",
+    kind: "misc",
+    description: "Da tu misi\xF3n por terminada antes del plazo, cuando has decidido que no vas a operar m\xE1s: se cierra ya (se vende lo que tengas a mercado, igual que al acabarse el tiempo) y el resultado cuenta como el final. No esperes al plazo sin hacer nada: el tiempo que queda no aporta nada. Queda registrado con cu\xE1ntos minutos te quedaban y tu motivo, para que el revisor vea si parar antes compensa.",
+    schema: external_exports.object({ reason: external_exports.string().min(10).describe("Por qu\xE9 paras ahora: qu\xE9 has visto y por qu\xE9 no vas a operar m\xE1s") }),
+    run: async ({ reason }, ctx) => {
+      if (ctx.missionId === null) return "No hay ninguna misi\xF3n activa.";
+      const log = await finishByAgent(ctx.missionId, reason);
+      return [`Misi\xF3n #${ctx.missionId} terminada por ti.`, ...log].join("\n");
+    }
+  }),
+  tool({
     name: "wait",
     kind: "misc",
     deliversNews: true,
@@ -77576,6 +77650,7 @@ setInterval(async () => {
   if (supersededBy() || !holdsTickLease()) return;
   await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misi\xF3n: ${err.message}`));
+  await Promise.resolve().then(() => (init_skipped(), skipped_exports)).then(({ measureAtDeadline: measureAtDeadline2 }) => measureAtDeadline2()).catch(() => void 0);
 }, config2.watchIntervalSeconds * 1e3);
 var missionRunning = () => !!db.prepare("SELECT 1 FROM missions WHERE status IN ('active', 'closing') LIMIT 1").get();
 setInterval(() => {

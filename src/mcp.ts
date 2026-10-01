@@ -370,6 +370,8 @@ setInterval(async () => {
   if (supersededBy() || !holdsTickLease()) return;
   await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
   await checkMission().catch((err) => console.error(`Error revisando la misión: ${(err as Error).message}`));
+  // Lo descartado en misiones que el agente terminó antes: se mide al llegar su plazo original.
+  await import("./sim/skipped.js").then(({ measureAtDeadline }) => measureAtDeadline()).catch(() => undefined);
 }, config.watchIntervalSeconds * 1000);
 
 // Con una misión en marcha, el equipo no se duerme (keep-awake.ts). Lo pide cada servidor abierto: si hay

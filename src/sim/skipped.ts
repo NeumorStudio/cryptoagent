@@ -55,6 +55,28 @@ export async function measureSkipped(missionId: number) {
 }
 
 /**
+ * Si el agente terminó la misión antes del plazo, lo descartado se vuelve a medir al llegar el plazo original: así se
+ * sabe qué habría pasado si hubiera seguido (si parar antes le compensa). Lo llama la vigilancia de fondo.
+ */
+export async function measureAtDeadline() {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.chain, s.asset FROM scan_seen s JOIN missions m ON m.id = s.mission_id
+       WHERE s.deadline_price_usd IS NULL AND s.end_price_usd IS NOT NULL AND m.status != 'active'
+         AND m.ended_at < m.deadline AND m.deadline <= ? LIMIT 60`,
+    )
+    .all(now()) as Array<{ id: number; chain: ChainId; asset: string }>;
+  const update = db.prepare("UPDATE scan_seen SET deadline_price_usd = ? WHERE id = ?");
+  for (const chain of new Set(rows.map((r) => r.chain))) {
+    const list = rows.filter((r) => r.chain === chain);
+    const prices = await getChain(chain)
+      .priceUsd(list.map((r) => r.asset))
+      .catch(() => ({}) as Record<string, number>);
+    for (const r of list) update.run(prices[r.asset] ?? -1, r.id); // -1: sin precio (no se reintenta siempre)
+  }
+}
+
+/**
  * Para el revisor: los candidatos que vio y no compró, con cuánto se movieron desde que los vio hasta el final de la
  * misión, y un resumen. Si los que descartó subieron más que los que compró, sus filtros dejan fuera lo bueno.
  */
@@ -66,7 +88,8 @@ export function skippedCandidates(missionId: number) {
     ),
   );
   const rows = (
-    db.prepare("SELECT ts, chain, asset, symbol, price_usd, end_price_usd, features FROM scan_seen WHERE mission_id = ? AND end_price_usd IS NOT NULL").all(missionId) as Array<{
+    db.prepare("SELECT ts, chain, asset, symbol, price_usd, end_price_usd, deadline_price_usd, features FROM scan_seen WHERE mission_id = ? AND end_price_usd IS NOT NULL").all(missionId) as Array<{
+      deadline_price_usd: number | null;
       ts: string;
       chain: string;
       asset: string;
@@ -83,11 +106,33 @@ export function skippedCandidates(missionId: number) {
       chain: r.chain,
       ...(startedAt ? { seenAtMinute: Math.round((new Date(r.ts).getTime() - new Date(startedAt).getTime()) / 60_000) } : {}),
       changeUntilEndPct: Number((((r.end_price_usd - r.price_usd) / r.price_usd) * 100).toFixed(1)),
+      // Si terminó antes: cuánto se movió además entre que paró y el plazo original.
+      ...(r.deadline_price_usd && r.deadline_price_usd > 0
+        ? { changeAfterYouStoppedPct: Number((((r.deadline_price_usd - r.end_price_usd) / r.end_price_usd) * 100).toFixed(1)) }
+        : {}),
       ...(JSON.parse(r.features ?? "{}") as Record<string, unknown>),
     }))
     .sort((a, b) => Math.abs(b.changeUntilEndPct) - Math.abs(a.changeUntilEndPct));
   const changes = list.map((x) => x.changeUntilEndPct).sort((a, b) => a - b);
+  const after = list
+    .map((x) => (x as { changeAfterYouStoppedPct?: number }).changeAfterYouStoppedPct)
+    .filter((x): x is number => x !== undefined)
+    .sort((a, b) => a - b);
+  const mission = db.prepare("SELECT ended_at, deadline FROM missions WHERE id = ?").get(missionId) as { ended_at: string | null; deadline: string } | undefined;
+  const endedEarly = !!mission?.ended_at && mission.ended_at < mission.deadline;
   return {
+    ...(endedEarly
+      ? after.length
+        ? {
+            afterYouStopped: {
+              measured: after.length,
+              medianChangePct: after[Math.floor(after.length / 2)],
+              upMoreThan20Pct: after.filter((x) => x >= 20).length,
+              note: "Terminaste antes del plazo: cuánto se movieron estos candidatos entre que paraste y el plazo original.",
+            },
+          }
+        : { afterYouStopped: `pendiente: se mide al llegar el plazo original (${mission!.deadline.slice(11, 16)} UTC)` }
+      : {}),
     seenNotBought: list.length,
     medianChangePct: changes[Math.floor(changes.length / 2)],
     upMoreThan20Pct: changes.filter((x) => x >= 20).length,

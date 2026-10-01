@@ -272,6 +272,13 @@ export const MIGRATIONS: Migration[] = [
       db.exec("CREATE UNIQUE INDEX IF NOT EXISTS scan_seen_first ON scan_seen (mission_id, chain, asset)");
     },
   },
+  {
+    version: 18,
+    description: "Precio de los candidatos descartados al llegar el plazo original, cuando el agente terminó la misión antes",
+    up: (db) => {
+      db.exec("ALTER TABLE scan_seen ADD COLUMN deadline_price_usd REAL");
+    },
+  },
 ];
 
 /**

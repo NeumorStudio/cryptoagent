@@ -1203,6 +1203,17 @@ export function recentApproach(count = 8) {
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
+      // Si la terminó él antes del plazo, con cuántos minutos por delante (si parar antes le compensa, se mide así).
+      ...(() => {
+        const r = db.prepare("SELECT details FROM journal WHERE mission_id = ? AND kind = 'mission' AND details LIKE '%endedByAgent%' LIMIT 1").get(m.id) as { details: string } | undefined;
+        if (!r) return {};
+        // Y qué hicieron después los candidatos que había visto (medido al llegar el plazo original).
+        const after = (skippedCandidates(m.id) as { afterYouStopped?: unknown } | null)?.afterYouStopped as { medianChangePct: number; upMoreThan20Pct: number; measured: number } | string | undefined;
+        return {
+          endedByAgentMinutesLeft: (JSON.parse(r.details) as { minutesLeft: number }).minutesLeft,
+          ...(after && typeof after === "object" ? { skippedAfterYouStopped: `mediana ${after.medianChangePct} %, ${after.upMoreThan20Pct} de ${after.measured} subieron +20 % o más` } : {}),
+        };
+      })(),
       // Qué cadenas escaneó en esa misión (no solo dónde operó): si solo mira la del dinero inicial, se ve aquí.
       scannedChains:
         [

@@ -566,6 +566,20 @@ export const SIM_TOOLS = [
     run: async (_i, ctx) => json(await mission.missionStatus(ctx.missionId ?? undefined)),
   }),
   tool({
+    name: "finish_mission",
+    kind: "misc",
+    description:
+      "Da tu misión por terminada antes del plazo, cuando has decidido que no vas a operar más: se cierra ya (se vende lo que tengas a " +
+      "mercado, igual que al acabarse el tiempo) y el resultado cuenta como el final. No esperes al plazo sin hacer nada: el tiempo que " +
+      "queda no aporta nada. Queda registrado con cuántos minutos te quedaban y tu motivo, para que el revisor vea si parar antes compensa.",
+    schema: z.object({ reason: z.string().min(10).describe("Por qué paras ahora: qué has visto y por qué no vas a operar más") }),
+    run: async ({ reason }, ctx) => {
+      if (ctx.missionId === null) return "No hay ninguna misión activa.";
+      const log = await mission.finishByAgent(ctx.missionId, reason);
+      return [`Misión #${ctx.missionId} terminada por ti.`, ...log].join("\n");
+    },
+  }),
+  tool({
     name: "wait",
     kind: "misc",
     deliversNews: true,

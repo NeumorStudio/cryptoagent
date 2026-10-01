@@ -39297,6 +39297,13 @@ var init_migrations = __esm({
       )`);
           db2.exec("CREATE UNIQUE INDEX IF NOT EXISTS scan_seen_first ON scan_seen (mission_id, chain, asset)");
         }
+      },
+      {
+        version: 18,
+        description: "Precio de los candidatos descartados al llegar el plazo original, cuando el agente termin\xF3 la misi\xF3n antes",
+        up: (db2) => {
+          db2.exec("ALTER TABLE scan_seen ADD COLUMN deadline_price_usd REAL");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -39493,7 +39500,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.52.0";
+    CODE_VERSION = "0.53.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

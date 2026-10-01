@@ -81,3 +81,21 @@ test("lo que vio y no compró: se guarda al escanear, se mide al acabar y el rev
   assert.equal(s.biggestMoves[0]!.changeUntilEndPct, 100);
   assert.equal(s.upMoreThan20Pct, 1);
 });
+
+test("terminar antes: la misión se cierra ya, y lo descartado se vuelve a medir al llegar el plazo original", async () => {
+  const { finishByAgent } = await import("../src/sim/mission.js");
+  const { recordSeen, measureAtDeadline, skippedCandidates } = await import("../src/sim/skipped.js");
+  const { SOL_MINT } = await import("../src/market/jupiter.js");
+  const m = await createMission(100, null, 15, undefined, { solana: 100 }, { memory: "on" });
+  await recordSeen(m.id, "solana", [{ mint: SOL_MINT, symbol: "SOL" }]);
+  const log = await finishByAgent(m.id, "No veo nada que me enseñe algo nuevo");
+  assert.equal(getMission(m.id)!.status, "expired");
+  assert.match(log.join("\n"), /TERMINADA POR TIEMPO/);
+  assert.match(String((skippedCandidates(m.id) as { afterYouStopped?: unknown }).afterYouStopped), /pendiente/);
+  // Llega el plazo original: se mide lo que pasó después de parar.
+  db.prepare("UPDATE missions SET deadline = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), m.id);
+  db.prepare("UPDATE missions SET ended_at = ? WHERE id = ?").run(new Date(Date.now() - 60_000).toISOString(), m.id);
+  await measureAtDeadline();
+  const after = (skippedCandidates(m.id) as { afterYouStopped?: unknown }).afterYouStopped as { measured: number };
+  assert.equal(after.measured, 1);
+});

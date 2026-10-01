@@ -1,6 +1,6 @@
 // Herramientas de investigación que juntan varias fuentes públicas en una sola llamada y
 // devuelven solo los campos útiles. Si una fuente falla, se indica y el resto sigue.
-import { fetchJson } from "./http.js";
+import { fetchJson, jupBase } from "./http.js";
 
 const n = (v: unknown, digits = 2) => (typeof v === "number" && Number.isFinite(v) ? Number(v.toFixed(digits)) : undefined);
 const ageMinutes = (iso: string | number | undefined) =>
@@ -59,7 +59,7 @@ export async function scanMarket(limit = 25) {
   };
 
   const jup = async (interval: "5m" | "1h") => {
-    const list = await fetchJson<any[]>(`https://lite-api.jup.ag/tokens/v2/toptrending/${interval}?limit=50`);
+    const list = await fetchJson<any[]>(`${jupBase()}/tokens/v2/toptrending/${interval}?limit=50`);
     for (const t of list) {
       add(t.id, `jupiter_trending_${interval}`, {
         symbol: t.symbol,
@@ -176,7 +176,7 @@ export async function scanMarket(limit = 25) {
 export async function tokenReport(mint: string) {
   const [jupiter, dexscreener, rugcheck, pumpfun] = await Promise.all([
     attempt("jupiter", async () => {
-      const list = await fetchJson<any[]>(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+      const list = await fetchJson<any[]>(`${jupBase()}/tokens/v2/search?query=${encodeURIComponent(mint)}`);
       const t = list.find((x) => x.id === mint);
       if (!t) return { error: "no encontrado en Jupiter" };
       const stats = (s: any) =>

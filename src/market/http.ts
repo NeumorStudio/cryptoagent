@@ -5,6 +5,13 @@
 // que usan la base de datos: cada sesión de Claude Code tiene su propio servidor MCP y todos salen
 // por la misma IP.
 import { db } from "../db.js";
+import { apiKey } from "../keys.js";
+
+/**
+ * Jupiter: con clave (gratuita, 1 petición/s) en api.jup.ag; sin ella, lite-api.jup.ag, que Jupiter anunció que cerrará
+ * (aplazado sin fecha). Las rutas son las mismas en los dos.
+ */
+export const jupBase = () => (apiKey("jupiter") ? "https://api.jup.ag" : "https://lite-api.jup.ag");
 
 /** Validez por defecto de una respuesta en caché. Corta: los precios tienen que ser del momento. */
 export const DEFAULT_TTL_MS = 5_000;
@@ -14,6 +21,7 @@ const MAX_RETRIES = 5;
 /** Separación mínima entre peticiones a cada servicio, contando todos los procesos. */
 const MIN_INTERVAL_MS: Record<string, number> = {
   "lite-api.jup.ag": 1_100,
+  "api.jup.ag": 1_050,
   // KyberSwap admite unas 30 peticiones cada 10 s.
   "aggregator-api.kyberswap.com": 350,
   // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
@@ -131,6 +139,7 @@ async function request(url: string, opts: RequestOpts & { timeoutMs: number }): 
           accept: "application/json",
           "user-agent": "Mozilla/5.0",
           ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
+          ...(host === "api.jup.ag" && apiKey("jupiter") ? { "x-api-key": apiKey("jupiter")! } : {}),
           ...opts.headers,
         },
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,

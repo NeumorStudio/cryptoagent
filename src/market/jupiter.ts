@@ -1,9 +1,9 @@
 // Datos reales de Solana vía la API pública de Jupiter (agregador de DEX).
 // Una cotización de Jupiter es exactamente lo que devolvería el swap en mainnet
 // en ese instante (ruta, liquidez y comisiones de los pools incluidas).
-import { fetchJson } from "./http.js";
+import { fetchJson, jupBase } from "./http.js";
 
-const BASE = "https://lite-api.jup.ag";
+
 
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -28,7 +28,7 @@ const tokenCache = new Map<string, TokenInfo>();
 export async function getTokenInfo(mint: string): Promise<TokenInfo> {
   const cached = tokenCache.get(mint);
   if (cached) return cached;
-  const results = await fetchJson<Array<Record<string, any>>>(`${BASE}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15_000, 30_000);
+  const results = await fetchJson<Array<Record<string, any>>>(`${jupBase()}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15_000, 30_000);
   const hit = results.find((t) => t.id === mint);
   if (!hit) throw new Error(`Token no encontrado en Solana: ${mint}`);
   const info: TokenInfo = {
@@ -55,7 +55,7 @@ export interface JupiterQuote {
 
 export async function getQuote(inputMint: string, outputMint: string, amountBase: bigint, slippageBps: number, ttlMs = 2_000): Promise<JupiterQuote> {
   const url =
-    `${BASE}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}` +
+    `${jupBase()}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}` +
     `&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
   // Determina el precio de ejecución: caché muy corta (solo agrupa peticiones idénticas casi simultáneas).
   const quote = await fetchJson<JupiterQuote & { error?: string }>(url, 15_000, ttlMs);

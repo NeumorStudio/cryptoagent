@@ -1,7 +1,7 @@
 // Solana: monedero propio, swaps con Jupiter (agregador de DEX de mainnet).
 import { config } from "../../config.js";
 import * as binance from "../../market/binance.js";
-import { fetchJson, isNoRouteError } from "../../market/http.js";
+import { fetchJson, isNoRouteError, jupBase } from "../../market/http.js";
 import { SOL_MINT, USDC_MINT, fromBaseUnits, getQuote, getTokenInfo, resolveMint, toBaseUnits } from "../../market/jupiter.js";
 import * as research from "../../market/research.js";
 import type { Features } from "../types.js";
@@ -58,7 +58,7 @@ async function priceUsd(mints: string[]): Promise<Record<string, number>> {
   const need = [...new Set(mints)].filter((m) => !CASH.has(m));
   for (const m of mints) if (CASH.has(m)) prices[m] = 1;
   if (need.length) {
-    const data = await fetchJson<Record<string, { usdPrice?: number } | null>>(`https://lite-api.jup.ag/price/v3?ids=${need.join(",")}`);
+    const data = await fetchJson<Record<string, { usdPrice?: number } | null>>(`${jupBase()}/price/v3?ids=${need.join(",")}`);
     for (const m of need) if (typeof data[m]?.usdPrice === "number") prices[m] = data[m]!.usdPrice!;
   }
   return prices;
@@ -74,7 +74,7 @@ export const LAUNCHPAD_DEPLOYER_MIN_TOKENS = 5_000;
 
 async function entryFeatures(mint: string): Promise<Features> {
   const [jup, rug, dex] = await Promise.allSettled([
-    fetchJson<any[]>(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8000),
+    fetchJson<any[]>(`${jupBase()}/tokens/v2/search?query=${mint}`, 8000),
     fetchJson<any>(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8000, ttlMs: 60_000 }),
     fetchJson<{ pairs?: any[] }>(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, 8000),
   ]);

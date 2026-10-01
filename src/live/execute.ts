@@ -4,7 +4,7 @@
 // el usuario apruebe la operación en la página de la cartera.
 import { db, logJournal, now } from "../db.js";
 import { EVM_CHAINS, NATIVE, rpcBatch, type EvmChainId } from "../market/evm.js";
-import { fetchJson } from "../market/http.js";
+import { fetchJson, jupBase } from "../market/http.js";
 import { SOL_MINT, fromBaseUnits, getQuote, toBaseUnits } from "../market/jupiter.js";
 import { getMission, isLive } from "../sim/mission.js";
 import { balance, cancelOrdersForSoldOut, LimitNotReached } from "../sim/portfolio.js";
@@ -137,7 +137,7 @@ export async function liveSwap(args: LiveSwapArgs) {
       if (s < args.slippageBps) q = await getQuote(input.address, output.address, amountIn, s, 0);
       if (BigInt(q.otherAmountThreshold ?? "0") < minOutBase) throw new LimitNotReached(fromBaseUnits(BigInt(q.outAmount), output.decimals), args.minOut!);
     }
-    const built = await fetchJson<{ swapTransaction?: string; error?: string }>("https://lite-api.jup.ag/swap/v1/swap", {
+    const built = await fetchJson<{ swapTransaction?: string; error?: string }>(`${jupBase()}/swap/v1/swap`, {
       method: "POST",
       ttlMs: 0,
       body: {

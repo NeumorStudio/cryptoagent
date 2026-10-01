@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { db, logJournal, now } from "../db.js";
 import * as market from "../market/binance.js";
-import { fetchJson, isTransientError } from "../market/http.js";
+import { fetchJson, isTransientError, jupBase } from "../market/http.js";
 import { SOL_MINT, USDC_MINT } from "../market/jupiter.js";
 import { recordTrade } from "./positions.js";
 import { VENUES, type Allocation, type ChainId, type Holding, type TradeMeta, type VenueId } from "./types.js";
@@ -71,7 +71,7 @@ export function applyDeltas(missionId: number, venue: VenueId, deltas: Delta[]) 
 }
 
 export async function solUsdPrice(): Promise<number> {
-  const info = await fetchJson<Array<Record<string, any>>>(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`, 15_000, 30_000);
+  const info = await fetchJson<Array<Record<string, any>>>(`${jupBase()}/tokens/v2/search?query=${SOL_MINT}`, 15_000, 30_000);
   const price = info.find((t) => t.id === SOL_MINT)?.usdPrice;
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;

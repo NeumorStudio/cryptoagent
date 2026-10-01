@@ -183,7 +183,7 @@ var init_base = __esm({
     RADIX_BASE_N_MAX_LENGTH = 65536;
     BASE_N_MAX_BYTES = 2048;
     BASE_N_MAX_CHARS = 4096;
-    radixBaseN = (BASE3, GROUP) => ({
+    radixBaseN = (BASE2, GROUP) => ({
       encode: (bytes) => {
         abytes(bytes);
         const blen = bytes.length;
@@ -217,9 +217,9 @@ var init_base = __esm({
         }
         const top = groups.length - 1;
         let sig = top * 5;
-        for (let v = groups[top]; ; v = Math.floor(v / BASE3)) {
+        for (let v = groups[top]; ; v = Math.floor(v / BASE2)) {
           sig++;
-          if (v < BASE3)
+          if (v < BASE2)
             break;
         }
         const res = new Uint8Array(zeros + sig);
@@ -227,12 +227,12 @@ var init_base = __esm({
         for (let g = 0; g < top; g++) {
           let v = groups[g];
           for (let k = 0; k < 5; k++) {
-            res[j--] = v % BASE3;
-            v = Math.floor(v / BASE3);
+            res[j--] = v % BASE2;
+            v = Math.floor(v / BASE2);
           }
         }
-        for (let v = groups[top]; j >= zeros; v = Math.floor(v / BASE3))
-          res[j--] = v % BASE3;
+        for (let v = groups[top]; j >= zeros; v = Math.floor(v / BASE2))
+          res[j--] = v % BASE2;
         return res;
       },
       decode: (digits) => {
@@ -254,10 +254,10 @@ var init_base = __esm({
           let factor = 1;
           for (const end = i + group; i < end; i++) {
             const d = digits[i];
-            if (d >= BASE3)
+            if (d >= BASE2)
               throw new Error(`invalid integer: ${d}`);
-            gval = gval * BASE3 + d;
-            factor *= BASE3;
+            gval = gval * BASE2 + d;
+            factor *= BASE2;
           }
           group = 5;
           let carry2 = gval;
@@ -5834,14 +5834,14 @@ var init_bip32 = __esm({
         }
         this._pubHash = hash160(this._publicKey);
       }
-      derive(path7) {
-        if (!/^[mM]'?/.test(path7)) {
+      derive(path8) {
+        if (!/^[mM]'?/.test(path8)) {
           throw new Error('Path must start with "m" or "M"');
         }
-        if (/^[mM]'?$/.test(path7)) {
+        if (/^[mM]'?$/.test(path8)) {
           return this;
         }
-        const parts = path7.replace(/^[mM]'?\//, "").split("/");
+        const parts = path8.replace(/^[mM]'?\//, "").split("/");
         if (parts.length > MAX_DEPTH - this.depth) {
           throw new Error("HDKey: path exceeds the serializable depth 255");
         }
@@ -6269,7 +6269,7 @@ function eddsa(Point3, cHash, eddsaOpts = {}) {
     toMontgomerySecret: "function"
   });
   const { prehash } = opts;
-  const { BASE: BASE3, Fp: Fp2, Fn: Fn2 } = Point3;
+  const { BASE: BASE2, Fp: Fp2, Fn: Fn2 } = Point3;
   const outputLen = hash3.outputLen;
   const expectedLen = 2 * Fp2.BYTES;
   if (outputLen !== void 0) {
@@ -6301,7 +6301,7 @@ function eddsa(Point3, cHash, eddsaOpts = {}) {
   }
   function getExtendedPublicKey(secretKey) {
     const { head, prefix, scalar } = getPrivateScalar(secretKey);
-    const point = BASE3.multiply(scalar);
+    const point = BASE2.multiply(scalar);
     const pointBytes = point.toBytes();
     return { head, prefix, scalar, point, pointBytes };
   }
@@ -6319,7 +6319,7 @@ function eddsa(Point3, cHash, eddsaOpts = {}) {
       msg = prehash(msg);
     const { prefix, scalar, pointBytes } = getExtendedPublicKey(secretKey);
     const r = hashDomainToScalar(options.context, prefix, msg);
-    const R = BASE3.multiply(r).toBytes();
+    const R = BASE2.multiply(r).toBytes();
     const k = hashDomainToScalar(options.context, R, pointBytes, msg);
     const s = Fn2.create(r + k * scalar);
     if (!Fn2.isValid(s))
@@ -6349,7 +6349,7 @@ function eddsa(Point3, cHash, eddsaOpts = {}) {
     try {
       A = Point3.fromBytes(publicKey, zip215);
       R = Point3.fromBytes(r, zip215);
-      SB = BASE3.multiplyUnsafe(s);
+      SB = BASE2.multiplyUnsafe(s);
     } catch (error) {
       return false;
     }
@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.42.0";
+    CODE_VERSION = "0.43.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -7954,6 +7954,31 @@ var init_db = __esm({
       if (!stored || newer(CODE_VERSION, stored)) setMeta("code_version", CODE_VERSION);
     }
     tickOwner = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+});
+
+// src/keys.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
+import path6 from "node:path";
+function apiKey(name) {
+  const fromEnv = process.env[`${name.toUpperCase()}_API_KEY`];
+  if (fromEnv) return fromEnv;
+  if (!cache) {
+    const file = path6.join(resolveDataDir(), "keys.json");
+    try {
+      cache = existsSync2(file) ? JSON.parse(readFileSync2(file, "utf8")) : {};
+    } catch {
+      cache = {};
+    }
+  }
+  return cache[name] || void 0;
+}
+var cache;
+var init_keys = __esm({
+  "src/keys.ts"() {
+    "use strict";
+    init_paths();
+    cache = null;
   }
 });
 
@@ -8006,6 +8031,7 @@ async function request(url, opts) {
           accept: "application/json",
           "user-agent": "Mozilla/5.0",
           ...opts.body !== void 0 ? { "content-type": "application/json" } : {},
+          ...host === "api.jup.ag" && apiKey("jupiter") ? { "x-api-key": apiKey("jupiter") } : {},
           ...opts.headers
         },
         body: opts.body !== void 0 ? JSON.stringify(opts.body) : void 0
@@ -8032,18 +8058,18 @@ function fetchText(url, opts = {}) {
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
   const key = opts.body !== void 0 || opts.method === "POST" ? `${opts.method ?? "GET"} ${url} ${JSON.stringify(opts.body ?? null)}` : url;
   const nowMs = Date.now();
-  const hit = cache.get(key);
+  const hit = cache2.get(key);
   if (hit && hit.expires > nowMs && nowMs - hit.at < ttl) return hit.value;
   const value = request(url, { ...opts, timeoutMs: opts.timeoutMs ?? 15e3 });
-  cache.set(key, { at: nowMs, expires: nowMs + ttl, value });
+  cache2.set(key, { at: nowMs, expires: nowMs + ttl, value });
   value.then(
     (r) => {
-      if (r.status < 200 || r.status >= 300) cache.delete(key);
+      if (r.status < 200 || r.status >= 300) cache2.delete(key);
     },
-    () => cache.delete(key)
+    () => cache2.delete(key)
   );
-  if (cache.size > MAX_CACHE_ENTRIES) {
-    for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
+  if (cache2.size > MAX_CACHE_ENTRIES) {
+    for (const [k, v] of cache2) if (v.expires <= nowMs) cache2.delete(k);
   }
   return value;
 }
@@ -8061,16 +8087,19 @@ async function fetchJson(url, a = {}, ttlMs) {
   if (status < 200 || status >= 300) throw new Error(`HTTP ${status} en ${url}: ${body.slice(0, 300)}`);
   return JSON.parse(body);
 }
-var DEFAULT_TTL_MS, MAX_PARALLEL_PER_HOST, MAX_RETRIES, MIN_INTERVAL_MS, DEFAULT_BAN_MS, COOLDOWN_MS, reserveStmt, cooldownStmt, blockedStmt, blockStmt, MAX_CACHE_ENTRIES, cache, active, waiting, sleep, fetchImpl, budgetStmt;
+var jupBase, DEFAULT_TTL_MS, MAX_PARALLEL_PER_HOST, MAX_RETRIES, MIN_INTERVAL_MS, DEFAULT_BAN_MS, COOLDOWN_MS, reserveStmt, cooldownStmt, blockedStmt, blockStmt, MAX_CACHE_ENTRIES, cache2, active, waiting, sleep, fetchImpl, budgetStmt;
 var init_http = __esm({
   "src/market/http.ts"() {
     "use strict";
     init_db();
+    init_keys();
+    jupBase = () => apiKey("jupiter") ? "https://api.jup.ag" : "https://lite-api.jup.ag";
     DEFAULT_TTL_MS = 5e3;
     MAX_PARALLEL_PER_HOST = 6;
     MAX_RETRIES = 5;
     MIN_INTERVAL_MS = {
       "lite-api.jup.ag": 1100,
+      "api.jup.ag": 1050,
       // KyberSwap admite unas 30 peticiones cada 10 s.
       "aggregator-api.kyberswap.com": 350,
       // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
@@ -8097,7 +8126,7 @@ var init_http = __esm({
       "INSERT INTO http_blocked (host, until) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET until = max(until, excluded.until)"
     );
     MAX_CACHE_ENTRIES = 2e3;
-    cache = /* @__PURE__ */ new Map();
+    cache2 = /* @__PURE__ */ new Map();
     active = /* @__PURE__ */ new Map();
     waiting = /* @__PURE__ */ new Map();
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -8119,7 +8148,7 @@ function resolveMint(mintOrAlias) {
 async function getTokenInfo(mint) {
   const cached = tokenCache.get(mint);
   if (cached) return cached;
-  const results = await fetchJson(`${BASE}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15e3, 3e4);
+  const results = await fetchJson(`${jupBase()}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15e3, 3e4);
   const hit = results.find((t) => t.id === mint);
   if (!hit) throw new Error(`Token no encontrado en Solana: ${mint}`);
   const info = {
@@ -8133,7 +8162,7 @@ async function getTokenInfo(mint) {
   return info;
 }
 async function getQuote(inputMint, outputMint, amountBase, slippageBps, ttlMs = 2e3) {
-  const url = `${BASE}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
+  const url = `${jupBase()}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
   const quote2 = await fetchJson(url, 15e3, ttlMs);
   if (quote2.error) throw new Error(`Jupiter: ${quote2.error}`);
   return quote2;
@@ -8145,12 +8174,11 @@ function toBaseUnits(amount, decimals) {
 function fromBaseUnits(base3, decimals) {
   return Number(BigInt(base3)) / 10 ** decimals;
 }
-var BASE, SOL_MINT, USDC_MINT, USDT_MINT, ALIASES, tokenCache;
+var SOL_MINT, USDC_MINT, USDT_MINT, ALIASES, tokenCache;
 var init_jupiter = __esm({
   "src/market/jupiter.ts"() {
     "use strict";
     init_http();
-    BASE = "https://lite-api.jup.ag";
     SOL_MINT = "So11111111111111111111111111111111111111112";
     USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
@@ -8349,7 +8377,7 @@ var init_types = __esm({
 // src/market/binance.ts
 async function getOrderBook(symbol) {
   const raw = await fetchJson(
-    `${BASE2}/depth?symbol=${symbol.toUpperCase()}&limit=100`,
+    `${BASE}/depth?symbol=${symbol.toUpperCase()}&limit=100`,
     15e3,
     2e3
     // determina el precio de ejecución: caché muy corta
@@ -8389,12 +8417,12 @@ function walkBook(levels, side, amount) {
     levelsConsumed
   };
 }
-var BASE2;
+var BASE;
 var init_binance = __esm({
   "src/market/binance.ts"() {
     "use strict";
     init_http();
-    BASE2 = "https://api.binance.com/api/v3";
+    BASE = "https://api.binance.com/api/v3";
   }
 });
 
@@ -8821,7 +8849,7 @@ async function scanMarket(limit = 25) {
     merged.set(mint, c);
   };
   const jup = async (interval) => {
-    const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/toptrending/${interval}?limit=50`);
+    const list = await fetchJson(`${jupBase()}/tokens/v2/toptrending/${interval}?limit=50`);
     for (const t of list) {
       add2(t.id, `jupiter_trending_${interval}`, {
         symbol: t.symbol,
@@ -8922,7 +8950,7 @@ async function scanMarket(limit = 25) {
 async function tokenReport(mint) {
   const [jupiter, dexscreener, rugcheck, pumpfun] = await Promise.all([
     attempt("jupiter", async () => {
-      const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+      const list = await fetchJson(`${jupBase()}/tokens/v2/search?query=${encodeURIComponent(mint)}`);
       const t = list.find((x) => x.id === mint);
       if (!t) return { error: "no encontrado en Jupiter" };
       const stats = (s) => s && {
@@ -9057,14 +9085,14 @@ async function priceUsd(mints) {
   const need = [...new Set(mints)].filter((m) => !CASH2.has(m));
   for (const m of mints) if (CASH2.has(m)) prices[m] = 1;
   if (need.length) {
-    const data = await fetchJson(`https://lite-api.jup.ag/price/v3?ids=${need.join(",")}`);
+    const data = await fetchJson(`${jupBase()}/price/v3?ids=${need.join(",")}`);
     for (const m of need) if (typeof data[m]?.usdPrice === "number") prices[m] = data[m].usdPrice;
   }
   return prices;
 }
 async function entryFeatures(mint) {
   const [jup, rug, dex] = await Promise.allSettled([
-    fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8e3),
+    fetchJson(`${jupBase()}/tokens/v2/search?query=${mint}`, 8e3),
     fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8e3, ttlMs: 6e4 }),
     fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, 8e3)
   ]);
@@ -9313,14 +9341,14 @@ var init_chain = __esm({
 });
 
 // src/live/paths.ts
-import path6 from "node:path";
+import path7 from "node:path";
 var liveDir, signerInfoFile;
 var init_paths2 = __esm({
   "src/live/paths.ts"() {
     "use strict";
     init_config();
-    liveDir = () => path6.join(config.dataDir, "live");
-    signerInfoFile = () => path6.join(liveDir(), "signer.json");
+    liveDir = () => path7.join(config.dataDir, "live");
+    signerInfoFile = () => path7.join(liveDir(), "signer.json");
   }
 });
 
@@ -11817,7 +11845,7 @@ var require_edwards = __commonJS({
         mapToCurve: "function"
       });
       const { prehash } = eddsaOpts;
-      const { BASE: BASE3, Fp: Fp2, Fn: Fn2 } = Point3;
+      const { BASE: BASE2, Fp: Fp2, Fn: Fn2 } = Point3;
       const randomBytes7 = eddsaOpts.randomBytes || utils_ts_1.randomBytes;
       const adjustScalarBytes2 = eddsaOpts.adjustScalarBytes || ((bytes) => bytes);
       const domain = eddsaOpts.domain || ((data, ctx, phflag) => {
@@ -11840,7 +11868,7 @@ var require_edwards = __commonJS({
       }
       function getExtendedPublicKey(secretKey) {
         const { head, prefix, scalar } = getPrivateScalar(secretKey);
-        const point = BASE3.multiply(scalar);
+        const point = BASE2.multiply(scalar);
         const pointBytes = point.toBytes();
         return { head, prefix, scalar, point, pointBytes };
       }
@@ -11857,7 +11885,7 @@ var require_edwards = __commonJS({
           msg = prehash(msg);
         const { prefix, scalar, pointBytes } = getExtendedPublicKey(secretKey);
         const r = hashDomainToScalar(options.context, prefix, msg);
-        const R = BASE3.multiply(r).toBytes();
+        const R = BASE2.multiply(r).toBytes();
         const k = hashDomainToScalar(options.context, R, pointBytes, msg);
         const s = Fn2.create(r + k * scalar);
         if (!Fn2.isValid(s))
@@ -11883,7 +11911,7 @@ var require_edwards = __commonJS({
         try {
           A = Point3.fromBytes(publicKey, zip215);
           R = Point3.fromBytes(r, zip215);
-          SB = BASE3.multiplyUnsafe(s);
+          SB = BASE2.multiplyUnsafe(s);
         } catch (error) {
           return false;
         }
@@ -15658,10 +15686,10 @@ var require_src = __commonJS({
         }
         BASE_MAP[xc] = i;
       }
-      var BASE3 = ALPHABET.length;
+      var BASE2 = ALPHABET.length;
       var LEADER = ALPHABET.charAt(0);
-      var FACTOR = Math.log(BASE3) / Math.log(256);
-      var iFACTOR = Math.log(256) / Math.log(BASE3);
+      var FACTOR = Math.log(BASE2) / Math.log(256);
+      var iFACTOR = Math.log(256) / Math.log(BASE2);
       function encode4(source) {
         if (Array.isArray(source) || source instanceof Uint8Array) {
           source = _Buffer.from(source);
@@ -15687,8 +15715,8 @@ var require_src = __commonJS({
           var i2 = 0;
           for (var it1 = size5 - 1; (carry2 !== 0 || i2 < length) && it1 !== -1; it1--, i2++) {
             carry2 += 256 * b58[it1] >>> 0;
-            b58[it1] = carry2 % BASE3 >>> 0;
-            carry2 = carry2 / BASE3 >>> 0;
+            b58[it1] = carry2 % BASE2 >>> 0;
+            carry2 = carry2 / BASE2 >>> 0;
           }
           if (carry2 !== 0) {
             throw new Error("Non-zero carry");
@@ -15733,7 +15761,7 @@ var require_src = __commonJS({
           }
           var i2 = 0;
           for (var it3 = size5 - 1; (carry2 !== 0 || i2 < length) && it3 !== -1; it3--, i2++) {
-            carry2 += BASE3 * b256[it3] >>> 0;
+            carry2 += BASE2 * b256[it3] >>> 0;
             b256[it3] = carry2 % 256 >>> 0;
             carry2 = carry2 / 256 >>> 0;
           }
@@ -15760,7 +15788,7 @@ var require_src = __commonJS({
         if (buffer2) {
           return buffer2;
         }
-        throw new Error("Non-base" + BASE3 + " character");
+        throw new Error("Non-base" + BASE2 + " character");
       }
       return {
         encode: encode4,
@@ -20018,8 +20046,8 @@ var require_dist2 = __commonJS({
         constructor(failure, failures) {
           let cached;
           const { message, explanation, ...rest } = failure;
-          const { path: path7 } = failure;
-          const msg = path7.length === 0 ? message : `At path: ${path7.join(".")} -- ${message}`;
+          const { path: path8 } = failure;
+          const msg = path8.length === 0 ? message : `At path: ${path8.join(".")} -- ${message}`;
           super(explanation ?? msg);
           if (explanation != null)
             this.cause = msg;
@@ -20064,15 +20092,15 @@ var require_dist2 = __commonJS({
         } else if (typeof result === "string") {
           result = { message: result };
         }
-        const { path: path7, branch } = context;
+        const { path: path8, branch } = context;
         const { type: type2 } = struct2;
         const { refinement, message = `Expected a value of type \`${type2}\`${refinement ? ` with refinement \`${refinement}\`` : ""}, but received: \`${print(value)}\`` } = result;
         return {
           value,
           type: type2,
           refinement,
-          key: path7[path7.length - 1],
-          path: path7,
+          key: path8[path8.length - 1],
+          path: path8,
           branch,
           ...result,
           message
@@ -20090,8 +20118,8 @@ var require_dist2 = __commonJS({
         }
       }
       function* run(value, struct2, options = {}) {
-        const { path: path7 = [], branch = [value], coerce: coerce2 = false, mask: mask2 = false } = options;
-        const ctx = { path: path7, branch, mask: mask2 };
+        const { path: path8 = [], branch = [value], coerce: coerce2 = false, mask: mask2 = false } = options;
+        const ctx = { path: path8, branch, mask: mask2 };
         if (coerce2) {
           value = struct2.coercer(value, ctx);
         }
@@ -20103,7 +20131,7 @@ var require_dist2 = __commonJS({
         }
         for (let [k, v, s] of struct2.entries(value, ctx)) {
           const ts = run(v, s, {
-            path: k === void 0 ? path7 : [...path7, k],
+            path: k === void 0 ? path8 : [...path8, k],
             branch: k === void 0 ? branch : [...branch, v],
             coerce: coerce2,
             mask: mask2,
@@ -22033,14 +22061,14 @@ var require_url_state_machine = __commonJS({
       return url.replace(/\u0009|\u000A|\u000D/g, "");
     }
     function shortenPath(url) {
-      const path7 = url.path;
-      if (path7.length === 0) {
+      const path8 = url.path;
+      if (path8.length === 0) {
         return;
       }
-      if (url.scheme === "file" && path7.length === 1 && isNormalizedWindowsDriveLetter(path7[0])) {
+      if (url.scheme === "file" && path8.length === 1 && isNormalizedWindowsDriveLetter(path8[0])) {
         return;
       }
-      path7.pop();
+      path8.pop();
     }
     function includesCredentials(url) {
       return url.username !== "" || url.password !== "";
@@ -24336,7 +24364,7 @@ var require_constants = __commonJS({
 var require_node_gyp_build = __commonJS({
   "node_modules/node-gyp-build/node-gyp-build.js"(exports, module) {
     var fs = __require("fs");
-    var path7 = __require("path");
+    var path8 = __require("path");
     var os2 = __require("os");
     var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : __require;
     var vars = process.config && process.config.variables || {};
@@ -24353,21 +24381,21 @@ var require_node_gyp_build = __commonJS({
       return runtimeRequire(load.resolve(dir));
     }
     load.resolve = load.path = function(dir) {
-      dir = path7.resolve(dir || ".");
+      dir = path8.resolve(dir || ".");
       try {
-        var name = runtimeRequire(path7.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
+        var name = runtimeRequire(path8.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
         if (process.env[name + "_PREBUILD"]) dir = process.env[name + "_PREBUILD"];
       } catch (err) {
       }
       if (!prebuildsOnly) {
-        var release2 = getFirst(path7.join(dir, "build/Release"), matchBuild);
+        var release2 = getFirst(path8.join(dir, "build/Release"), matchBuild);
         if (release2) return release2;
-        var debug = getFirst(path7.join(dir, "build/Debug"), matchBuild);
+        var debug = getFirst(path8.join(dir, "build/Debug"), matchBuild);
         if (debug) return debug;
       }
       var prebuild = resolve(dir);
       if (prebuild) return prebuild;
-      var nearby = resolve(path7.dirname(process.execPath));
+      var nearby = resolve(path8.dirname(process.execPath));
       if (nearby) return nearby;
       var target = [
         "platform=" + platform,
@@ -24384,14 +24412,14 @@ var require_node_gyp_build = __commonJS({
       ].filter(Boolean).join(" ");
       throw new Error("No native build was found for " + target + "\n    loaded from: " + dir + "\n");
       function resolve(dir2) {
-        var tuples = readdirSync2(path7.join(dir2, "prebuilds")).map(parseTuple);
+        var tuples = readdirSync2(path8.join(dir2, "prebuilds")).map(parseTuple);
         var tuple = tuples.filter(matchTuple(platform, arch)).sort(compareTuples)[0];
         if (!tuple) return;
-        var prebuilds = path7.join(dir2, "prebuilds", tuple.name);
+        var prebuilds = path8.join(dir2, "prebuilds", tuple.name);
         var parsed = readdirSync2(prebuilds).map(parseTags);
         var candidates = parsed.filter(matchTags(runtime, abi2));
         var winner = candidates.sort(compareTags(runtime))[0];
-        if (winner) return path7.join(prebuilds, winner.file);
+        if (winner) return path8.join(prebuilds, winner.file);
       }
     };
     function readdirSync2(dir) {
@@ -24403,7 +24431,7 @@ var require_node_gyp_build = __commonJS({
     }
     function getFirst(dir, filter) {
       var files2 = readdirSync2(dir).filter(filter);
-      return files2[0] && path7.join(dir, files2[0]);
+      return files2[0] && path8.join(dir, files2[0]);
     }
     function matchBuild(name) {
       return /\.node$/.test(name);
@@ -31411,9 +31439,9 @@ var require_secp256k1 = __commonJS({
     var Pointk12 = /* @__PURE__ */ (() => exports.secp256k1.Point)();
     var hasEven = (y) => y % _2n15 === _0n20;
     function schnorrGetExtPubKey2(priv) {
-      const { Fn: Fn2, BASE: BASE3 } = Pointk12;
+      const { Fn: Fn2, BASE: BASE2 } = Pointk12;
       const d_ = (0, weierstrass_ts_1._normFnElement)(Fn2, priv);
-      const p = BASE3.multiply(d_);
+      const p = BASE2.multiply(d_);
       const scalar = hasEven(p.y) ? d_ : Fn2.neg(d_);
       return { scalar, bytes: pointToBytes2(p) };
     }
@@ -31454,7 +31482,7 @@ var require_secp256k1 = __commonJS({
       return sig;
     }
     function schnorrVerify2(signature, message, publicKey) {
-      const { Fn: Fn2, BASE: BASE3 } = Pointk12;
+      const { Fn: Fn2, BASE: BASE2 } = Pointk12;
       const sig = (0, utils_ts_1.ensureBytes)("signature", signature, 64);
       const m = (0, utils_ts_1.ensureBytes)("message", message);
       const pub = (0, utils_ts_1.ensureBytes)("publicKey", publicKey, 32);
@@ -31467,7 +31495,7 @@ var require_secp256k1 = __commonJS({
         if (!(0, utils_ts_1.inRange)(s, _1n20, secp256k1_CURVE2.n))
           return false;
         const e = challenge2(Fn2.toBytes(r), pointToBytes2(P), m);
-        const R = BASE3.multiplyUnsafe(s).add(P.multiplyUnsafe(Fn2.neg(e)));
+        const R = BASE2.multiplyUnsafe(s).add(P.multiplyUnsafe(Fn2.neg(e)));
         const { x, y } = R.toAffine();
         if (R.is0() || !hasEven(y) || x !== r)
           return false;
@@ -53113,10 +53141,10 @@ init_stringify3();
 var promiseCache = /* @__PURE__ */ new Map();
 var responseCache = /* @__PURE__ */ new Map();
 function getCache(cacheKey2) {
-  const buildCache = (cacheKey3, cache2) => ({
-    clear: () => cache2.delete(cacheKey3),
-    get: () => cache2.get(cacheKey3),
-    set: (data) => cache2.set(cacheKey3, data)
+  const buildCache = (cacheKey3, cache3) => ({
+    clear: () => cache3.delete(cacheKey3),
+    get: () => cache3.get(cacheKey3),
+    set: (data) => cache3.set(cacheKey3, data)
   });
   const promise = buildCache(cacheKey2, promiseCache);
   const response = buildCache(cacheKey2, responseCache);
@@ -53130,24 +53158,24 @@ function getCache(cacheKey2) {
   };
 }
 async function withCache(fn, { cacheKey: cacheKey2, cacheTime = Number.POSITIVE_INFINITY }) {
-  const cache2 = getCache(cacheKey2);
-  const response = cache2.response.get();
+  const cache3 = getCache(cacheKey2);
+  const response = cache3.response.get();
   if (response && cacheTime > 0) {
     const age = Date.now() - response.created.getTime();
     if (age < cacheTime)
       return response.data;
   }
-  let promise = cache2.promise.get();
+  let promise = cache3.promise.get();
   if (!promise) {
     promise = fn();
-    cache2.promise.set(promise);
+    cache3.promise.set(promise);
   }
   try {
     const data = await promise;
-    cache2.response.set({ created: /* @__PURE__ */ new Date(), data });
+    cache3.response.set({ created: /* @__PURE__ */ new Date(), data });
     return data;
   } finally {
-    cache2.promise.clear();
+    cache3.promise.clear();
   }
 }
 

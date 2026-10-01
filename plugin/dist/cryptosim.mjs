@@ -3276,8 +3276,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path9) {
-      let input2 = path9;
+    function removeDotSegments(path10) {
+      let input2 = path10;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3686,8 +3686,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path9 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
+        const path10 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path10 && path10 !== "/" ? path10 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -8359,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.42.0";
+    CODE_VERSION = "0.43.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8372,6 +8372,31 @@ var init_db = __esm({
     }
     TICK_LEASE_MS = 45e3;
     tickOwner = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+});
+
+// src/keys.ts
+import { existsSync as existsSync2, readFileSync } from "node:fs";
+import path5 from "node:path";
+function apiKey(name) {
+  const fromEnv = process.env[`${name.toUpperCase()}_API_KEY`];
+  if (fromEnv) return fromEnv;
+  if (!cache) {
+    const file2 = path5.join(resolveDataDir(), "keys.json");
+    try {
+      cache = existsSync2(file2) ? JSON.parse(readFileSync(file2, "utf8")) : {};
+    } catch {
+      cache = {};
+    }
+  }
+  return cache[name] || void 0;
+}
+var cache;
+var init_keys = __esm({
+  "src/keys.ts"() {
+    "use strict";
+    init_paths();
+    cache = null;
   }
 });
 
@@ -8424,6 +8449,7 @@ async function request(url2, opts) {
           accept: "application/json",
           "user-agent": "Mozilla/5.0",
           ...opts.body !== void 0 ? { "content-type": "application/json" } : {},
+          ...host === "api.jup.ag" && apiKey("jupiter") ? { "x-api-key": apiKey("jupiter") } : {},
           ...opts.headers
         },
         body: opts.body !== void 0 ? JSON.stringify(opts.body) : void 0
@@ -8450,18 +8476,18 @@ function fetchText(url2, opts = {}) {
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
   const key = opts.body !== void 0 || opts.method === "POST" ? `${opts.method ?? "GET"} ${url2} ${JSON.stringify(opts.body ?? null)}` : url2;
   const nowMs = Date.now();
-  const hit = cache.get(key);
+  const hit = cache2.get(key);
   if (hit && hit.expires > nowMs && nowMs - hit.at < ttl) return hit.value;
   const value = request(url2, { ...opts, timeoutMs: opts.timeoutMs ?? 15e3 });
-  cache.set(key, { at: nowMs, expires: nowMs + ttl, value });
+  cache2.set(key, { at: nowMs, expires: nowMs + ttl, value });
   value.then(
     (r) => {
-      if (r.status < 200 || r.status >= 300) cache.delete(key);
+      if (r.status < 200 || r.status >= 300) cache2.delete(key);
     },
-    () => cache.delete(key)
+    () => cache2.delete(key)
   );
-  if (cache.size > MAX_CACHE_ENTRIES) {
-    for (const [k, v] of cache) if (v.expires <= nowMs) cache.delete(k);
+  if (cache2.size > MAX_CACHE_ENTRIES) {
+    for (const [k, v] of cache2) if (v.expires <= nowMs) cache2.delete(k);
   }
   return value;
 }
@@ -8484,16 +8510,19 @@ function takeBudget(host, limit, windowMs) {
   const { used } = budgetStmt.get(host, nowMs, windowMs, nowMs, windowMs, nowMs);
   return used <= limit;
 }
-var DEFAULT_TTL_MS, MAX_PARALLEL_PER_HOST, MAX_RETRIES, MIN_INTERVAL_MS, DEFAULT_BAN_MS, COOLDOWN_MS, reserveStmt, cooldownStmt, blockedStmt, blockStmt, MAX_CACHE_ENTRIES, cache, active, waiting, sleep, fetchImpl, budgetStmt;
+var jupBase, DEFAULT_TTL_MS, MAX_PARALLEL_PER_HOST, MAX_RETRIES, MIN_INTERVAL_MS, DEFAULT_BAN_MS, COOLDOWN_MS, reserveStmt, cooldownStmt, blockedStmt, blockStmt, MAX_CACHE_ENTRIES, cache2, active, waiting, sleep, fetchImpl, budgetStmt;
 var init_http = __esm({
   "src/market/http.ts"() {
     "use strict";
     init_db();
+    init_keys();
+    jupBase = () => apiKey("jupiter") ? "https://api.jup.ag" : "https://lite-api.jup.ag";
     DEFAULT_TTL_MS = 5e3;
     MAX_PARALLEL_PER_HOST = 6;
     MAX_RETRIES = 5;
     MIN_INTERVAL_MS = {
       "lite-api.jup.ag": 1100,
+      "api.jup.ag": 1050,
       // KyberSwap admite unas 30 peticiones cada 10 s.
       "aggregator-api.kyberswap.com": 350,
       // GoPlus no publica su límite: se va despacio (sus respuestas se guardan en caché más tiempo).
@@ -8520,7 +8549,7 @@ var init_http = __esm({
       "INSERT INTO http_blocked (host, until) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET until = max(until, excluded.until)"
     );
     MAX_CACHE_ENTRIES = 2e3;
-    cache = /* @__PURE__ */ new Map();
+    cache2 = /* @__PURE__ */ new Map();
     active = /* @__PURE__ */ new Map();
     waiting = /* @__PURE__ */ new Map();
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -8662,7 +8691,7 @@ function resolveMint(mintOrAlias) {
 async function getTokenInfo(mint) {
   const cached3 = tokenCache.get(mint);
   if (cached3) return cached3;
-  const results = await fetchJson(`${BASE2}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15e3, 3e4);
+  const results = await fetchJson(`${jupBase()}/tokens/v2/search?query=${encodeURIComponent(mint)}`, 15e3, 3e4);
   const hit = results.find((t) => t.id === mint);
   if (!hit) throw new Error(`Token no encontrado en Solana: ${mint}`);
   const info = {
@@ -8676,7 +8705,7 @@ async function getTokenInfo(mint) {
   return info;
 }
 async function getQuote(inputMint, outputMint, amountBase, slippageBps, ttlMs = 2e3) {
-  const url2 = `${BASE2}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
+  const url2 = `${jupBase()}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountBase.toString()}&slippageBps=${slippageBps}`;
   const quote2 = await fetchJson(url2, 15e3, ttlMs);
   if (quote2.error) throw new Error(`Jupiter: ${quote2.error}`);
   return quote2;
@@ -8688,12 +8717,11 @@ function toBaseUnits(amount, decimals) {
 function fromBaseUnits(base2, decimals) {
   return Number(BigInt(base2)) / 10 ** decimals;
 }
-var BASE2, SOL_MINT, USDC_MINT, USDT_MINT, ALIASES, tokenCache;
+var SOL_MINT, USDC_MINT, USDT_MINT, ALIASES, tokenCache;
 var init_jupiter = __esm({
   "src/market/jupiter.ts"() {
     "use strict";
     init_http();
-    BASE2 = "https://lite-api.jup.ag";
     SOL_MINT = "So11111111111111111111111111111111111111112";
     USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
@@ -9343,7 +9371,7 @@ async function scanMarket(limit = 25) {
     merged.set(mint, c);
   };
   const jup = async (interval) => {
-    const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/toptrending/${interval}?limit=50`);
+    const list = await fetchJson(`${jupBase()}/tokens/v2/toptrending/${interval}?limit=50`);
     for (const t of list) {
       add(t.id, `jupiter_trending_${interval}`, {
         symbol: t.symbol,
@@ -9444,7 +9472,7 @@ async function scanMarket(limit = 25) {
 async function tokenReport(mint) {
   const [jupiter, dexscreener, rugcheck, pumpfun] = await Promise.all([
     attempt("jupiter", async () => {
-      const list = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`);
+      const list = await fetchJson(`${jupBase()}/tokens/v2/search?query=${encodeURIComponent(mint)}`);
       const t = list.find((x) => x.id === mint);
       if (!t) return { error: "no encontrado en Jupiter" };
       const stats = (s) => s && {
@@ -9579,14 +9607,14 @@ async function priceUsd(mints) {
   const need = [...new Set(mints)].filter((m) => !CASH2.has(m));
   for (const m of mints) if (CASH2.has(m)) prices[m] = 1;
   if (need.length) {
-    const data = await fetchJson(`https://lite-api.jup.ag/price/v3?ids=${need.join(",")}`);
+    const data = await fetchJson(`${jupBase()}/price/v3?ids=${need.join(",")}`);
     for (const m of need) if (typeof data[m]?.usdPrice === "number") prices[m] = data[m].usdPrice;
   }
   return prices;
 }
 async function entryFeatures(mint) {
   const [jup, rug, dex] = await Promise.allSettled([
-    fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, 8e3),
+    fetchJson(`${jupBase()}/tokens/v2/search?query=${mint}`, 8e3),
     fetchJson(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, { timeoutMs: 8e3, ttlMs: 6e4 }),
     fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, 8e3)
   ]);
@@ -10495,30 +10523,30 @@ var init_chain = __esm({
 });
 
 // src/live/keystore.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync, writeFileSync } from "node:fs";
-import path5 from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import path6 from "node:path";
 function readWalletPublic(dir2) {
   const f = files(dir2).pub;
-  return existsSync2(f) ? JSON.parse(readFileSync(f, "utf8")) : null;
+  return existsSync3(f) ? JSON.parse(readFileSync2(f, "utf8")) : null;
 }
 var SCRYPT, files;
 var init_keystore = __esm({
   "src/live/keystore.ts"() {
     "use strict";
     SCRYPT = { N: 2 ** 16, r: 8, p: 1 };
-    files = (dir2) => ({ secret: path5.join(dir2, "wallet.enc"), pub: path5.join(dir2, "wallet.json") });
+    files = (dir2) => ({ secret: path6.join(dir2, "wallet.enc"), pub: path6.join(dir2, "wallet.json") });
   }
 });
 
 // src/live/paths.ts
-import path6 from "node:path";
+import path7 from "node:path";
 var liveDir, signerInfoFile;
 var init_paths2 = __esm({
   "src/live/paths.ts"() {
     "use strict";
     init_config();
-    liveDir = () => path6.join(config2.dataDir, "live");
-    signerInfoFile = () => path6.join(liveDir(), "signer.json");
+    liveDir = () => path7.join(config2.dataDir, "live");
+    signerInfoFile = () => path7.join(liveDir(), "signer.json");
   }
 });
 
@@ -10570,16 +10598,16 @@ var init_sync = __esm({
 
 // src/live/client.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "node:fs";
 function readInfo() {
   try {
-    return existsSync3(signerInfoFile()) ? JSON.parse(readFileSync2(signerInfoFile(), "utf8")) : null;
+    return existsSync4(signerInfoFile()) ? JSON.parse(readFileSync3(signerInfoFile(), "utf8")) : null;
   } catch {
     return null;
   }
 }
-async function api(info, path9, init = {}, timeoutMs = 5e3) {
-  const res = await fetch(`http://127.0.0.1:${info.port}${path9}`, {
+async function api(info, path10, init = {}, timeoutMs = 5e3) {
+  const res = await fetch(`http://127.0.0.1:${info.port}${path10}`, {
     ...init,
     headers: { authorization: `Bearer ${info.token}`, "content-type": "application/json", ...init.headers },
     signal: AbortSignal.timeout(timeoutMs)
@@ -11618,7 +11646,7 @@ async function liveSwap(args) {
       if (s < args.slippageBps) q = await getQuote(input2.address, output2.address, amountIn, s, 0);
       if (BigInt(q.otherAmountThreshold ?? "0") < minOutBase) throw new LimitNotReached(fromBaseUnits(BigInt(q.outAmount), output2.decimals), args.minOut);
     }
-    const built = await fetchJson("https://lite-api.jup.ag/swap/v1/swap", {
+    const built = await fetchJson(`${jupBase()}/swap/v1/swap`, {
       method: "POST",
       ttlMs: 0,
       body: {
@@ -11852,7 +11880,7 @@ function applyDeltas(missionId, venue, deltas) {
   });
 }
 async function solUsdPrice() {
-  const info = await fetchJson(`https://lite-api.jup.ag/tokens/v2/search?query=${SOL_MINT}`, 15e3, 3e4);
+  const info = await fetchJson(`${jupBase()}/tokens/v2/search?query=${SOL_MINT}`, 15e3, 3e4);
   const price = info.find((t) => t.id === SOL_MINT)?.usdPrice;
   if (typeof price !== "number") throw new Error("No se pudo obtener el precio de SOL");
   return price;
@@ -12475,14 +12503,14 @@ async function one(p) {
     notes.unshift("lectura poco fiable, ver unreliable");
   }
   out.reading = notes.join("; ") || "sin nada destacable";
-  if (at30 !== void 0) cache2.set(p.id, out);
+  if (at30 !== void 0) cache3.set(p.id, out);
   return out;
 }
 async function missionCounterfactuals(missionId, limit = 8) {
   const closed = listPositions(missionId).filter((p) => p.status === "closed").slice(0, limit);
   const out = [];
   for (const p of closed) {
-    const cached3 = cache2.get(p.id);
+    const cached3 = cache3.get(p.id);
     if (cached3) {
       out.push(cached3);
       continue;
@@ -12491,14 +12519,14 @@ async function missionCounterfactuals(missionId, limit = 8) {
   }
   return out;
 }
-var NETWORK2, cache2, pct2, priceAt, MIN_MEASURABLE_SEC;
+var NETWORK2, cache3, pct2, priceAt, MIN_MEASURABLE_SEC;
 var init_counterfactuals = __esm({
   "src/sim/counterfactuals.ts"() {
     "use strict";
     init_http();
     init_positions();
     NETWORK2 = { solana: "solana", base: "base", bsc: "bsc" };
-    cache2 = /* @__PURE__ */ new Map();
+    cache3 = /* @__PURE__ */ new Map();
     pct2 = (a, b, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
     priceAt = (cs, sec) => {
       let p;
@@ -12518,7 +12546,7 @@ __export(taxes_exports, {
   exportTaxes: () => exportTaxes
 });
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import path8 from "node:path";
+import path9 from "node:path";
 async function eurRates(from, to) {
   const out = /* @__PURE__ */ new Map();
   let start = (/* @__PURE__ */ new Date(`${day(from)}T00:00:00Z`)).getTime();
@@ -12588,11 +12616,11 @@ async function exportTaxes(opts = {}) {
       p.status === "partial" ? "cierre parcial" : "cerrada"
     ];
   });
-  const dir2 = path8.join(config2.dataDir, "exports");
+  const dir2 = path9.join(config2.dataDir, "exports");
   mkdirSync4(dir2, { recursive: true });
   const stamp = opts.year ? String(opts.year) : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const opsFile = path8.join(dir2, `operaciones-reales-${stamp}.csv`);
-  const posFile = path8.join(dir2, `resultados-por-posicion-${stamp}.csv`);
+  const opsFile = path9.join(dir2, `operaciones-reales-${stamp}.csv`);
+  const posFile = path9.join(dir2, `resultados-por-posicion-${stamp}.csv`);
   writeFileSync2(
     opsFile,
     csv(
@@ -13006,8 +13034,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path9, errorMaps, issueData } = params;
-  const fullPath = [...path9, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -13122,11 +13150,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path9, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path9;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -17080,10 +17108,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path9) {
-  if (!path9)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path9.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -17423,11 +17451,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path9, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path9);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -17877,16 +17905,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path9 = []) => {
+  const processError = (error63, path10 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path9, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path10, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path10, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path10, ...issue2.path]);
       } else {
-        const fullpath = [...path9, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -17925,17 +17953,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path9 = []) => {
+  const processError = (error63, path10 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path9, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path10, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path10, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path9, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path10, ...issue2.path]);
       } else {
-        const fullpath = [...path9, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -17974,8 +18002,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path9 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path9) {
+  const path10 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path10) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -33258,21 +33286,21 @@ function visit(schema, fnOrHandlers) {
     const h = fnOrHandlers[node2._zod.def.type];
     return h ? h(node2, rewritten) : node2;
   };
-  const cache3 = /* @__PURE__ */ new Map();
+  const cache4 = /* @__PURE__ */ new Map();
   function run(s) {
-    const cached3 = cache3.get(s);
+    const cached3 = cache4.get(s);
     if (cached3 === RESOLVING) {
       return new $ZodLazy({
         type: "lazy",
-        getter: () => cache3.get(s)
+        getter: () => cache4.get(s)
       });
     }
     if (cached3 !== void 0)
       return cached3;
-    cache3.set(s, RESOLVING);
+    cache4.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
-    cache3.set(s, mapped);
+    cache4.set(s, mapped);
     return mapped;
   }
   function mapInner(s) {
@@ -33490,11 +33518,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path9) {
-  if (path9.length === 0) {
+function getDotPath(path10) {
+  if (path10.length === 0) {
     return "object root";
   }
-  return path9.reduce((acc, seg, index) => {
+  return path10.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -35721,13 +35749,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path9 = ref.slice(1).split("/").filter(Boolean);
-  if (path9.length === 0) {
+  const path10 = ref.slice(1).split("/").filter(Boolean);
+  if (path10.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path9[0] === defsKey) {
-    const key = path9[1] === void 0 ? void 0 : decodeJSONPointerSegment(path9[1]);
+  if (path10[0] === defsKey) {
+    const key = path10[1] === void 0 ? void 0 : decodeJSONPointerSegment(path10[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -42139,7 +42167,7 @@ async function execute(order, reasoning2, price, log) {
 init_paths();
 init_db();
 import { spawn as spawn2 } from "node:child_process";
-import { readFileSync as readFileSync5 } from "node:fs";
+import { readFileSync as readFileSync6 } from "node:fs";
 import http from "node:http";
 
 // src/sim/memory.ts
@@ -43103,13 +43131,13 @@ function recordApiCall(url2, status) {
   } catch {
     return;
   }
-  const path9 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
+  const path10 = "/" + u.pathname.split("/").filter(Boolean).slice(0, 3).join("/");
   const ok = status >= 200 && status < 300;
   db.prepare(
     `INSERT INTO api_observations (host, path, ok, fail, last_status, last_ok_at, last_fail_at) VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(host, path) DO UPDATE SET ok = ok + excluded.ok, fail = fail + excluded.fail, last_status = excluded.last_status,
        last_ok_at = COALESCE(excluded.last_ok_at, last_ok_at), last_fail_at = COALESCE(excluded.last_fail_at, last_fail_at)`
-  ).run(u.host, path9, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
+  ).run(u.host, path10, ok ? 1 : 0, ok ? 0 : 1, status, ok ? now() : null, ok ? null : now());
 }
 function activeBeliefIds() {
   return db.prepare("SELECT id FROM beliefs WHERE status = 'active' ORDER BY id").all().map((r) => r.id);
@@ -43126,13 +43154,13 @@ init_positions();
 
 // src/dashboard/timeline.ts
 init_db();
-import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
 import os2 from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/tools/index.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 init_db();
 init_http();
 init_types();
@@ -43632,7 +43660,7 @@ var SIM_TOOLS = [
     role: "both",
     description: "Gu\xEDa del terreno: qu\xE9 mercados puede ejecutar el simulador y c\xF3mo los simula, c\xF3mo funciona pump.fun (curva, comisiones, graduaci\xF3n) y qu\xE9 APIs p\xFAblicas de datos responden, con sus URLs y campos. Hechos, no recomendaciones. Sin sections, el \xEDndice; con sections, el texto de esas secciones.",
     schema: external_exports.object({ sections: external_exports.array(external_exports.number().int().min(1).max(20)).optional().describe("N\xFAmeros de secci\xF3n que quieres leer") }),
-    run: async ({ sections }) => fieldGuide(readFileSync3(FIELD_GUIDE, "utf8"), sections)
+    run: async ({ sections }) => fieldGuide(readFileSync4(FIELD_GUIDE, "utf8"), sections)
   }),
   tool({
     name: "log_progress",
@@ -44535,7 +44563,7 @@ ${ended.join("\n")}`;
 }
 
 // src/dashboard/timeline.ts
-var projectsDir = path7.join(os2.homedir(), ".claude", "projects");
+var projectsDir = path8.join(os2.homedir(), ".claude", "projects");
 var TRADER_AGENT = /(^|:)trader$/;
 var normalizeTool = (name) => name.replace(/^mcp__plugin_.*?_cryptosim__/, "mcp__cryptosim__");
 var COVERED_BY_DB = new Set(SIM_TOOLS.filter((t) => t.journaled).map((t) => `mcp__cryptosim__${t.name}`));
@@ -44589,7 +44617,7 @@ var fileCache = /* @__PURE__ */ new Map();
 function parseTranscript(file2) {
   const events = [];
   const byToolId = /* @__PURE__ */ new Map();
-  for (const line of readFileSync4(file2, "utf8").split("\n")) {
+  for (const line of readFileSync5(file2, "utf8").split("\n")) {
     if (!line.trim()) continue;
     let entry;
     try {
@@ -44619,7 +44647,7 @@ function parseTranscript(file2) {
   }
   return events;
 }
-var OPENCODE_DB = process.env.OPENCODE_DB ?? path7.join(os2.homedir(), ".local", "share", "opencode", "opencode.db");
+var OPENCODE_DB = process.env.OPENCODE_DB ?? path8.join(os2.homedir(), ".local", "share", "opencode", "opencode.db");
 var opencodeDb = null;
 function argsFromCode(code, tool2) {
   const m = code.match(new RegExp(`cryptosim\\.${tool2}\\(\\s*(\\{[\\s\\S]*?\\})\\s*\\)`));
@@ -44631,7 +44659,7 @@ function argsFromCode(code, tool2) {
   }
 }
 function opencodeEvents(since) {
-  if (!existsSync4(OPENCODE_DB)) return [];
+  if (!existsSync5(OPENCODE_DB)) return [];
   try {
     opencodeDb ??= new DatabaseSync2(OPENCODE_DB, { readOnly: true });
     const rows = opencodeDb.prepare(
@@ -44671,28 +44699,28 @@ function opencodeEvents(since) {
 }
 var agentEvents = (since) => process.env.CRYPTOAGENT_HOST === "opencode" ? opencodeEvents(since) : transcriptEvents(since);
 function transcriptEvents(since) {
-  if (!existsSync4(projectsDir)) return [];
+  if (!existsSync5(projectsDir)) return [];
   const sinceMs = new Date(since).getTime();
   const events = [];
   const sessionDirs = readdirSync2(projectsDir).flatMap((project) => {
-    const dir2 = path7.join(projectsDir, project);
+    const dir2 = path8.join(projectsDir, project);
     try {
-      return readdirSync2(dir2).map((s) => path7.join(dir2, s, "subagents"));
+      return readdirSync2(dir2).map((s) => path8.join(dir2, s, "subagents"));
     } catch {
       return [];
     }
   });
   for (const subDir of sessionDirs) {
-    if (!existsSync4(subDir)) continue;
+    if (!existsSync5(subDir)) continue;
     for (const f of readdirSync2(subDir)) {
       if (!f.endsWith(".meta.json")) continue;
       try {
-        if (!TRADER_AGENT.test(JSON.parse(readFileSync4(path7.join(subDir, f), "utf8")).agentType ?? "")) continue;
+        if (!TRADER_AGENT.test(JSON.parse(readFileSync5(path8.join(subDir, f), "utf8")).agentType ?? "")) continue;
       } catch {
         continue;
       }
-      const file2 = path7.join(subDir, f.replace(".meta.json", ".jsonl"));
-      if (!existsSync4(file2)) continue;
+      const file2 = path8.join(subDir, f.replace(".meta.json", ".jsonl"));
+      if (!existsSync5(file2)) continue;
       const st = statSync2(file2);
       if (st.mtimeMs < sinceMs) continue;
       const cached3 = fileCache.get(file2);
@@ -44858,7 +44886,7 @@ function handler(port) {
     const url2 = new URL(req.url ?? "/", `http://localhost:${port}`);
     try {
       if (url2.pathname === "/") {
-        return send(res, 200, "text/html; charset=utf-8", readFileSync5(INDEX_HTML, "utf8"));
+        return send(res, 200, "text/html; charset=utf-8", readFileSync6(INDEX_HTML, "utf8"));
       }
       if (url2.pathname === "/api/state") return send(res, 200, "application/json", JSON.stringify(state()));
       if (url2.pathname === "/api/shutdown" && req.method === "POST") {

@@ -103,7 +103,13 @@ export async function liveSwap(args: LiveSwapArgs) {
   let usd = chain.isCash(input.address) ? amount : chain.isCash(output.address) ? quote.amountOut : 0;
   if (!usd) {
     const prices = await chain.priceUsd([input.address, output.address]).catch(() => ({}) as Record<string, number>);
-    usd = (prices[input.address] ?? 0) * amount || (prices[output.address] ?? 0) * quote.amountOut;
+    // El lado del nativo tiene precio fiable; el de un token recién lanzado puede venir con retraso (M16).
+    usd =
+      input.address === chain.native.address && prices[input.address]
+        ? prices[input.address]! * amount
+        : output.address === chain.native.address && prices[output.address]
+          ? prices[output.address]! * quote.amountOut
+          : (prices[input.address] ?? 0) * amount || (prices[output.address] ?? 0) * quote.amountOut;
   }
   // Venta: salir de un token a un estable o al nativo de la cadena (reduce riesgo). Hasta la v0.47 solo contaba el
   // estable, y una salida a ETH o BNB era "compra": con la pérdida máxima alcanzada, el firmante la habría bloqueado.

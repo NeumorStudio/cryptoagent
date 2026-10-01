@@ -8402,7 +8402,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.54.0";
+    CODE_VERSION = "0.55.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -43565,7 +43565,7 @@ async function liveSwap(args) {
   let usd2 = chain.isCash(input2.address) ? amount : chain.isCash(output2.address) ? quote2.amountOut : 0;
   if (!usd2) {
     const prices = await chain.priceUsd([input2.address, output2.address]).catch(() => ({}));
-    usd2 = (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote2.amountOut;
+    usd2 = input2.address === chain.native.address && prices[input2.address] ? prices[input2.address] * amount : output2.address === chain.native.address && prices[output2.address] ? prices[output2.address] * quote2.amountOut : (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote2.amountOut;
   }
   const toNative = output2.address === chain.native.address && !chain.isCash(input2.address);
   const side = chain.isCash(output2.address) || toNative ? "sell" : "buy";
@@ -44029,8 +44029,9 @@ async function swap(args) {
   });
   let valueUsd = chain.isCash(input2.address) ? amount : chain.isCash(output2.address) ? quote2.amountOut : 0;
   if (!valueUsd) {
-    const prices = await chain.priceUsd([input2.address, output2.address]).catch(() => ({}));
-    valueUsd = (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote2.amountOut;
+    const prices = await chain.priceUsd([input2.address, output2.address, chain.native.address]).catch(() => ({}));
+    const nativePrice = prices[chain.native.address] ?? 0;
+    valueUsd = input2.address === chain.native.address && nativePrice ? nativePrice * amount : output2.address === chain.native.address && nativePrice ? nativePrice * quote2.amountOut : (prices[input2.address] ?? 0) * amount || (prices[output2.address] ?? 0) * quote2.amountOut;
   }
   await recordTrade({
     missionId: m,

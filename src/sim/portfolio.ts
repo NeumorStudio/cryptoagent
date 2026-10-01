@@ -349,11 +349,19 @@ export async function swap(args: {
     details: { inputMint: input.address, outputMint: output.address, ...result },
   });
 
-  // Valor de la operación en USD: el lado estable si lo hay (es exacto); si no, el precio de mercado.
+  // Valor de la operación en USD: el lado estable si lo hay (es exacto); si no, el lado del nativo (SOL, ETH, BNB),
+  // que tiene precio fiable. Con el precio del token, que en los recién lanzados viene con retraso, las ventas a BNB de
+  // la M16 se anotaron como ganancias (AC +6 % y BEST +0,8 %) cuando perdieron un 17,6 % y un 30 %.
   let valueUsd = chain.isCash(input.address) ? amount : chain.isCash(output.address) ? quote.amountOut : 0;
   if (!valueUsd) {
-    const prices = await chain.priceUsd([input.address, output.address]).catch(() => ({}) as Record<string, number>);
-    valueUsd = (prices[input.address] ?? 0) * amount || (prices[output.address] ?? 0) * quote.amountOut;
+    const prices = await chain.priceUsd([input.address, output.address, chain.native.address]).catch(() => ({}) as Record<string, number>);
+    const nativePrice = prices[chain.native.address] ?? 0;
+    valueUsd =
+      input.address === chain.native.address && nativePrice
+        ? nativePrice * amount
+        : output.address === chain.native.address && nativePrice
+          ? nativePrice * quote.amountOut
+          : (prices[input.address] ?? 0) * amount || (prices[output.address] ?? 0) * quote.amountOut;
   }
   await recordTrade({
     missionId: m,

@@ -116,6 +116,10 @@ server.registerTool(
         .boolean()
         .default(true)
         .describe("Solo sim. true: al tocar el objetivo se vende todo y la misión termina. false: dura hasta el plazo y cuenta como conseguida si al final vale el objetivo o más"),
+      memory: z
+        .enum(["auto", "on", "off"])
+        .default("auto")
+        .describe("Solo sim. auto: una de cada 10 misiones es de control (sin memoria) para medir si aprende; on: siempre con memoria; off: esta sin memoria"),
       open_target: z
         .boolean()
         .default(false)
@@ -126,7 +130,7 @@ server.registerTool(
         .describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`),
     },
   },
-  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target, open_target }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target, open_target, memory }) => {
     const active = getActiveMission();
     if (active && !replace) {
       return {
@@ -161,7 +165,7 @@ server.registerTool(
       if (!capital_usd) throw new Error("Falta capital_usd");
       const target = open_target ? null : (target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined));
       if (target === undefined) throw new Error("Falta target_usd o target_pct (o open_target: true para una misión sin objetivo)");
-      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target });
+      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target, memory });
       return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
@@ -299,6 +303,25 @@ server.registerTool(
           ...(Object.keys(b.errors).length ? { unreadable: b.errors } : {}),
         }),
       );
+    } catch (err) {
+      return { ...text(`Error: ${(err as Error).message}`), isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "learning_curve",
+  {
+    description:
+      "[Solo para el usuario, no para el agente trader] ¿Aprende el agente? Rendimiento medio de las misiones simuladas por bloques de 10, " +
+      "comparado con no operar y con las misiones de control (sin memoria; una de cada 10). Si los bloques no mejoran y el control rinde igual, " +
+      "más tandas ya no le enseñan nada.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const { learningCurve } = await import("./sim/memory.js");
+      return text(JSON.stringify(learningCurve()));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
     }

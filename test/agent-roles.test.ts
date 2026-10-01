@@ -33,6 +33,7 @@ const MCP_ROLES: Record<string, "trader" | "user"> = {
   start_wallet: "user",
   wallet_status: "user",
   export_taxes: "user",
+  learning_curve: "user",
 };
 
 const roles = new Map<string, string>([...SIM_TOOLS.map((t) => [t.name, t.role ?? "trader"] as [string, string]), ...Object.entries(MCP_ROLES)]);

@@ -65,9 +65,16 @@ export function decisionContext(missionId: number, venue: string, asset: string,
     .prepare("SELECT mission_id AS m, closed_at AS at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE venue = ? AND asset = ? AND status = 'closed' ORDER BY closed_at DESC")
     .all(venue, asset) as Array<{ m: number; at: string; c: number; p: number }>;
   const deadline = (db.prepare("SELECT deadline FROM missions WHERE id = ?").get(missionId) as { deadline: string } | undefined)?.deadline;
+  const path = missionPathAtEntry(missionId, new Date().toISOString());
+  const initialUsd = (db.prepare("SELECT initial_usd FROM missions WHERE id = ?").get(missionId) as { initial_usd: number } | undefined)?.initial_usd ?? 0;
+  const realizedUsd = initialUsd > 0 && path.missionPnlPctAtEntry !== undefined ? (path.missionPnlPctAtEntry / 100) * initialUsd : 0;
+  const cashBefore = cash + (cashSpent ? addUsd : 0);
   return {
-    ...missionPathAtEntry(missionId, new Date().toISOString()),
+    ...path,
     ...(capital > 0 && addUsd > 0 ? { portfolioPct: Math.round(((existing + addUsd) / capital) * 100) } : {}),
+    // Qué parte del capital estaba en efectivo antes de entrar, y si lo que pone es más o menos que lo ya ganado.
+    ...(capital > 0 ? { cashPctAtEntry: Math.round((cashBefore / capital) * 100) } : {}),
+    ...(realizedUsd > 0.01 && addUsd > 0 ? { riskingProfitsPct: Math.round((addUsd / realizedUsd) * 100) } : {}),
     previousTradesInToken: previous.length,
     ...(previous[0] && previous[0].c > 0 ? { lastPnlInTokenPct: Math.round((previous[0].p / previous[0].c - 1) * 100) } : {}),
     // Volver en la misma ola (minutos) no es lo mismo que volver horas o días después.
@@ -93,13 +100,36 @@ export function missionPathAtEntry(missionId: number, at: string) {
     .prepare("SELECT closed_at, realized_cost_usd AS c, realized_proceeds_usd AS p FROM positions WHERE mission_id = ? AND status = 'closed' AND closed_at <= ? ORDER BY closed_at")
     .all(missionId, at) as Array<{ closed_at: string; c: number; p: number }>;
   const losses = before.filter((x) => x.c > 0 && x.p < x.c * 0.99);
+  const wins = before.filter((x) => x.c > 0 && x.p > x.c * 1.01);
   const opened = (db.prepare("SELECT COUNT(*) AS n FROM positions WHERE mission_id = ? AND status != 'moved' AND opened_at < ?").get(missionId, at) as { n: number }).n;
   const lastLoss = losses.at(-1);
+  // Racha: las últimas cerradas seguidas del mismo signo (+3 = tres ganadoras seguidas, -2 = dos perdedoras).
+  let streak = 0;
+  for (let i = before.length - 1; i >= 0; i--) {
+    const r = before[i]!;
+    if (!(r.c > 0)) continue;
+    const sign = r.p > r.c * 1.01 ? 1 : r.p < r.c * 0.99 ? -1 : 0;
+    if (sign === 0 || (streak !== 0 && Math.sign(streak) !== sign)) break;
+    streak += sign;
+  }
+  const realized = before.reduce((s, x) => s + x.p - x.c, 0);
+  // Pico y caída desde el pico, con la curva de valor de la misión (incluye lo no realizado).
+  const curve = db.prepare("SELECT MAX(total_usd) AS peak FROM snapshots WHERE mission_id = ? AND ts <= ?").get(missionId, at) as { peak: number | null };
+  const lastPoint = db.prepare("SELECT total_usd AS v FROM snapshots WHERE mission_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1").get(missionId, at) as { v: number } | undefined;
+  const peak = Math.max(initial, curve.peak ?? 0);
   return {
     entryNumberInMission: opened + 1,
     lossesBeforeInMission: losses.length,
-    ...(initial > 0 ? { missionPnlPctAtEntry: Number(((before.reduce((s, x) => s + x.p - x.c, 0) / initial) * 100).toFixed(1)) } : {}),
+    winsBeforeInMission: wins.length,
+    ...(streak !== 0 ? { streakAtEntry: streak } : {}),
+    ...(initial > 0 ? { missionPnlPctAtEntry: Number(((realized / initial) * 100).toFixed(1)) } : {}),
     ...(lastLoss ? { minutesSinceLastLoss: Math.round((new Date(at).getTime() - new Date(lastLoss.closed_at).getTime()) / 60_000) } : {}),
+    ...(initial > 0 && peak > 0
+      ? {
+          missionPeakPnlPctAtEntry: Number((((peak - initial) / initial) * 100).toFixed(1)),
+          ...(lastPoint ? { drawdownFromPeakPctAtEntry: Number((((lastPoint.v - peak) / peak) * 100).toFixed(1)) } : {}),
+        }
+      : {}),
   };
 }
 

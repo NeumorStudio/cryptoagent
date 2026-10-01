@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import { asset } from "../paths.js";
 import { db } from "../db.js";
-import { listCapabilityRequests, recall, recentLearning } from "../sim/memory.js";
+import { listCapabilityRequests, recall, recentLearning, learningCurve } from "../sim/memory.js";
 import { getActiveMission, getLastMission, missionHistory, type Mission } from "../sim/mission.js";
 import { listOrders } from "../sim/orders.js";
 import { valuation } from "../sim/portfolio.js";
@@ -88,6 +88,13 @@ function memorySummary(missionId: number | null) {
   return memoryCache.value;
 }
 
+/** Curva de aprendizaje (cara de calcular: cada minuto como mucho). */
+let learningCache: { at: number; value: ReturnType<typeof learningCurve> } | null = null;
+function learningCached() {
+  if (!learningCache || Date.now() - learningCache.at > 60_000) learningCache = { at: Date.now(), value: learningCurve() };
+  return learningCache.value;
+}
+
 function state() {
   const mission: Mission | undefined = getActiveMission() ?? getLastMission();
   const snapshots = mission
@@ -103,6 +110,7 @@ function state() {
     snapshots,
     history: missionHistory(),
     memory: memorySummary(mission?.id ?? null),
+    learning: learningCached(),
     realWallet: walletCache?.value ?? null,
     ...(mission ? missionDetail(mission.id) : { trades: [], positions: [], lastNote: null, lastReview: null }),
   };

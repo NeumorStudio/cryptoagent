@@ -68,8 +68,12 @@ test("cada entrada guarda cómo iba la misión: n.º de entrada, pérdidas previ
   assert.deepEqual(missionPathAtEntry(m.id, new Date().toISOString()), {
     entryNumberInMission: 3,
     lossesBeforeInMission: 1,
+    winsBeforeInMission: 1,
+    // La última cerrada fue ganadora: racha de +1.
+    streakAtEntry: 1,
     missionPnlPctAtEntry: -7,
     minutesSinceLastLoss: 8,
+    missionPeakPnlPctAtEntry: 0,
   });
   // Y va en los datos de decisión de cada compra.
   const mm = await createMission(1000, 1200, 60, undefined, { solana: 100 });

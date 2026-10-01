@@ -38,6 +38,8 @@ export interface Mission {
   close_on_target: number;
   /** 1: misión sin objetivo (máximo rendimiento en el plazo). target_usd guarda entonces el capital inicial. */
   open_target: number;
+  /** 1: misión de control, sin memoria (como si fuera la primera): para medir si la memoria hace que juegue mejor. */
+  memory_off: number;
 }
 
 export interface MissionLimits {
@@ -117,12 +119,13 @@ function insertMission(args: {
   holdings: Holding[];
   live?: { approval: "manual" | "auto"; limits: MissionLimits };
   closeOnTarget?: boolean;
+  memoryOff?: boolean;
 }): number {
   const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
   const id = Number(
     db
       .prepare(
-        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target, open_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target, open_target, memory_off) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         now(),
@@ -137,6 +140,7 @@ function insertMission(args: {
         args.live ? JSON.stringify(args.live.limits) : null,
         args.closeOnTarget === false || args.targetUsd === null ? 0 : 1,
         args.targetUsd === null ? 1 : 0,
+        args.memoryOff ? 1 : 0,
       ).lastInsertRowid,
   );
   // En una misión real, los saldos son los de la cadena (holdings es su espejo).
@@ -147,9 +151,27 @@ function insertMission(args: {
     kind: "mission",
     summary:
       `${args.live ? "Misión REAL" : "Misión"} #${id} iniciada: ${args.targetUsd === null ? `${args.initialUsd.toFixed(2)} USD, sin objetivo (máximo rendimiento)` : `de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD`} ` +
-      `en ${Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)} min (el reloj arranca cuando el agente empieza a trabajar)`,
+      `en ${Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)} min (el reloj arranca cuando el agente empieza a trabajar)` +
+      (args.memoryOff ? ". MISIÓN DE CONTROL: el agente juega sin memoria, para medir si la memoria le ayuda" : ""),
   });
   return id;
+}
+
+/**
+ * Misiones de control: cada CONTROL_EVERY misiones simuladas, una se juega sin memoria. Comparar su resultado con el de
+ * las misiones con memoria dice si lo aprendido le hace jugar mejor (y cuándo más tandas ya no enseñan nada).
+ */
+export const CONTROL_EVERY = 10;
+function controlMission(memory: "auto" | "on" | "off" = "auto"): boolean {
+  if (memory !== "auto") return memory === "off";
+  const n = (db.prepare("SELECT COUNT(*) AS n FROM missions WHERE mode = 'sim'").get() as { n: number }).n + 1;
+  return n % CONTROL_EVERY === 0;
+}
+
+/** Si la misión es de control (sin memoria). */
+export function isMemoryOff(missionId: number | null | undefined): boolean {
+  if (missionId === null || missionId === undefined) return false;
+  return (db.prepare("SELECT memory_off FROM missions WHERE id = ?").get(missionId) as { memory_off: number } | undefined)?.memory_off === 1;
 }
 
 function validate(initialUsd: number, targetUsd: number | null, durationMinutes: number) {
@@ -165,7 +187,7 @@ export async function createMission(
   durationMinutes: number,
   instructions?: string,
   allocation: Allocation = DEFAULT_ALLOCATION,
-  opts: { closeOnTarget?: boolean } = {},
+  opts: { closeOnTarget?: boolean; memory?: "auto" | "on" | "off" } = {},
 ): Promise<Mission> {
   validate(initialUsd, targetUsd, durationMinutes);
   const plan = validateAllocation(allocation);
@@ -181,7 +203,9 @@ export async function createMission(
   const holdings = planPortfolio(initialUsd, plan, prices);
   cancelActive();
   // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
-  return getMission(insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings, closeOnTarget: opts.closeOnTarget }))!;
+  return getMission(
+    insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings, closeOnTarget: opts.closeOnTarget, memoryOff: controlMission(opts.memory) }),
+  )!;
 }
 
 function cancelActive() {
@@ -283,6 +307,9 @@ export async function missionStatus(missionId?: number) {
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
+    ...(mission.memory_off
+      ? { control: "Misión de control: juegas sin memoria (sin creencias, howtos, briefing ni historial), como si fuera la primera. Sirve para medir si tu memoria te ayuda: juega lo mejor que sepas con lo que veas." }
+      : {}),
     ...(mission.open_target
       ? { goal: "SIN OBJETIVO: el usuario quiere el máximo rendimiento posible al final del plazo. No hay una meta que alcanzar ni cierre al llegar a nada: cuenta lo que valga la cartera al acabar." }
       : {
@@ -390,6 +417,23 @@ export function lossFloor(mission: Mission): number | null {
   return mission.initial_usd * (1 - maxLossPct / 100);
 }
 
+/**
+ * Curva de valor de la misión: una instantánea por minuto (solo con valoración fiable). Con ella se mide el pico, la
+ * caída desde el pico y cuánto de lo ganado se devolvió: los datos para aprender a gestionar las ganancias.
+ */
+const EQUITY_POINT_MS = 60_000;
+function recordEquityPoint(missionId: number, v: { totalUsd: number; benchmarkUsd?: number | null; reliable: boolean }) {
+  if (!v.reliable || !(v.totalUsd > 0)) return;
+  const last = (db.prepare("SELECT MAX(ts) AS ts FROM snapshots WHERE mission_id = ?").get(missionId) as { ts: string | null }).ts;
+  if (last && Date.now() - new Date(last).getTime() < EQUITY_POINT_MS) return;
+  db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd, details) VALUES (?, ?, ?, ?, NULL)").run(
+    now(),
+    missionId,
+    v.totalUsd,
+    v.benchmarkUsd ?? v.totalUsd,
+  );
+}
+
 /** Comprueba una misión y la cierra si ha llegado al objetivo o se le ha acabado el plazo. */
 const lastSync = new Map<number, number>();
 
@@ -402,6 +446,7 @@ async function checkOne(mission: Mission): Promise<string[]> {
     lastSync.set(mission.id, Date.now());
   }
   const v = await valuation(mission.id);
+  recordEquityPoint(mission.id, v);
   let value = v.totalUsd;
   // Con un valor de reserva (sin cotización real) no se da el objetivo por conseguido. En una misión que no se
   // cierra al tocarlo, el objetivo se comprueba solo al final, con lo realizado al venderlo todo.

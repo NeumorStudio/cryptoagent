@@ -13,9 +13,10 @@ test("intervalo de Wilson: con pocos casos es ancho", () => {
   assert.deepEqual(memory.wilson(3, 3), { low: 44, high: 100 });
   assert.deepEqual(memory.wilson(17, 18), { low: 74, high: 99 });
   assert.deepEqual(memory.wilson(0, 0), { low: 0, high: 100 });
-  assert.equal(memory.beliefStage(9), "hypothesis");
-  assert.equal(memory.beliefStage(10), "provisional");
-  assert.equal(memory.beliefStage(30), "rule");
+  // La etapa se mide con los casos fuera de muestra (posteriores a escribir la creencia).
+  assert.equal(memory.beliefStage(4), "hypothesis");
+  assert.equal(memory.beliefStage(5), "provisional");
+  assert.equal(memory.beliefStage(20), "rule");
 });
 
 const mission = await createMission(1000, 1200, 60, undefined, { solana: 100 });

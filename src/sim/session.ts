@@ -23,7 +23,9 @@ export async function sessionBriefing(sessionId: number, missionId: number | nul
     .all(missionId) as Array<{ ts: string; kind: string; summary: string }>;
 
   const memoryLines: string[] = [];
-  {
+  if (mission.memory_off) {
+    memoryLines.push("MISIÓN DE CONTROL: juegas sin memoria (sin creencias, howtos, briefing ni historial), como si fuera tu primera misión. Sirve para medir si tu memoria te ayuda.", "");
+  } else {
     const briefing = getBriefing(missionId);
     if (briefing) {
       memoryLines.push("Briefing del revisor para esta misión (lo prepara otro agente a partir de tu memoria):", briefing.text, "");

@@ -7,7 +7,7 @@
 // La escribe el agente revisor, no el que opera: así el agente no juzga sus propias decisiones.
 // El que opera deja observaciones (report_observation) y el revisor decide qué pasa a la memoria.
 import { db, logActivity, now } from "../db.js";
-import { getActiveMission, getLastMission, getMission, type Mission } from "./mission.js";
+import { getActiveMission, getLastMission, getMission, type Mission, CONTROL_EVERY } from "./mission.js";
 import { listPositions } from "./positions.js";
 import { DUPLICATE_THRESHOLD, fingerprint, similarity } from "./text.js";
 import { launchpadOf } from "./launchpads.js";
@@ -120,6 +120,14 @@ export const CONDITION_FIELDS = [
   "lossesBeforeInMission",
   "missionPnlPctAtEntry",
   "minutesSinceLastLoss",
+  // Gestión de la cartera: ganadas antes, racha, pico de la misión y caída desde él, efectivo al entrar y si lo que
+  // pone es más o menos que lo ya ganado (para aprender cuándo guardar ganancias y cuándo volver a apostarlas).
+  "winsBeforeInMission",
+  "streakAtEntry",
+  "missionPeakPnlPctAtEntry",
+  "drawdownFromPeakPctAtEntry",
+  "cashPctAtEntry",
+  "riskingProfitsPct",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -157,6 +165,12 @@ const RESEARCH_FIELDS = new Set([
   "lossesBeforeInMission",
   "missionPnlPctAtEntry",
   "minutesSinceLastLoss",
+  "winsBeforeInMission",
+  "streakAtEntry",
+  "missionPeakPnlPctAtEntry",
+  "drawdownFromPeakPctAtEntry",
+  "cashPctAtEntry",
+  "riskingProfitsPct",
 ]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {
@@ -271,6 +285,8 @@ interface BeliefRow {
   status_reason: string | null;
   origin: string;
   legacy_evidence: string | null;
+  /** Desde cuándo vale su condición actual: las operaciones posteriores son su evidencia fuera de muestra. */
+  condition_since: string | null;
 }
 
 /**
@@ -302,12 +318,20 @@ export function beliefVerdict(decided: number, wilsonLow?: number, wilsonHigh?: 
   if ((wilsonHigh ?? 100) < 50) return "los datos la contradicen";
   return "sin confirmar";
 }
-export const beliefStage = (decided: number): BeliefStage => (decided >= 30 ? "rule" : decided >= 10 ? "provisional" : "hypothesis");
+/**
+ * Etapa de una creencia según sus casos FUERA DE MUESTRA: las operaciones posteriores a escribir su condición. Con
+ * cientos de misiones, el revisor prueba muchas hipótesis y algunas encajan con el pasado por casualidad; solo
+ * asciende la que sigue acertando con operaciones que no vio al escribirla.
+ */
+export const beliefStage = (decidedOutOfSample: number): BeliefStage =>
+  decidedOutOfSample >= 20 ? "rule" : decidedOutOfSample >= 5 ? "provisional" : "hypothesis";
 const STAGE_LABEL: Record<BeliefStage, string> = {
-  hypothesis: "hipótesis (menos de 10 casos: puede ser suerte)",
-  provisional: "provisional (10-29 casos)",
-  rule: "regla (30 casos o más)",
+  hypothesis: "hipótesis (menos de 5 casos nuevos desde que se escribió: puede ser casualidad)",
+  provisional: "provisional (5-19 casos nuevos)",
+  rule: "regla (20 casos nuevos o más)",
 };
+/** Últimas operaciones decisivas con las que se mide si una creencia sigue valiendo ahora (el mercado cambia). */
+const RECENT_WINDOW = 20;
 
 function beliefEvidence(b: BeliefRow, closed: Pos[]) {
   // Solo las veces que la aplicó de verdad: citarla en una compra que no cumplía su condición no cuenta.
@@ -331,9 +355,33 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
     const decided = inFavor + against;
     const support = decided ? Math.round((inFavor / decided) * 100) : null;
     const ci = wilson(inFavor, decided);
-    const stage = beliefStage(decided);
+    // Fuera de muestra: las operaciones abiertas después de escribir la condición (no las pudo "ajustar").
+    const since = b.condition_since ?? b.created_at;
+    const favorOf = (xs: Pos[]) => xs.filter((p) => outcome(p) === (b.expectation === "negative" ? "loss" : "win")).length;
+    const decidedOf = (xs: Pos[]) => xs.filter((p) => outcome(p) === "win" || outcome(p) === "loss");
+    const oos = decidedOf(ps.filter((p) => p.openedAt >= since));
+    const oosFavor = favorOf(oos);
+    const oosCi = wilson(oosFavor, oos.length);
+    const stage = beliefStage(oos.length);
+    // Reciente: las últimas operaciones decisivas, para ver si sigue valiendo ahora.
+    const recent = decidedOf(ps)
+      .sort((x, y) => String(x.closedAt).localeCompare(String(y.closedAt)))
+      .slice(-RECENT_WINDOW);
+    const recentSupport = recent.length ? Math.round((favorOf(recent) / recent.length) * 100) : null;
+    const drift = support !== null && recentSupport !== null && recent.length >= 8 && decided > recent.length && Math.abs(recentSupport - support) >= 25;
     const summary = summarizeTrades(ps);
-    matched = { ...summary, inFavor, against, supportPct: support, wilsonLowPct: ci.low, wilsonHighPct: ci.high, stage };
+    matched = {
+      ...summary,
+      inFavor,
+      against,
+      supportPct: support,
+      wilsonLowPct: ci.low,
+      wilsonHighPct: ci.high,
+      stage,
+      outOfSample: { since, inFavor: oosFavor, against: oos.length - oosFavor, wilsonLowPct: oosCi.low, wilsonHighPct: oosCi.high },
+      ...(recentSupport !== null ? { recent: { trades: recent.length, supportPct: recentSupport } } : {}),
+      ...(drift ? { drift: `antes acertaba el ${support} % y en las últimas ${recent.length} el ${recentSupport} %: quizá el mercado ha cambiado` } : {}),
+    };
     const counts = `${inFavor} a favor, ${against} en contra; acierto ${support} %, intervalo ${ci.low}-${ci.high} %`;
     verdict =
       decided < 3
@@ -344,6 +392,9 @@ function beliefEvidence(b: BeliefRow, closed: Pos[]) {
             ? `los datos la contradicen (${counts})`
             : `sin confirmar (${counts})`;
     if (decided >= 3) verdict += ` · ${STAGE_LABEL[stage]}`;
+    verdict += ` · fuera de muestra: ${oosFavor} a favor, ${oos.length - oosFavor} en contra`;
+    if (oos.length >= 5 && oosCi.high < 50) verdict += " · ⚠ desde que se escribió, los datos nuevos la contradicen";
+    if (drift) verdict += ` · ⚠ ${(matched as { drift: string }).drift}`;
     verdict += magnitude(summary);
   }
   const skipped = overrideRecord(b.id, closed);
@@ -497,7 +548,12 @@ export function blockingBeliefs(venue: string, entry: Record<string, unknown>, a
 }
 
 function isStrongNegative(ev: ReturnType<typeof beliefEvidence>) {
-  const t = ev.matchingTrades as { inFavor?: number; against?: number; wilsonLowPct?: number; avgPnlPct?: number } | undefined;
+  const t = ev.matchingTrades as
+    | { inFavor?: number; against?: number; wilsonLowPct?: number; avgPnlPct?: number; outOfSample?: { inFavor: number; against: number; wilsonHighPct: number } }
+    | undefined;
+  // Si las operaciones posteriores a escribirla la contradicen, ya no frena: lo que aprendió puede haber sido casualidad.
+  const oos = t?.outOfSample;
+  if (oos && oos.inFavor + oos.against >= 4 && oos.wilsonHighPct < 50) return false;
   return (
     t !== undefined &&
     (t.inFavor ?? 0) + (t.against ?? 0) >= STRONG_NEGATIVE.minDecided &&
@@ -792,9 +848,27 @@ export function memoryHygiene() {
   };
 }
 
+/**
+ * Tamaño máximo del texto de un howto. Con cientos de misiones, ampliarlos sin límite los convertía en textos enormes
+ * que el trader no lee entero: al pasarlo, hay que reescribirlo resumido (lo esencial, no la historia de cada caso).
+ */
+export const HOWTO_MAX_CHARS = 1200;
+function checkHowtoSize(steps: string) {
+  if (steps.length > HOWTO_MAX_CHARS) {
+    throw new Error(
+      `El howto tendría ${steps.length} caracteres y el máximo es ${HOWTO_MAX_CHARS}: reescríbelo resumido, con lo esencial (los pasos y los ` +
+        "errores a evitar), sin la historia de cada caso. Los casos ya están en las operaciones y en las retrospectivas.",
+    );
+  }
+}
+
 export function writeHowto(a: { scope: string; topic: string; title: string; steps: string; missionId: number | null; fixesErrorIds?: number[] }) {
+  checkHowtoSize(a.steps);
   if (activeCount("howtos") >= HOWTO_LIMIT) {
-    throw new Error(`Ya hay ${HOWTO_LIMIT} howtos activos o más: amplía uno existente (update_howto) o fusiona y retira alguno antes de escribir otro.`);
+    throw new Error(
+      `Ya hay ${HOWTO_LIMIT} howtos activos o más: amplía uno existente (update_howto) o fusiona y retira alguno antes de escribir otro. ` +
+        `Candidatos a retirar o fusionar, con datos: ${JSON.stringify(retireCandidates().howtos)}`,
+    );
   }
   const fp = fingerprint(`${a.title} ${a.steps}`);
   const dup = duplicateOf("howtos", fp);
@@ -822,6 +896,7 @@ export function updateHowto(a: { id: number; title?: string; steps?: string; sta
   if (!h) throw new Error(`No existe el howto #${a.id}`);
   const title = a.title ?? h.title;
   const steps = a.steps ?? h.steps;
+  if (a.steps !== undefined && a.status !== "obsolete") checkHowtoSize(steps);
   db.prepare("UPDATE howtos SET title = ?, steps = ?, fingerprint = ?, status = COALESCE(?, status), superseded_by = COALESCE(?, superseded_by), updated_at = ? WHERE id = ?").run(
     title,
     steps,
@@ -845,7 +920,10 @@ const sameCondition = (cond: Condition | undefined, exceptId = 0) =>
 export function writeBelief(a: { statement: string; appliesTo: string; expectation?: "positive" | "negative"; condition?: Condition; missionId: number | null }) {
   validateCondition(a.condition, a.expectation);
   if (activeCount("beliefs") >= BELIEF_LIMIT) {
-    throw new Error(`Ya hay ${BELIEF_LIMIT} creencias activas o más: corrige una existente (revise_belief) o retira las duplicadas o contradichas antes de escribir otra.`);
+    throw new Error(
+      `Ya hay ${BELIEF_LIMIT} creencias activas o más: corrige una existente (revise_belief) o retira alguna antes de escribir otra. ` +
+        `Candidatas a retirar, con datos: ${JSON.stringify(retireCandidates().beliefs)}`,
+    );
   }
   const fp = fingerprint(a.statement);
   const dup = duplicateOf("beliefs", fp) ?? sameCondition(a.condition);
@@ -855,10 +933,10 @@ export function writeBelief(a: { statement: string; appliesTo: string; expectati
   const id = Number(
     db
       .prepare(
-        `INSERT INTO beliefs (created_at, updated_at, source_mission_id, statement, applies_to, expectation, condition, fingerprint)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO beliefs (created_at, condition_since, updated_at, source_mission_id, statement, applies_to, expectation, condition, fingerprint)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(now(), now(), a.missionId, a.statement, a.appliesTo, a.expectation ?? null, a.condition ? JSON.stringify(a.condition) : null, fp).lastInsertRowid,
+      .run(now(), now(), now(), a.missionId, a.statement, a.appliesTo, a.expectation ?? null, a.condition ? JSON.stringify(a.condition) : null, fp).lastInsertRowid,
   );
   const view = beliefView(getBelief(id), closedPositions());
   logLearning(a.missionId, `Nueva creencia #${id}: ${a.statement}`, view.evidence.verdict);
@@ -869,6 +947,47 @@ function getBelief(id: number) {
   const b = db.prepare("SELECT * FROM beliefs WHERE id = ?").get(id) as unknown as BeliefRow | undefined;
   if (!b) throw new Error(`No existe la creencia #${id}`);
   return b;
+}
+
+/**
+ * Qué conviene retirar cuando la memoria está llena, con datos: creencias que los datos nuevos contradicen, que nunca
+ * han tenido casos o que no se aplican desde hace muchas misiones, y howtos que el trader no cita. Con cientos de
+ * misiones, el criterio de cada momento del revisor no basta para mantener la memoria limpia.
+ */
+export function retireCandidates() {
+  const closed = closedPositions();
+  const missionsSince = (ts: string) => (db.prepare("SELECT COUNT(*) AS n FROM missions WHERE created_at > ? AND status != 'active'").get(ts) as { n: number }).n;
+  const beliefs = (db.prepare("SELECT * FROM beliefs WHERE status = 'active'").all() as unknown as BeliefRow[])
+    .map((b) => {
+      const ev = beliefEvidence(b, closed);
+      const t = ev.matchingTrades as { inFavor?: number; against?: number; outOfSample?: { inFavor: number; against: number; wilsonHighPct: number }; drift?: string } | undefined;
+      const decided = (t?.inFavor ?? 0) + (t?.against ?? 0);
+      const oos = t?.outOfSample;
+      const age = missionsSince(b.created_at);
+      const reason =
+        oos && oos.inFavor + oos.against >= 5 && oos.wilsonHighPct < 50
+          ? `los datos nuevos la contradicen (${oos.inFavor} a favor, ${oos.against} en contra desde que se escribió)`
+          : !b.condition && !ev.appliedIn.trades && age >= 5
+            ? `sin condición y sin aplicarse en ${age} misiones`
+            : b.condition && decided < 3 && age >= 10
+              ? `casi sin casos (${decided}) tras ${age} misiones: su condición apenas se da`
+              : t?.drift
+                ? `ha dejado de valer: ${t.drift}`
+                : null;
+      return reason ? { id: b.id, statement: b.statement.slice(0, 120), reason } : null;
+    })
+    .filter(Boolean);
+  // Howtos: cuántas veces los cita el trader en sus tesis y notas de memoria (howto #N).
+  const cites = new Map<number, number>();
+  for (const p of listPositions()) {
+    const text = `${p.thesis ?? ""} ${p.lessonsApplied ?? ""}`;
+    for (const m of text.matchAll(/howtos?\s*#?(\d+)/gi)) cites.set(Number(m[1]), (cites.get(Number(m[1])) ?? 0) + 1);
+  }
+  const howtos = (db.prepare("SELECT id, title, created_at FROM howtos WHERE status = 'active'").all() as Array<{ id: number; title: string; created_at: string }>)
+    .map((h) => ({ id: h.id, title: h.title.slice(0, 100), citedInTrades: cites.get(h.id) ?? 0, missionsSinceCreated: missionsSince(h.created_at) }))
+    .filter((h) => h.citedInTrades === 0 && h.missionsSinceCreated >= 5)
+    .map((h) => ({ ...h, reason: `no se ha citado en ninguna operación en ${h.missionsSinceCreated} misiones` }));
+  return { beliefs, howtos };
 }
 
 export function reviseBelief(a: {
@@ -898,9 +1017,12 @@ export function reviseBelief(a: {
     const twin = evidenceTwin(cond, expectation, closedPositions(), a.id);
     if (twin) throw new Error(`Con esa condición cubriría casi las mismas operaciones que la creencia #${twin} con la misma expectativa. Si sobran, retira una de las dos.`);
   }
+  // Cambiar la condición o la expectativa empieza de nuevo la cuenta fuera de muestra: es otra hipótesis.
+  const conditionChanged = condition !== b.condition || expectation !== b.expectation;
   db.prepare(
-    `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ? WHERE id = ?`,
-  ).run(statement, a.appliesTo ?? b.applies_to, expectation, condition, fingerprint(statement), a.retire ? "retired" : b.status, a.reason, now(), a.id);
+    `UPDATE beliefs SET statement = ?, applies_to = ?, expectation = ?, condition = ?, fingerprint = ?, status = ?, status_reason = ?, updated_at = ?,
+       condition_since = CASE WHEN ? THEN ? ELSE condition_since END WHERE id = ?`,
+  ).run(statement, a.appliesTo ?? b.applies_to, expectation, condition, fingerprint(statement), a.retire ? "retired" : b.status, a.reason, now(), conditionChanged ? 1 : 0, now(), a.id);
   const view = beliefView(getBelief(a.id), closedPositions());
   logLearning(null, `${a.retire ? "Retira" : "Corrige"} la creencia #${a.id}: ${statement}`, `${a.reason} · ${view.evidence.verdict}`);
   return view;
@@ -1068,6 +1190,10 @@ export function recentApproach(count = 8) {
       succeeded: m.status === "succeeded",
       /** Misión sin objetivo: no cuenta como conseguida ni como fallida, solo su rendimiento. */
       openTarget: m.open_target === 1,
+      ...(() => {
+        const e = equityCurve(m.id);
+        return e ? { peakPct: e.peakPct, maxDrawdownPct: e.maxDrawdownPct, ...(e.givebackPct !== undefined ? { givebackPct: e.givebackPct } : {}) } : {};
+      })(),
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
@@ -1115,6 +1241,60 @@ export function recentApproach(count = 8) {
   };
 }
 
+/**
+ * ¿Aprende? Rendimiento de las misiones simuladas terminadas por bloques de 10 (en orden), comparado con no operar y con
+ * las misiones de control (sin memoria). Si los bloques no mejoran y el control rinde igual, más tandas ya no enseñan.
+ */
+export const LEARNING_BLOCK = 10;
+export function learningCurve() {
+  const ms = db
+    .prepare("SELECT id, initial_usd, final_usd, memory_off FROM missions WHERE mode = 'sim' AND status IN ('succeeded', 'expired', 'bust') AND final_usd IS NOT NULL ORDER BY id")
+    .all() as Array<{ id: number; initial_usd: number; final_usd: number; memory_off: number }>;
+  if (!ms.length) return { missions: 0, note: "Aún no hay misiones terminadas." };
+  const row = (m: (typeof ms)[number]) => {
+    const bench = (db.prepare("SELECT benchmark_usd AS b FROM snapshots WHERE mission_id = ? ORDER BY ts DESC LIMIT 1").get(m.id) as { b: number } | undefined)?.b;
+    return {
+      resultPct: ((m.final_usd - m.initial_usd) / m.initial_usd) * 100,
+      ...(bench ? { vsNoTradePct: ((m.final_usd - bench) / m.initial_usd) * 100 } : {}),
+    };
+  };
+  const avg = (xs: number[]) => (xs.length ? Number((xs.reduce((s, x) => s + x, 0) / xs.length).toFixed(1)) : null);
+  const summarize = (list: typeof ms) => {
+    const rows = list.map(row);
+    return {
+      missions: list.length,
+      avgResultPct: avg(rows.map((r) => r.resultPct)),
+      avgVsNoTradePct: avg(rows.filter((r) => r.vsNoTradePct !== undefined).map((r) => r.vsNoTradePct!)),
+      positive: rows.filter((r) => r.resultPct > 0).length,
+    };
+  };
+  const withMemory = ms.filter((m) => !m.memory_off);
+  const control = ms.filter((m) => m.memory_off);
+  const blocks: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < withMemory.length; i += LEARNING_BLOCK) {
+    const slice = withMemory.slice(i, i + LEARNING_BLOCK);
+    blocks.push({ block: `misiones ${slice[0]!.id}-${slice.at(-1)!.id}`, ...summarize(slice) });
+  }
+  const last = blocks.at(-1) as { avgResultPct: number | null; missions: number } | undefined;
+  const ctrl = summarize(control);
+  const verdict =
+    control.length >= 2 && last && last.missions >= 5 && last.avgResultPct !== null && ctrl.avgResultPct !== null
+      ? `Con memoria (último bloque) ${last.avgResultPct} % de media; sin memoria (control) ${ctrl.avgResultPct} %: ` +
+        (last.avgResultPct - ctrl.avgResultPct >= 2
+          ? "la memoria le ayuda."
+          : last.avgResultPct - ctrl.avgResultPct <= -2
+            ? "con memoria rinde PEOR: algo de lo aprendido le está perjudicando."
+            : "no hay diferencia clara: la memoria todavía no marca la diferencia.")
+      : "Aún no hay datos suficientes para comparar con y sin memoria (hacen falta al menos 2 misiones de control).";
+  return {
+    missions: ms.length,
+    blocks,
+    control: ctrl,
+    verdict,
+    note: `Una de cada ${CONTROL_EVERY} misiones simuladas se juega sin memoria (control). Bloques de ${LEARNING_BLOCK} misiones con memoria, en orden.`,
+  };
+}
+
 /** Lo que tiene pendiente el revisor. */
 export function reviewQueue() {
   const active = getActiveMission();
@@ -1136,10 +1316,14 @@ export function reviewQueue() {
     };
   }
   const beliefsWithoutCondition = (db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition IS NULL").all() as Array<{ id: number }>).map((r) => r.id);
+  const full = activeCount("beliefs") >= BELIEF_LIMIT - 2 || activeCount("howtos") >= HOWTO_LIMIT - 2;
   return {
     pendingFinalReviews: pendingReviews(),
     activeMission,
     recentApproach: recentApproach(),
+    learningCurve: learningCurve(),
+    // Con la memoria casi llena, qué retirar con datos (no solo con el criterio del momento).
+    ...(full ? { retireCandidates: retireCandidates() } : {}),
     memoryHygiene: memoryHygiene(),
     pendingObservations: db.prepare("SELECT id, ts, mission_id, kind, text FROM observations WHERE status = 'pending' ORDER BY id").all(),
     errorsWithoutHowto: recurringErrors().filter((e: any) => !e.howtoId),
@@ -1148,6 +1332,69 @@ export function reviewQueue() {
 }
 
 /** Todo lo ocurrido en una misión (desde `since` si se indica), para revisarla en una sola llamada. */
+/**
+ * Curva de valor de una misión (instantáneas de cada minuto): pico, caída máxima desde un pico, cuánto de lo ganado en
+ * el pico se devolvió al final y, en misiones largas, el resultado por tramos. Son los datos para aprender a gestionar
+ * las ganancias (cuándo guardarlas y cuándo volver a apostarlas); no hay ninguna regla aquí, solo la medida.
+ */
+export function equityCurve(missionId: number) {
+  const m = getMission(missionId);
+  if (!m) return null;
+  const points = db.prepare("SELECT ts, total_usd AS v FROM snapshots WHERE mission_id = ? ORDER BY ts").all(missionId) as Array<{ ts: string; v: number }>;
+  if (points.length < 2) return null;
+  const start = new Date(m.started_at ?? m.created_at).getTime();
+  const minutesAt = (ts: string) => Math.round((new Date(ts).getTime() - start) / 60_000);
+  const pct = (a: number, b: number) => Number((((a - b) / b) * 100).toFixed(1));
+  const summarize = (pts: Array<{ ts: string; v: number }>, base: number) => {
+    let peak = base;
+    let peakAt = pts[0]!.ts;
+    let maxDrawdown = 0;
+    let runPeak = base;
+    for (const p of pts) {
+      if (p.v > peak) {
+        peak = p.v;
+        peakAt = p.ts;
+      }
+      runPeak = Math.max(runPeak, p.v);
+      maxDrawdown = Math.min(maxDrawdown, (p.v - runPeak) / runPeak);
+    }
+    const end = pts.at(-1)!.v;
+    return {
+      startUsd: Number(base.toFixed(2)),
+      endUsd: Number(end.toFixed(2)),
+      resultPct: pct(end, base),
+      peakUsd: Number(peak.toFixed(2)),
+      peakPct: pct(peak, base),
+      peakAtMinute: minutesAt(peakAt),
+      maxDrawdownPct: Number((maxDrawdown * 100).toFixed(1)),
+      // De lo que llegó a ganar en el pico, qué parte devolvió hasta el final (100 % = lo devolvió todo).
+      ...(peak > base * 1.005 ? { givebackPct: Math.round(((peak - end) / (peak - base)) * 100) } : {}),
+    };
+  };
+  const whole = summarize(points, m.initial_usd);
+  // Tramos en misiones largas: de 1 h desde 3 h de duración, de 4 h desde 12 h.
+  const durationMin = (new Date(m.deadline).getTime() - start) / 60_000;
+  const segmentMin = durationMin >= 12 * 60 ? 240 : durationMin >= 180 ? 60 : 0;
+  const segments: Array<Record<string, unknown>> = [];
+  if (segmentMin) {
+    let base = m.initial_usd;
+    for (let from = 0; from < durationMin; from += segmentMin) {
+      const pts = points.filter((p) => {
+        const t = minutesAt(p.ts);
+        return t >= from && t < from + segmentMin;
+      });
+      if (!pts.length) continue;
+      const opened = listPositions(missionId).filter((p) => {
+        const t = minutesAt(p.openedAt);
+        return t >= from && t < from + segmentMin;
+      });
+      segments.push({ fromMinute: from, toMinute: from + segmentMin, ...summarize(pts, base), entries: opened.length });
+      base = pts.at(-1)!.v;
+    }
+  }
+  return { points: points.length, ...whole, ...(segments.length ? { segments } : {}) };
+}
+
 export function missionReviewData(missionId: number, since?: string) {
   const m = getMission(missionId);
   if (!m) throw new Error(`No existe la misión #${missionId}`);
@@ -1170,6 +1417,8 @@ export function missionReviewData(missionId: number, since?: string) {
   return {
     mission: { ...mission, profile: describe(profile(m)) },
     stats: missionStats(missionId),
+    // Curva de valor: pico, caída máxima, lo devuelto desde el pico y, en misiones largas, por tramos.
+    equity: equityCurve(missionId),
     briefing: !briefing
       ? null
       : since && briefing.updated_at <= from

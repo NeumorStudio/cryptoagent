@@ -61,3 +61,23 @@ test("sin objetivo: no hay meta ni cierre al llegar; termina por tiempo y cuenta
   assert.match((await checkMission(m.id)).join("\n"), /TERMINADA POR TIEMPO.*\(\+\d+\.\d %; sin objetivo\)/);
   assert.equal(getMission(m.id)!.status, "expired");
 });
+
+test("gestión de la cartera: la curva de valor da pico, caída y lo devuelto; cada entrada guarda cómo iba la misión", async () => {
+  const { equityCurve } = await import("../src/sim/memory.js");
+  const { missionPathAtEntry } = await import("../src/sim/positions.js");
+  const m = await createMission(100, null, 60, undefined, { solana: 100 });
+  const t0 = Date.now();
+  const at = (min: number) => new Date(t0 + min * 60_000).toISOString();
+  db.prepare("UPDATE missions SET started_at = ? WHERE id = ?").run(at(0), m.id);
+  const point = db.prepare("INSERT INTO snapshots (ts, mission_id, total_usd, benchmark_usd) VALUES (?, ?, ?, ?)");
+  for (const [min, v] of [[1, 100], [5, 140], [10, 120], [15, 110]] as const) point.run(at(min), m.id, v, 100);
+  const e = equityCurve(m.id)!;
+  assert.equal(e.peakPct, 40);
+  assert.equal(e.peakAtMinute, 5);
+  assert.equal(e.resultPct, 10);
+  assert.equal(e.givebackPct, 75, "ganó 40 en el pico y se quedó con 10: devolvió el 75 %");
+  assert.equal(e.maxDrawdownPct, -21.4);
+  const path = missionPathAtEntry(m.id, at(16));
+  assert.equal(path.missionPeakPnlPctAtEntry, 40);
+  assert.equal(path.drawdownFromPeakPctAtEntry, -21.4);
+});

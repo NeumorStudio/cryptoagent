@@ -244,6 +244,15 @@ export const MIGRATIONS: Migration[] = [
       db.exec("ALTER TABLE missions ADD COLUMN open_target INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    version: 16,
+    description: "Evidencia fuera de muestra de las creencias (desde cuándo vale su condición) y misiones de control sin memoria",
+    up: (db) => {
+      db.exec("ALTER TABLE beliefs ADD COLUMN condition_since TEXT");
+      db.exec("UPDATE beliefs SET condition_since = created_at WHERE condition_since IS NULL");
+      db.exec("ALTER TABLE missions ADD COLUMN memory_off INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 /**

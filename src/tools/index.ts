@@ -120,7 +120,7 @@ function riskCheck(chain: ChainId, token: string, f: Features, missionId: number
     creator: f.creator,
     creatorTokens: f.creatorTokens,
     creatorGraduated: f.creatorGraduated,
-    ...positions.creatorHistory(f.creator),
+    ...(mission.isMemoryOff(missionId) ? {} : positions.creatorHistory(f.creator)),
     devHoldingPct: f.devHoldingPct,
     creatorHoneypots: f.creatorHoneypots,
     insidersDetected: f.insidersDetected,
@@ -246,8 +246,13 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
   return out;
 }
 
+/** Historial propio con un token (es memoria: en una misión de control no se da). */
+const yourHistory = (missionId: number | null, chain: ChainId, address: string) =>
+  mission.isMemoryOff(missionId) ? "misión de control: sin historial" : positions.tokenHistory(chain, address);
+
 /** Lo que dice la memoria de un token, en una celda: "frena #10 · avisa #23 · apoya #16". */
 function memoryCell(chain: ChainId, f: Features, address: string, missionId: number | null = null): string {
+  if (mission.isMemoryOff(missionId)) return "misión de control: sin memoria";
   // Con la misión, también cuentan las creencias sobre cómo decide: si ya operó este token y cuánto queda.
   const decision = missionId !== null ? positions.decisionContext(missionId, chain, address, 0, false) : {};
   const entry = { ...f, ...positions.creatorHistory(f.creator) } as unknown as Record<string, unknown>;
@@ -280,7 +285,7 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
     const f = address ? await c.entryFeatures(address).catch(() => null) : null;
     if (!f) return { ...cand, risk: "sin datos" };
     const rc = riskCheck(chain, address, f, missionId);
-    return { ...cand, risk: riskCell(rc), memory: memoryCell(chain, f, address, missionId), yourHistory: positions.tokenHistory(chain, address) };
+    return { ...cand, risk: riskCell(rc), memory: memoryCell(chain, f, address, missionId), yourHistory: yourHistory(missionId, chain, address) };
   });
   return [...checked, ...candidates.slice(n)];
 }
@@ -336,7 +341,7 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
       launchpad: f.launchpad,
       risk: riskCell(rc),
       memory: memoryCell(chain, f, t.address, missionId),
-      yourHistory: positions.tokenHistory(chain, t.address) ?? "nunca",
+      yourHistory: yourHistory(missionId, chain, t.address) ?? "nunca",
       sinceLastRead:
         typeof since === "string"
           ? "primera lectura"
@@ -468,7 +473,7 @@ export const SIM_TOOLS = [
         resolving,
         resolving.then((t) => (t ? c.entryFeatures(t.address) : null)).catch(() => null),
       ]);
-      const history = resolved ? positions.tokenHistory(chain, resolved.address) : undefined;
+      const history = resolved ? yourHistory(ctx.missionId, chain, resolved.address) : undefined;
       const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => undefined) : undefined;
       return json({
         ...compactReport(report),
@@ -1048,6 +1053,7 @@ export const SIM_TOOLS = [
       howto_ids: z.array(z.number().int()).optional().describe("Ids de los howtos cuyo texto completo quieres leer"),
     }),
     run: async ({ detail, howto_ids }, ctx) => {
+      if (mission.isMemoryOff(ctx.missionId)) return "Misión de control: juegas sin memoria, como si fuera tu primera misión.";
       if (howto_ids?.length) return toText({ howtos: memory.howtosById(howto_ids) });
       return toText(detail === "completo" ? memory.recall(ctx.missionId) : memory.recallSummary(ctx.missionId));
     },
@@ -1128,7 +1134,7 @@ export const SIM_TOOLS = [
       "Mapa de lo que has probado: operaciones cerradas por cadena, y por edad y liquidez del token al entrar, " +
       "con ganadas, perdidas y resultado medio. Las casillas \"sin probar\" son zonas en las que nunca has operado.",
     schema: z.object({}),
-    run: async () => json(memory.explorationMap()),
+    run: async (_i, ctx) => (mission.isMemoryOff(ctx.missionId) ? "Misión de control: juegas sin memoria." : json(memory.explorationMap())),
   }),
   tool({
     name: "review_queue",
@@ -1442,7 +1448,7 @@ type AnyTool = (typeof SIM_TOOLS)[number];
 
 /** Añade al resultado el briefing del revisor si ha cambiado desde la última vez que lo vio el agente. */
 function withNews(content: ToolOutput, missionId: number | null): ToolOutput {
-  if (missionId === null || typeof content !== "string") return content;
+  if (missionId === null || typeof content !== "string" || mission.isMemoryOff(missionId)) return content;
   const news = memory.takeBriefingNews(missionId);
   return news ? `${content}\n\n📌 El revisor ha actualizado tu briefing para esta misión:\n${news}` : content;
 }

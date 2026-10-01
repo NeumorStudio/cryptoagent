@@ -83,7 +83,7 @@ export async function strategyFit(missionOrId: Mission | number) {
   }
 
   // Memecoins jóvenes: con el historial propio.
-  const closed = listPositions().filter((p) => p.status === "closed" && (p.entry.ageMinutes ?? Infinity) < 60 && p.pnlPct !== null);
+  const closed = mission.memory_off ? [] : listPositions().filter((p) => p.status === "closed" && (p.entry.ageMinutes ?? Infinity) < 60 && p.pnlPct !== null);
   if (closed.length >= 5) {
     const hit = closed.filter((p) => (p.pnlPct ?? 0) >= need * 100).length / closed.length;
     const ruin = closed.filter((p) => (p.pnlPct ?? 0) <= -50).length / closed.length;

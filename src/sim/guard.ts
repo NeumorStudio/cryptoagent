@@ -6,6 +6,7 @@ import type { ChainId } from "./types.js";
 import { getChain } from "./venues/index.js";
 import { blockingBeliefs } from "./memory.js";
 import { creatorHistory, decisionContext } from "./positions.js";
+import { isMemoryOff } from "./mission.js";
 
 export interface BeliefOverride {
   id: number;
@@ -45,7 +46,7 @@ export async function checkBuyAgainstMemory(a: {
   }
   const decision = a.missionId !== undefined ? decisionContext(a.missionId, chain.id, out.address, amountUsd, false) : {};
   const entry = { ...features, ...creatorHistory(features.creator) } as unknown as Record<string, unknown>;
-  const blocking = blockingBeliefs(chain.id, entry, out.address, decision);
+  const blocking = a.missionId !== undefined && isMemoryOff(a.missionId) ? [] : blockingBeliefs(chain.id, entry, out.address, decision);
   for (const b of blocking.filter((x) => !overridden.has(x.id))) {
     reasons.push(`- #${b.id}: ${b.statement} (evidencia: ${b.verdict})${b.whenOverridden ? `. Cuando la ignoraste: ${b.whenOverridden}` : ""}`);
   }

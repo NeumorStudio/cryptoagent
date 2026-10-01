@@ -39269,6 +39269,15 @@ var init_migrations = __esm({
         up: (db2) => {
           db2.exec("ALTER TABLE missions ADD COLUMN open_target INTEGER NOT NULL DEFAULT 0");
         }
+      },
+      {
+        version: 16,
+        description: "Evidencia fuera de muestra de las creencias (desde cu\xE1ndo vale su condici\xF3n) y misiones de control sin memoria",
+        up: (db2) => {
+          db2.exec("ALTER TABLE beliefs ADD COLUMN condition_since TEXT");
+          db2.exec("UPDATE beliefs SET condition_since = created_at WHERE condition_since IS NULL");
+          db2.exec("ALTER TABLE missions ADD COLUMN memory_off INTEGER NOT NULL DEFAULT 0");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -39465,7 +39474,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.50.0";
+    CODE_VERSION = "0.51.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

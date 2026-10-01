@@ -365,6 +365,7 @@
       <p class="review-when"><span id="reviewWhen"></span> <button class="linkish" id="reviewMore" type="button" hidden>Leer entera</button></p>
       <p class="sub">Lo que tiene más claro</p>
       <ul class="beliefs" id="beliefs"></ul>
+      <p class="quiet" id="learning"></p>
       <div id="ask"></div>
     </section>
   </div>
@@ -874,6 +875,14 @@ function renderLearn() {
   for (const b of top) {
     const text = b.statement.length > 150 ? b.statement.slice(0, 150).replace(/\s\S*$/, "") + "…" : b.statement;
     beliefs.append(el("li", {}, text, el("span", { class: "verdict" }, b.verdict)));
+  }
+  // ¿Aprende? Media por bloques de 10 misiones y comparación con las de control (sin memoria).
+  const lc = state.learning;
+  const lp = $("learning");
+  lp.replaceChildren();
+  if (lc && lc.blocks && lc.blocks.length) {
+    const blocks = lc.blocks.map((b) => `${b.avgResultPct > 0 ? "+" : ""}${b.avgResultPct} %`).join(" → ");
+    lp.append(el("b", {}, "¿Aprende? "), `media por bloques de 10 misiones: ${blocks}. `, lc.verdict);
   }
   const ask = $("ask");
   ask.replaceChildren();

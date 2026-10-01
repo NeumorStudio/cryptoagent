@@ -51,7 +51,8 @@ BNB Chain.
     final) pueden entregar USDC en destino en lugar del token pedido: el resultado lo dice, y avisa si allí no tienes
     nativo para el gas.
   - Li.Fi elige el puente. Con `route: fastest` pide el más rápido y con `avoid_bridges` excluyes los que no quieras;
-    `quote_bridge` te dice cuál elegiría antes de ejecutar. Las rutas de Mayan MCTP están excluidas siempre (en la
+    `quote_bridge` te dice cuál elegiría antes de ejecutar; al ejecutar, Li.Fi vuelve a elegir y puede cambiarla,
+    salvo que la fijes con `bridge` (el `bridgeName` de la cotización). Las rutas de Mayan MCTP están excluidas siempre (en la
     primera misión real fallaron dos veces y cobraron de más).
   - Medido en la primera misión real: Gas.zip (para llevar nativo) llega en segundos; el USDC por CCTP estándar
     (Polymer) de Base a Solana tardó 20 minutos.

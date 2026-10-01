@@ -262,7 +262,7 @@ export async function missionStatus(missionId?: number) {
   const left = remaining(mission.deadline);
   const idle = idleCheck(mission, v, left.seconds);
   return {
-    ...(idle ? { warning: idle } : {}),
+    ...(idle ? { idle } : {}),
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
@@ -331,9 +331,10 @@ export function minutesSinceLastTrade(mission: Mission): number {
 }
 
 /**
- * Aviso de "parado": lejos del objetivo, con casi todo en efectivo (estables o el nativo) y sin operar
- * desde hace un rato, quedan minutos útiles. Quedarse quieto garantiza no llegar; el agente lo racionaliza
- * a menudo tras perder ("si nada cumple la creencia, me quedo en BNB"), así que el simulador se lo dice.
+ * Dato de "parado": lejos del objetivo, con casi todo en efectivo (estables o el nativo) y sin operar desde hace un
+ * rato, con minutos útiles por delante. Es un dato, no una orden: hasta la v0.41 decía "quedarte quieto es el peor
+ * resultado, entra en el mejor que haya" y acortaba la espera, y en la M22 (prueba real con "pierde lo mínimo") empujaba
+ * a operar contra las instrucciones del usuario. Qué hacer con él lo decide el agente.
  */
 export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuation>>, secondsLeft: number): string | null {
   if (mission.status !== "active" || v.totalUsd >= mission.target_usd || secondsLeft < 90 || v.totalUsd <= 0) return null;
@@ -345,9 +346,8 @@ export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuati
   if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
   const needPct = ((mission.target_usd - v.totalUsd) / v.totalUsd) * 100;
   return (
-    `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo, y te falta un +${needPct.toFixed(0)} % con ${Math.round(secondsLeft / 60)} min por delante. ` +
-    "Quedarte quieto garantiza no llegar: es el peor resultado. Tus creencias sirven para elegir entre candidatos, no para no operar: " +
-    "si ninguno es perfecto, entra en el mejor que haya con una tesis clara (y, si lleva una creencia negativa fuerte, el simulador te lo dirá)."
+    `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; te falta un +${needPct.toFixed(0)} % y quedan ${Math.round(secondsLeft / 60)} min.` +
+    (mission.instructions ? " Las instrucciones del usuario mandan." : "")
   );
 }
 

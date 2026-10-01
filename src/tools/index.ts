@@ -543,10 +543,6 @@ export const SIM_TOOLS = [
     }),
     run: async ({ minutes, wake_on_move_pct }, ctx) => {
       const m = mid(ctx);
-      // Parado en efectivo y lejos del objetivo: no se deja pasar más de un minuto seguido.
-      const before = await mission.missionStatus(m);
-      const idle = "warning" in before && before.warning;
-      if (idle) minutes = Math.min(minutes, 1);
       const started = Date.now();
       const startIso = now();
       const until = started + minutes * 60_000;
@@ -570,7 +566,6 @@ export const SIM_TOOLS = [
       const news = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id").all(m, startIso) as Array<{ ts: string; kind: string; summary: string }>;
       const moves = movesSince(base, current);
       return [
-        idle ? "Espera acortada a 1 minuto: estás parado en efectivo y lejos del objetivo." : "",
         `Han pasado ${elapsed} min${wake ? ` (vuelvo antes: ${wake})` : ""}. Hora: ${now()}`,
         news.length ? `Novedades:\n${news.map((n) => `- ${n.ts.slice(11, 19)} [${n.kind}] ${n.summary}`).join("\n")}` : "Sin novedades en tus órdenes ni transferencias.",
         moves.length ? `Tus posiciones durante la espera:\n${toText(moves)}` : "",
@@ -763,6 +758,10 @@ export const SIM_TOOLS = [
         .array(z.string())
         .optional()
         .describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
+      bridge: z
+        .string()
+        .optional()
+        .describe("Solo esta ruta de Li.Fi (el bridgeName que dio quote_bridge). Sin él, Li.Fi elige al ejecutar y puede cambiar de ruta"),
     }),
     run: async (i, ctx) =>
       json(
@@ -775,6 +774,7 @@ export const SIM_TOOLS = [
           amount: i.amount,
           route: i.route,
           avoidBridges: i.avoid_bridges,
+          bridge: i.bridge,
         }),
       ),
   }),
@@ -801,6 +801,10 @@ export const SIM_TOOLS = [
         .array(z.string())
         .optional()
         .describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
+      bridge: z
+        .string()
+        .optional()
+        .describe("Solo esta ruta de Li.Fi (el bridgeName que dio quote_bridge). Sin él, Li.Fi elige al ejecutar y puede cambiar de ruta"),
       thesis,
     }),
     run: async (i, ctx) =>
@@ -818,6 +822,7 @@ export const SIM_TOOLS = [
           meta: tradeMeta(i.thesis),
           route: i.route,
           avoidBridges: i.avoid_bridges,
+          bridge: i.bridge,
         }),
       ),
   }),
@@ -845,6 +850,10 @@ export const SIM_TOOLS = [
         .array(z.string())
         .optional()
         .describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
+      bridge: z
+        .string()
+        .optional()
+        .describe("Solo esta ruta de Li.Fi (el bridgeName que dio quote_bridge). Sin él, Li.Fi elige al ejecutar y puede cambiar de ruta"),
       thesis,
     }),
     run: async (i, ctx) => {
@@ -863,6 +872,7 @@ export const SIM_TOOLS = [
           reasoning: formatThesis(i.thesis),
           route: i.route,
           avoidBridges: i.avoid_bridges,
+          bridge: i.bridge,
         }),
       );
     },

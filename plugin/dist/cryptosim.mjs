@@ -8359,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.41.0";
+    CODE_VERSION = "0.42.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8775,18 +8775,30 @@ var init_binance2 = __esm({
 });
 
 // src/market/evm.ts
+function requireBlock(chain, block) {
+  if (!(mustSeeBlock[chain] >= block)) mustSeeBlock[chain] = block;
+}
 async function rpcBatch(chain, calls, ttlMs = 1e4) {
-  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const minBlock = ttlMs === 0 ? mustSeeBlock[chain] : void 0;
+  const all = minBlock !== void 0 ? [...calls, { method: "eth_blockNumber", params: [] }] : calls;
+  const body = all.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
   for (let i = 0; ; i++) {
+    const url2 = urls[i % urls.length];
     try {
-      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs });
+      const res = await fetchJson(url2, { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
-      return body.map((b) => {
+      const out = body.map((b) => {
         const r = byId.get(b.id);
         if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
         return r.result;
       });
+      if (minBlock === void 0) return out;
+      const seen = BigInt(out.pop());
+      if (seen >= minBlock) return out;
+      if (Date.now() > deadline) throw new Error(`RPC de ${chain}: los nodos siguen por detr\xE1s de la \xFAltima transacci\xF3n (bloque ${seen} < ${minBlock})`);
+      if ((i + 1) % urls.length === 0) await new Promise((r) => setTimeout(r, 1e3));
     } catch (err) {
       if (i + 1 >= urls.length || !isTransientError(err)) throw err;
     }
@@ -8922,7 +8934,7 @@ async function dexPairs(chain, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, mustSeeBlock, NODE_BEHIND_WAIT_MS, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8934,6 +8946,8 @@ var init_evm = __esm({
       bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
     };
     isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
+    mustSeeBlock = {};
+    NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 2e4);
     UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
@@ -10382,7 +10396,10 @@ var init_lifi = __esm({
     BudgetExhausted = class extends Error {
     };
     ALWAYS_AVOIDED_BRIDGES = ["mayanFastMCTP", "mayanMCTP"];
-    routeQuery = (o = {}) => `&denyBridges=${[.../* @__PURE__ */ new Set([...ALWAYS_AVOIDED_BRIDGES, ...o.avoidBridges ?? []])].join(",")}` + (o.route === "fastest" ? "&order=FASTEST" : "");
+    routeQuery = (o = {}) => {
+      if (o.bridge && ALWAYS_AVOIDED_BRIDGES.includes(o.bridge)) throw new Error(`La ruta ${o.bridge} est\xE1 excluida siempre (fall\xF3 en la primera misi\xF3n real)`);
+      return (o.bridge ? `&allowBridges=${encodeURIComponent(o.bridge)}` : `&denyBridges=${[.../* @__PURE__ */ new Set([...ALWAYS_AVOIDED_BRIDGES, ...o.avoidBridges ?? []])].join(",")}`) + (o.route === "fastest" ? "&order=FASTEST" : "");
+    };
   }
 });
 
@@ -10592,7 +10609,10 @@ async function requestIntent(intent) {
 }
 async function signTx(body) {
   const info = await runningSigner();
-  return api(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 18e4);
+  const res = await api(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 18e4);
+  const chainId = body.chain;
+  if (res.block && chainId in EVM_CHAINS) requireBlock(chainId, BigInt(res.block));
+  return res;
 }
 async function ensureSigner() {
   const running2 = await signerStatus();
@@ -10614,6 +10634,7 @@ var init_client = __esm({
     "use strict";
     init_paths();
     init_paths2();
+    init_evm();
     walletUrl = (info) => `http://127.0.0.1:${info.port}/wallet`;
   }
 });
@@ -10666,7 +10687,8 @@ async function liveBridge(a) {
     toAddress: addr(dst.id),
     slippage: a.slippageBps / 1e4,
     route: a.route,
-    avoidBridges: a.avoidBridges
+    avoidBridges: a.avoidBridges,
+    bridge: a.bridge
   });
   const same = (x, y) => x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y;
   if (!same(q.fromAddress, addr(src.id)) || !same(q.toAddress, addr(dst.id))) {
@@ -10720,6 +10742,7 @@ async function liveBridge(a) {
     real: true,
     transferId: id,
     bridge: `Li.Fi (${q.tool})`,
+    ...routeChangeWarning(m, src.id, dst.id, q.tool, a.bridge),
     txHash: res.hash,
     explorer: link,
     sent: `${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} desde ${src.label}`,
@@ -10748,6 +10771,12 @@ async function liveBridge(a) {
   });
   await syncHoldings(m).catch(() => void 0);
   return result;
+}
+function routeChangeWarning(missionId, from, to, used, fixed) {
+  if (fixed) return {};
+  const quoted = lastQuotedBridge.get(`${missionId}:${from}:${to}`);
+  if (!quoted || quoted === used) return {};
+  return { routeChanged: `La \xFAltima cotizaci\xF3n era por ${quoted}, pero Li.Fi ha elegido ${used} al ejecutar (para fijar una ruta, pasa bridge).` };
 }
 function noGasWarning(missionId, dst, arriving) {
   if (arriving.toLowerCase() === dst.native.address.toLowerCase()) return {};
@@ -10805,6 +10834,7 @@ var init_bridge = __esm({
   "src/live/bridge.ts"() {
     "use strict";
     init_db();
+    init_transfers();
     init_evm();
     init_lifi();
     init_jupiter();
@@ -11003,6 +11033,7 @@ async function liveEstimate(missionId, from, to, tin, tout, amount, slippageBps,
   const native = getChain(from).native;
   return {
     provider: `Li.Fi (${q.tool})`,
+    tool: q.tool,
     amountOut: fromBaseUnits(q.toAmount, tout.decimals),
     gasNative: q.gas.filter((g) => g.symbol === native.symbol || g.symbol === `W${native.symbol}`).reduce((s, g) => s + fromBaseUnits(g.amount, g.decimals), 0),
     seconds: q.durationSeconds,
@@ -11020,15 +11051,17 @@ async function resolveBridge(fromChain, toChain, tokenIn, tokenOut) {
 async function quoteBridge(a) {
   const { tin, tout } = await resolveBridge(a.fromChain, a.toChain, a.tokenIn, a.tokenOut);
   if (a.missionId != null && isLiveMission(a.missionId)) {
-    const e2 = await liveEstimate(a.missionId, a.fromChain, a.toChain, tin, tout, a.amount, 50, { route: a.route, avoidBridges: a.avoidBridges });
+    const e2 = await liveEstimate(a.missionId, a.fromChain, a.toChain, tin, tout, a.amount, 50, { route: a.route, avoidBridges: a.avoidBridges, bridge: a.bridge });
+    lastQuotedBridge.set(`${a.missionId}:${a.fromChain}:${a.toChain}`, e2.tool);
     return {
       from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
       to: `~${Number(e2.amountOut.toPrecision(6))} ${tout.symbol} en ${getChain(a.toChain).label}`,
       bridge: e2.provider,
+      bridgeName: e2.tool,
       gas: `~${Number(e2.gasNative.toPrecision(3))} ${getChain(a.fromChain).native.symbol}`,
       seconds: e2.seconds,
       fees: e2.fees,
-      note: `Cotizaci\xF3n real de Li.Fi. Rutas excluidas siempre: ${ALWAYS_AVOIDED_BRIDGES.join(", ")}. Puedes pedir la m\xE1s r\xE1pida (route: fastest) o excluir otras (avoid_bridges).`
+      note: `Cotizaci\xF3n real de Li.Fi. Al ejecutar, Li.Fi vuelve a elegir y puede cambiar de ruta: para usar exactamente esta, pasa bridge: "${e2.tool}" a execute_bridge. Rutas excluidas siempre: ${ALWAYS_AVOIDED_BRIDGES.join(", ")}. Puedes pedir la m\xE1s r\xE1pida (route: fastest) o excluir otras (avoid_bridges).`
     };
   }
   const e = await staticEstimate(a.fromChain, a.toChain, tin, tout, a.amount);
@@ -11051,7 +11084,7 @@ async function bridge(a) {
   if (a.amount > have + DUST4) throw new Error(`Saldo insuficiente: tienes ${have} ${tin.symbol} en ${src.label}`);
   let e;
   try {
-    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps, { route: a.route, avoidBridges: a.avoidBridges });
+    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps, { route: a.route, avoidBridges: a.avoidBridges, bridge: a.bridge });
   } catch (err) {
     if (!(err instanceof BudgetExhausted)) throw err;
     e = await staticEstimate(src.id, dst.id, tin, tout, a.amount);
@@ -11148,7 +11181,7 @@ async function settleTransfers(opts = {}) {
   }
   return log;
 }
-var DUST4, TRANSFER_ASSETS, NETWORKS_FOR, NETWORK, DEPOSIT_MINUTES, EVM_SEND_GAS, hhmm2, inMinutes, lifiToken2, STATIC_BRIDGE;
+var DUST4, TRANSFER_ASSETS, NETWORKS_FOR, NETWORK, DEPOSIT_MINUTES, EVM_SEND_GAS, hhmm2, inMinutes, lifiToken2, STATIC_BRIDGE, lastQuotedBridge;
 var init_transfers = __esm({
   "src/sim/transfers.ts"() {
     "use strict";
@@ -11177,6 +11210,7 @@ var init_transfers = __esm({
     inMinutes = (m) => new Date(Date.now() + m * 6e4).toISOString();
     lifiToken2 = (chain, t) => t.address === getChain(chain).native.address ? LIFI_NATIVE[chain] : t.address;
     STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solana: 5e-5, base: 5e-6, bsc: 3e-5 } };
+    lastQuotedBridge = /* @__PURE__ */ new Map();
   }
 });
 
@@ -11329,7 +11363,7 @@ async function missionStatus(missionId) {
   const left = remaining(mission.deadline);
   const idle = idleCheck(mission, v, left.seconds);
   return {
-    ...idle ? { warning: idle } : {},
+    ...idle ? { idle } : {},
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
@@ -11388,7 +11422,7 @@ function idleCheck(mission, v, secondsLeft) {
   const idleMin = minutesSinceLastTrade(mission);
   if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
   const needPct = (mission.target_usd - v.totalUsd) / v.totalUsd * 100;
-  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo, y te falta un +${needPct.toFixed(0)} % con ${Math.round(secondsLeft / 60)} min por delante. Quedarte quieto garantiza no llegar: es el peor resultado. Tus creencias sirven para elegir entre candidatos, no para no operar: si ninguno es perfecto, entra en el mejor que haya con una tesis clara (y, si lleva una creencia negativa fuerte, el simulador te lo dir\xE1).`;
+  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; te falta un +${needPct.toFixed(0)} % y quedan ${Math.round(secondsLeft / 60)} min.` + (mission.instructions ? " Las instrucciones del usuario mandan." : "");
 }
 function bustFloor(mission) {
   return Math.max(2, mission.initial_usd * 0.05);
@@ -12127,7 +12161,9 @@ async function valuation(missionId, recordSnapshot = false, opts = {}) {
     pending = db.prepare("SELECT id, to_venue, asset_in, symbol_in, decimals_in, amount_in, arrives_at, carry FROM transfers WHERE mission_id = ? AND status = 'pending' ORDER BY id").all(missionId);
     for (const t of pending) {
       const live = t.carry ? JSON.parse(t.carry).live : void 0;
-      if (live) t.amount_in = Math.max(0, t.amount_in - Math.max(0, balance(missionId, t.to_venue, t.asset_in) - live.baseline));
+      if (!live) continue;
+      const arrived = Math.max(0, balance(missionId, t.to_venue, t.asset_in) - live.baseline);
+      t.amount_in = arrived >= t.amount_in * 0.99 ? 0 : t.amount_in - arrived;
     }
     pending = pending.filter((t) => t.amount_in > 0);
   });
@@ -43629,9 +43665,6 @@ var SIM_TOOLS = [
     }),
     run: async ({ minutes, wake_on_move_pct }, ctx) => {
       const m = mid(ctx);
-      const before = await missionStatus(m);
-      const idle = "warning" in before && before.warning;
-      if (idle) minutes = Math.min(minutes, 1);
       const started = Date.now();
       const startIso = now();
       const until = started + minutes * 6e4;
@@ -43655,7 +43688,6 @@ var SIM_TOOLS = [
       const news = db.prepare("SELECT ts, kind, summary FROM journal WHERE mission_id = ? AND ts > ? ORDER BY id").all(m, startIso);
       const moves = movesSince(base2, current);
       return [
-        idle ? "Espera acortada a 1 minuto: est\xE1s parado en efectivo y lejos del objetivo." : "",
         `Han pasado ${elapsed} min${wake ? ` (vuelvo antes: ${wake})` : ""}. Hora: ${now()}`,
         news.length ? `Novedades:
 ${news.map((n3) => `- ${n3.ts.slice(11, 19)} [${n3.kind}] ${n3.summary}`).join("\n")}` : "Sin novedades en tus \xF3rdenes ni transferencias.",
@@ -43816,7 +43848,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       token_out: external_exports.string().describe("Token que quieres recibir en la cadena de destino (direcci\xF3n o alias)"),
       amount: external_exports.number().positive(),
       route: external_exports.enum(["best_amount", "fastest"]).default("best_amount").describe("C\xF3mo elige Li.Fi la ruta: la que m\xE1s da (por defecto) o la m\xE1s r\xE1pida"),
-      avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`)
+      avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
+      bridge: external_exports.string().optional().describe("Solo esta ruta de Li.Fi (el bridgeName que dio quote_bridge). Sin \xE9l, Li.Fi elige al ejecutar y puede cambiar de ruta")
     }),
     run: async (i, ctx) => json2(
       await quoteBridge({
@@ -43827,7 +43860,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         tokenOut: i.token_out,
         amount: i.amount,
         route: i.route,
-        avoidBridges: i.avoid_bridges
+        avoidBridges: i.avoid_bridges,
+        bridge: i.bridge
       })
     )
   }),
@@ -43845,6 +43879,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
       route: external_exports.enum(["best_amount", "fastest"]).default("best_amount").describe("C\xF3mo elige Li.Fi la ruta: la que m\xE1s da (por defecto) o la m\xE1s r\xE1pida"),
       avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
+      bridge: external_exports.string().optional().describe("Solo esta ruta de Li.Fi (el bridgeName que dio quote_bridge). Sin \xE9l, Li.Fi elige al ejecutar y puede cambiar de ruta"),
       thesis
     }),
     run: async (i, ctx) => json2(
@@ -43860,7 +43895,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
         reasoning: formatThesis(i.thesis),
         meta: tradeMeta(i.thesis),
         route: i.route,
-        avoidBridges: i.avoid_bridges
+        avoidBridges: i.avoid_bridges,
+        bridge: i.bridge
       })
     )
   }),
@@ -43878,6 +43914,7 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
       slippage_bps: external_exports.number().int().min(1).max(5e3).default(50),
       route: external_exports.enum(["best_amount", "fastest"]).default("best_amount").describe("C\xF3mo elige Li.Fi la ruta: la que m\xE1s da (por defecto) o la m\xE1s r\xE1pida"),
       avoid_bridges: external_exports.array(external_exports.string()).optional().describe(`Rutas a excluir por su nombre en Li.Fi (p. ej. "mayan", "relaydepository", "gasZipBridge"). Siempre se excluyen mayanFastMCTP y mayanMCTP`),
+      bridge: external_exports.string().optional().describe("Solo esta ruta de Li.Fi (el bridgeName que dio quote_bridge). Sin \xE9l, Li.Fi elige al ejecutar y puede cambiar de ruta"),
       thesis
     }),
     run: async (i, ctx) => {
@@ -43895,7 +43932,8 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
           slippageBps: i.slippage_bps,
           reasoning: formatThesis(i.thesis),
           route: i.route,
-          avoidBridges: i.avoid_bridges
+          avoidBridges: i.avoid_bridges,
+          bridge: i.bridge
         })
       );
     }

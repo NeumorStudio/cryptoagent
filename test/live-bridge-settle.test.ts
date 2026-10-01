@@ -77,3 +77,17 @@ test("Li.Fi: se excluyen siempre las rutas de Mayan MCTP y se puede pedir la má
   assert.doesNotMatch(urls[0]!, /order=/);
   assert.match(urls[1]!, /denyBridges=mayanFastMCTP,mayanMCTP,mayan&order=FASTEST/);
 });
+
+test("Li.Fi: con bridge solo se permite esa ruta, y Mayan MCTP no se puede fijar", async () => {
+  const { bridgeQuote } = await import("../src/market/lifi.js");
+  const urls: string[] = [];
+  setFetchImpl((async (input: string | URL | Request) => {
+    urls.push(String(input));
+    return new Response(JSON.stringify({ tool: "polymerStandard", estimate: { toAmount: "1000", executionDuration: 1100, gasCosts: [], feeCosts: [] } }), { status: 200 });
+  }) as typeof fetch);
+  const q = { fromChain: "base", toChain: "solana", fromToken: "x", toToken: "y", fromAmount: 2002n, fromAddress: "a", toAddress: "b", slippage: 0.005 };
+  await bridgeQuote({ ...q, bridge: "polymerStandard" });
+  assert.match(urls[0]!, /allowBridges=polymerStandard/);
+  assert.doesNotMatch(urls[0]!, /denyBridges/);
+  await assert.rejects(bridgeQuote({ ...q, fromAmount: 2003n, bridge: "mayanFastMCTP" }), /excluida siempre/);
+});

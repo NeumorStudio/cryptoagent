@@ -23,6 +23,8 @@ export interface SendResult {
   ok: boolean;
   /** Motivo si la transacción se incluyó pero falló (se pagó la red igualmente). */
   error?: string;
+  /** EVM: bloque en que se incluyó (las lecturas posteriores no aceptan nodos anteriores). */
+  block?: string;
 }
 
 export class PolicyError extends Error {}
@@ -105,7 +107,7 @@ async function writableAccounts(conn: Connection, tx: VersionedTransaction): Pro
   return out;
 }
 
-const SIMULATION_ATTEMPTS = 3;
+const SIMULATION_ATTEMPTS = 8;
 const SIMULATION_RETRY_MS = Number(process.env.SIMULATION_RETRY_MS ?? 2_000);
 
 const VIEM_CHAINS ={ 8453: base, 56: bsc } as const;
@@ -119,9 +121,9 @@ export async function sendEvm(accounts: Accounts, tx: EvmTxRequest, kind: "swap"
   const publicClient = createPublicClient({ chain, transport: http(rpc) });
   const wallet = createWalletClient({ account, chain, transport: http(rpc) });
   const request = { to: tx.to as Hex, data: tx.data as Hex, value: BigInt(tx.value || "0") };
-  // Estimar el gas es también la simulación: si revertiría, falla aquí y no se envía. Se repite hasta dos veces: justo
-  // tras un approve, el nodo que simula (el RPC público reparte entre varios) puede no verlo aún. En la M21 el swap y el
-  // puente de vuelta fallaron así (TRANSFER_FROM_FAILED) y pasaron al reintentar.
+  // Estimar el gas es también la simulación: si revertiría, falla aquí y no se envía. Se repite durante ~14 s: justo
+  // tras un approve, el nodo que simula (el RPC público reparte entre varios) puede no verlo aún. En la M21 y la M22 el
+  // swap y el puente de vuelta fallaron así (TRANSFER_FROM_FAILED) y pasaron al reintentar; 3 intentos en 4 s no bastaron.
   let gasLimit: bigint | undefined;
   let lastError = "";
   for (let attempt = 0; attempt < SIMULATION_ATTEMPTS && gasLimit === undefined; attempt++) {
@@ -136,5 +138,6 @@ export async function sendEvm(accounts: Accounts, tx: EvmTxRequest, kind: "swap"
   if (gasLimit === undefined) throw new Error(`La simulación falla, no se envía: ${lastError}`);
   const hash = await wallet.sendTransaction({ ...request, gas: gasLimit, chain });
   const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
-  return receipt.status === "success" ? { hash, ok: true } : { hash, ok: false, error: "la transacción revirtió en la cadena (se pagó el gas)" };
+  const block = receipt.blockNumber.toString();
+  return receipt.status === "success" ? { hash, ok: true, block } : { hash, ok: false, block, error: "la transacción revirtió en la cadena (se pagó el gas)" };
 }

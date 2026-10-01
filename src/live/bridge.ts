@@ -3,6 +3,7 @@
 // (approve exacto y tope de nativo en EVM; simulación de todas las cuentas en Solana). La llegada se
 // sigue con el estado de Li.Fi; mientras tanto, el dinero cuenta "en tránsito".
 import { db, logJournal, now } from "../db.js";
+import { lastQuotedBridge } from "../sim/transfers.js";
 import { EVM_CHAINS, NATIVE, type EvmChainId } from "../market/evm.js";
 import * as lifi from "../market/lifi.js";
 import { toBaseUnits } from "../market/jupiter.js";
@@ -85,6 +86,7 @@ export async function liveBridge(a: {
     slippage: a.slippageBps / 10_000,
     route: a.route,
     avoidBridges: a.avoidBridges,
+    bridge: a.bridge,
   });
   const same = (x: string, y: string) => (x.startsWith("0x") ? x.toLowerCase() === y.toLowerCase() : x === y);
   if (!same(q.fromAddress, addr(src.id)) || !same(q.toAddress, addr(dst.id))) {
@@ -143,6 +145,7 @@ export async function liveBridge(a: {
     real: true,
     transferId: id,
     bridge: `Li.Fi (${q.tool})`,
+    ...routeChangeWarning(m, src.id, dst.id, q.tool, a.bridge),
     txHash: res.hash,
     explorer: link,
     sent: `${Number(amountIn) / 10 ** tin.decimals} ${tin.symbol} desde ${src.label}`,
@@ -171,6 +174,14 @@ export async function liveBridge(a: {
   });
   await syncHoldings(m).catch(() => undefined);
   return result;
+}
+
+/** Si no se fijó la ruta y Li.Fi ha elegido otra distinta de la última cotizada para este par de cadenas, lo dice. */
+function routeChangeWarning(missionId: number, from: ChainId, to: ChainId, used: string, fixed?: string) {
+  if (fixed) return {};
+  const quoted = lastQuotedBridge.get(`${missionId}:${from}:${to}`);
+  if (!quoted || quoted === used) return {};
+  return { routeChanged: `La última cotización era por ${quoted}, pero Li.Fi ha elegido ${used} al ejecutar (para fijar una ruta, pasa bridge).` };
 }
 
 /**

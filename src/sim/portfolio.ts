@@ -560,7 +560,10 @@ export async function valuation(missionId: number, recordSnapshot = false, opts:
     // también en tránsito mientras Li.Fi no lo confirma.
     for (const t of pending) {
       const live = t.carry ? (JSON.parse(t.carry) as { live?: { baseline: number } }).live : undefined;
-      if (live) t.amount_in = Math.max(0, t.amount_in - Math.max(0, balance(missionId, t.to_venue, t.asset_in) - live.baseline));
+      if (!live) continue;
+      const arrived = Math.max(0, balance(missionId, t.to_venue, t.asset_in) - live.baseline);
+      // Si ya ha llegado casi todo, la diferencia es redondeo de la cotización (M22: quedaban 1e-8 ETH "en tránsito").
+      t.amount_in = arrived >= t.amount_in * 0.99 ? 0 : t.amount_in - arrived;
     }
     pending = pending.filter((t) => t.amount_in > 0);
   });

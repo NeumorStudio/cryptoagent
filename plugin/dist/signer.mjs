@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.41.0";
+    CODE_VERSION = "0.42.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8161,17 +8161,26 @@ var init_jupiter = __esm({
 
 // src/market/evm.ts
 async function rpcBatch(chain2, calls, ttlMs = 1e4) {
-  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const minBlock = ttlMs === 0 ? mustSeeBlock[chain2] : void 0;
+  const all = minBlock !== void 0 ? [...calls, { method: "eth_blockNumber", params: [] }] : calls;
+  const body = all.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const urls = [EVM_CHAINS[chain2].rpc, ...EVM_CHAINS[chain2].fallbackRpcs];
+  const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
   for (let i = 0; ; i++) {
+    const url = urls[i % urls.length];
     try {
-      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs });
+      const res = await fetchJson(url, { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
-      return body.map((b) => {
+      const out = body.map((b) => {
         const r = byId.get(b.id);
         if (!r || r.error) throw new Error(`RPC de ${chain2}: ${r?.error?.message ?? "sin respuesta"}`);
         return r.result;
       });
+      if (minBlock === void 0) return out;
+      const seen = BigInt(out.pop());
+      if (seen >= minBlock) return out;
+      if (Date.now() > deadline) throw new Error(`RPC de ${chain2}: los nodos siguen por detr\xE1s de la \xFAltima transacci\xF3n (bloque ${seen} < ${minBlock})`);
+      if ((i + 1) % urls.length === 0) await new Promise((r) => setTimeout(r, 1e3));
     } catch (err) {
       if (i + 1 >= urls.length || !isTransientError(err)) throw err;
     }
@@ -8307,7 +8316,7 @@ async function dexPairs(chain2, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, mustSeeBlock, NODE_BEHIND_WAIT_MS, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8319,6 +8328,8 @@ var init_evm = __esm({
       bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
     };
     isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
+    mustSeeBlock = {};
+    NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 2e4);
     UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
@@ -63504,7 +63515,7 @@ async function writableAccounts(conn, tx) {
   }
   return out;
 }
-var SIMULATION_ATTEMPTS = 3;
+var SIMULATION_ATTEMPTS = 8;
 var SIMULATION_RETRY_MS = Number(process.env.SIMULATION_RETRY_MS ?? 2e3);
 var VIEM_CHAINS = { 8453: base2, 56: bsc2 };
 async function sendEvm(accounts, tx, kind, limits) {
@@ -63530,7 +63541,8 @@ async function sendEvm(accounts, tx, kind, limits) {
   if (gasLimit === void 0) throw new Error(`La simulaci\xF3n falla, no se env\xEDa: ${lastError}`);
   const hash3 = await wallet.sendTransaction({ ...request2, gas: gasLimit, chain: chain2 });
   const receipt = await publicClient.waitForTransactionReceipt({ hash: hash3, timeout: 12e4 });
-  return receipt.status === "success" ? { hash: hash3, ok: true } : { hash: hash3, ok: false, error: "la transacci\xF3n revirti\xF3 en la cadena (se pag\xF3 el gas)" };
+  const block = receipt.blockNumber.toString();
+  return receipt.status === "success" ? { hash: hash3, ok: true, block } : { hash: hash3, ok: false, block, error: "la transacci\xF3n revirti\xF3 en la cadena (se pag\xF3 el gas)" };
 }
 
 // src/live/signer/server.ts

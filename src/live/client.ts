@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { asset } from "../paths.js";
 import type { WalletPublic } from "./keystore.js";
 import { signerInfoFile, type SignerInfo } from "./paths.js";
+import { EVM_CHAINS, requireBlock, type EvmChainId } from "../market/evm.js";
 
 export interface SignerStatus {
   exists: boolean;
@@ -65,6 +66,7 @@ export interface SignResult {
   hash: string;
   ok: boolean;
   error?: string;
+  block?: string;
 }
 
 /** Firma y envía una transacción ya aprobada (el firmante la valida con su política y la simula antes). */
@@ -81,7 +83,11 @@ export async function signTx(body: {
   evmLimits?: { maxValue: string; destEvm?: boolean };
 }): Promise<SignResult> {
   const info = await runningSigner();
-  return api<SignResult>(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 180_000);
+  const res = await api<SignResult>(info, "/api/sign", { method: "POST", body: JSON.stringify(body) }, 180_000);
+  // Desde aquí, las lecturas frescas de esa cadena no aceptan nodos que aún no tengan este bloque.
+  const chainId = body.chain as EvmChainId;
+  if (res.block && chainId in EVM_CHAINS) requireBlock(chainId, BigInt(res.block));
+  return res;
 }
 
 /** Arranca el firmante como proceso independiente (sobrevive a esta sesión) si no está ya en marcha. */

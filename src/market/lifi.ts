@@ -39,10 +39,20 @@ export class BudgetExhausted extends Error {}
 export interface RouteOptions {
   route?: "best_amount" | "fastest";
   avoidBridges?: string[];
+  /**
+   * Solo esta ruta (la que dio quote_bridge). Cotizar y ejecutar son dos peticiones a Li.Fi y entre una y otra puede
+   * elegir otra: en la M22 cotizó Polymer (~18 min) y ejecutó lifiIntents (1 min).
+   */
+  bridge?: string;
 }
 export const ALWAYS_AVOIDED_BRIDGES = ["mayanFastMCTP", "mayanMCTP"];
-const routeQuery = (o: RouteOptions = {}) =>
-  `&denyBridges=${[...new Set([...ALWAYS_AVOIDED_BRIDGES, ...(o.avoidBridges ?? [])])].join(",")}` + (o.route === "fastest" ? "&order=FASTEST" : "");
+const routeQuery = (o: RouteOptions = {}) => {
+  if (o.bridge && ALWAYS_AVOIDED_BRIDGES.includes(o.bridge)) throw new Error(`La ruta ${o.bridge} está excluida siempre (falló en la primera misión real)`);
+  return (
+    (o.bridge ? `&allowBridges=${encodeURIComponent(o.bridge)}` : `&denyBridges=${[...new Set([...ALWAYS_AVOIDED_BRIDGES, ...(o.avoidBridges ?? [])])].join(",")}`) +
+    (o.route === "fastest" ? "&order=FASTEST" : "")
+  );
+};
 
 export async function bridgeQuote(q: {
   fromChain: string;

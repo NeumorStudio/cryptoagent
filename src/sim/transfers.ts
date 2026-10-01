@@ -234,6 +234,8 @@ const STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solan
 
 interface BridgeEstimate {
   provider: string;
+  /** Nombre de la ruta en Li.Fi. */
+  tool?: string;
   amountOut: number;
   gasNative: number;
   seconds: number;
@@ -281,6 +283,7 @@ async function liveEstimate(missionId: number, from: ChainId, to: ChainId, tin: 
   const native = getChain(from).native;
   return {
     provider: `Li.Fi (${q.tool})`,
+    tool: q.tool,
     amountOut: fromBaseUnits(q.toAmount, tout.decimals),
     gasNative: q.gas.filter((g) => g.symbol === native.symbol || g.symbol === `W${native.symbol}`).reduce((s, g) => s + fromBaseUnits(g.amount, g.decimals), 0),
     seconds: q.durationSeconds,
@@ -290,6 +293,9 @@ async function liveEstimate(missionId: number, from: ChainId, to: ChainId, tin: 
     estimated: false,
   };
 }
+
+/** Última ruta cotizada con quote_bridge en una misión real, por misión y par de cadenas (para avisar si se ejecuta otra). */
+export const lastQuotedBridge = new Map<string, string>();
 
 async function resolveBridge(fromChain: ChainId, toChain: ChainId, tokenIn: string, tokenOut: string) {
   if (fromChain === toChain) throw new Error("Un puente une dos cadenas distintas: dentro de la misma cadena usa simulate_swap");
@@ -304,15 +310,19 @@ async function resolveBridge(fromChain: ChainId, toChain: ChainId, tokenIn: stri
 export async function quoteBridge(a: { missionId?: number | null; fromChain: ChainId; toChain: ChainId; tokenIn: string; tokenOut: string; amount: number } & lifi.RouteOptions) {
   const { tin, tout } = await resolveBridge(a.fromChain, a.toChain, a.tokenIn, a.tokenOut);
   if (a.missionId != null && isLiveMission(a.missionId)) {
-    const e = await liveEstimate(a.missionId, a.fromChain, a.toChain, tin, tout, a.amount, 50, { route: a.route, avoidBridges: a.avoidBridges });
+    const e = await liveEstimate(a.missionId, a.fromChain, a.toChain, tin, tout, a.amount, 50, { route: a.route, avoidBridges: a.avoidBridges, bridge: a.bridge });
+    lastQuotedBridge.set(`${a.missionId}:${a.fromChain}:${a.toChain}`, e.tool!);
     return {
       from: `${a.amount} ${tin.symbol} en ${getChain(a.fromChain).label}`,
       to: `~${Number(e.amountOut.toPrecision(6))} ${tout.symbol} en ${getChain(a.toChain).label}`,
       bridge: e.provider,
+      bridgeName: e.tool,
       gas: `~${Number(e.gasNative.toPrecision(3))} ${getChain(a.fromChain).native.symbol}`,
       seconds: e.seconds,
       fees: e.fees,
-      note: `Cotización real de Li.Fi. Rutas excluidas siempre: ${lifi.ALWAYS_AVOIDED_BRIDGES.join(", ")}. Puedes pedir la más rápida (route: fastest) o excluir otras (avoid_bridges).`,
+      note:
+        `Cotización real de Li.Fi. Al ejecutar, Li.Fi vuelve a elegir y puede cambiar de ruta: para usar exactamente esta, pasa bridge: "${e.tool}" a execute_bridge. ` +
+        `Rutas excluidas siempre: ${lifi.ALWAYS_AVOIDED_BRIDGES.join(", ")}. Puedes pedir la más rápida (route: fastest) o excluir otras (avoid_bridges).`,
     };
   }
   const e = await staticEstimate(a.fromChain, a.toChain, tin, tout, a.amount);
@@ -349,7 +359,7 @@ export async function bridge(a: {
 
   let e: BridgeEstimate;
   try {
-    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps, { route: a.route, avoidBridges: a.avoidBridges });
+    e = await liveEstimate(m, src.id, dst.id, tin, tout, a.amount, a.slippageBps, { route: a.route, avoidBridges: a.avoidBridges, bridge: a.bridge });
   } catch (err) {
     if (!(err instanceof lifi.BudgetExhausted)) throw err;
     e = await staticEstimate(src.id, dst.id, tin, tout, a.amount);

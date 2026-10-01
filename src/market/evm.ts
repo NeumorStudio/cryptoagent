@@ -30,18 +30,41 @@ export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 
 // ─── RPC ────────────────────────────────────────────────────────────────────
 
+/**
+ * Bloque de la última transacción propia confirmada en cada cadena. Los RPC públicos reparten las peticiones entre
+ * varios nodos y, justo después de una transacción, alguno aún no tiene su bloque: en la M22 eso dio un saldo viejo en
+ * Base (el puente contado dos veces), una lectura fallida del swap y simulaciones que no veían el approve. Las lecturas
+ * frescas (ttl 0) no aceptan respuestas de un nodo anterior a este bloque.
+ */
+const mustSeeBlock: Partial<Record<EvmChainId, bigint>> = {};
+export function requireBlock(chain: EvmChainId, block: bigint) {
+  if (!(mustSeeBlock[chain]! >= block)) mustSeeBlock[chain] = block;
+}
+const NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 20_000);
+
 export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>, ttlMs = 10_000): Promise<unknown[]> {
-  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const minBlock = ttlMs === 0 ? mustSeeBlock[chain] : undefined;
+  // El número de bloque va en la misma petición que las lecturas: lo contesta el mismo nodo.
+  const all = minBlock !== undefined ? [...calls, { method: "eth_blockNumber", params: [] }] : calls;
+  const body = all.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
   const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
   for (let i = 0; ; i++) {
+    const url = urls[i % urls.length]!;
     try {
-      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(urls[i]!, { method: "POST", body, ttlMs });
+      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(url, { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
-      return body.map((b) => {
+      const out = body.map((b) => {
         const r = byId.get(b.id);
         if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
         return r.result;
       });
+      if (minBlock === undefined) return out;
+      const seen = BigInt(out.pop() as string);
+      if (seen >= minBlock) return out;
+      if (Date.now() > deadline) throw new Error(`RPC de ${chain}: los nodos siguen por detrás de la última transacción (bloque ${seen} < ${minBlock})`);
+      // Nodo por detrás: el siguiente RPC y, tras dar la vuelta a todos, una pausa.
+      if ((i + 1) % urls.length === 0) await new Promise((r) => setTimeout(r, 1_000));
     } catch (err) {
       // Límite de peticiones o fallo de red: el siguiente RPC. Un error de la llamada (p. ej. un revert), no.
       if (i + 1 >= urls.length || !isTransientError(err)) throw err;

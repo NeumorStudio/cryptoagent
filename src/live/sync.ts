@@ -14,11 +14,18 @@ export function livePub(): WalletPublic {
   return pub;
 }
 
-/** Tokens EVM a vigilar en una misión: los que ha comprado (en EVM no se pueden listar todos los saldos). */
-function missionTokens(missionId: number): ExtraTokens {
+/**
+ * Tokens EVM a vigilar: los comprados en una misión o, sin misión, en cualquier misión real (en EVM no se pueden
+ * listar todos los saldos; sin esto, la tarjeta de la cartera no veía lo comprado en Base y BNB Chain en la M26).
+ */
+export function missionTokens(missionId?: number): ExtraTokens {
   const rows = db
-    .prepare("SELECT DISTINCT p.venue, p.asset, p.symbol, t.decimals FROM positions p JOIN token_meta t ON t.chain = p.venue AND t.address = p.asset WHERE p.mission_id = ? AND p.venue IN ('base', 'bsc')")
-    .all(missionId) as Array<{ venue: EvmChainId; asset: string; symbol: string; decimals: number }>;
+    .prepare(
+      `SELECT DISTINCT p.venue, p.asset, p.symbol, t.decimals FROM positions p JOIN token_meta t ON t.chain = p.venue AND t.address = p.asset
+       JOIN missions m ON m.id = p.mission_id
+       WHERE p.venue IN ('base', 'bsc') AND ${missionId === undefined ? "m.mode = 'live'" : "p.mission_id = ?"}`,
+    )
+    .all(...(missionId === undefined ? [] : [missionId])) as Array<{ venue: EvmChainId; asset: string; symbol: string; decimals: number }>;
   const out: ExtraTokens = {};
   for (const r of rows) (out[r.venue] ??= []).push({ address: r.asset, symbol: r.symbol, decimals: r.decimals });
   return out;

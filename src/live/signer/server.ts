@@ -6,6 +6,7 @@
 //   y un Origin de la propia página: ni el modelo ni su navegador pueden aprobar nada sin la contraseña.
 // - La API /api/* es para el servidor MCP, con un token aleatorio que se guarda en signer.json.
 // La frase y las claves privadas no salen nunca de este proceso (salvo la frase, una vez, a la página).
+import { VersionedTransaction } from "@solana/web3.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -15,7 +16,7 @@ import { liveDir, signerInfoFile, type SignerInfo, codeBuild } from "../paths.js
 import { WALLET_PAGE } from "./page.js";
 import { getMission, type Mission, type MissionLimits } from "../../sim/mission.js";
 import type { ChainId } from "../../sim/types.js";
-import { checkLimits, type EvmTxLimits, type EvmTxRequest, type SolanaSpendBudget } from "../policy.js";
+import { checkLimits, type EvmTxLimits, type EvmTxRequest, type SolanaSpendBudget, checkSolanaCloseOnly } from "../policy.js";
 import { PolicyError, sendEvm, sendSolana, type SendResult, type SolanaSendOptions } from "./send.js";
 
 class HttpError extends Error {
@@ -196,6 +197,14 @@ export function createSignerServer(opts: { dir: string; token: string; deps?: Pa
 
   async function sign(body: Record<string, unknown>): Promise<SendResult> {
     const accounts = ready();
+    // Cerrar cuentas de token vacías: sin aprobación (solo devuelve renta a la cartera), con su propia política.
+    if (body.kind === "close") {
+      if (body.chain !== "solana") throw new HttpError(403, "Solo se cierran cuentas en Solana");
+      const tx = VersionedTransaction.deserialize(Buffer.from(String(body.solanaTx ?? ""), "base64"));
+      const problems = checkSolanaCloseOnly(tx, accounts.solana.address);
+      if (problems.length) throw new HttpError(403, `El firmante rechaza la transacción: ${problems.join("; ")}`);
+      return deps.sendSolana(accounts, String(body.solanaTx), { bridge: false, budget: { lamports: 20_000n, tokens: {} } });
+    }
     const t = state.tickets.get(String(body.ticket ?? ""));
     for (const [id, x] of state.tickets) if (x.expiresAt < Date.now()) state.tickets.delete(id); // los que no llegaron a usarse
     if (!t || t.expiresAt < Date.now()) throw new HttpError(403, "Operación no aprobada o aprobación caducada");

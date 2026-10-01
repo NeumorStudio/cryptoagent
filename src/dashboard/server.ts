@@ -15,6 +15,7 @@ import { walletBalances } from "../live/chain.js";
 import { signerStatus, walletUrl } from "../live/client.js";
 import { readWalletPublic } from "../live/keystore.js";
 import { liveDir } from "../live/paths.js";
+import { missionTokens } from "../live/sync.js";
 
 const INDEX_HTML = asset("index.html", "src/dashboard/index.html");
 
@@ -50,7 +51,7 @@ async function refreshWallet(log: (msg: string) => void) {
       walletCache = { at: Date.now(), value: null };
       return;
     }
-    const b = await walletBalances(pub);
+    const b = await walletBalances(pub, missionTokens());
     walletCache = {
       at: Date.now(),
       value: {

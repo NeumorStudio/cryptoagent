@@ -78,9 +78,10 @@ export async function stopSigner(): Promise<void> {
 
 /** Firma y envía una transacción ya aprobada (el firmante la valida con su política y la simula antes). */
 export async function signTx(body: {
-  ticket: string;
+  /** Aprobación de la operación (no hace falta para "close": solo cierra cuentas propias y devuelve la renta). */
+  ticket?: string;
   chain: string;
-  kind: "swap" | "approve" | "bridge";
+  kind: "swap" | "approve" | "bridge" | "close";
   usd: number;
   solanaTx?: string;
   /** Solana: lo máximo que puede bajar en la cartera (unidades base, como texto). */

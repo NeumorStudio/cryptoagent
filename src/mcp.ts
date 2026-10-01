@@ -20,6 +20,7 @@ import { walletBalances } from "./live/chain.js";
 import { ensureSigner, signerStatus, walletUrl, signerOutdated } from "./live/client.js";
 import { readWalletPublic } from "./live/keystore.js";
 import { liveDir } from "./live/paths.js";
+import { missionTokens } from "./live/sync.js";
 
 const server = new McpServer({ name: "cryptosim", version: "0.1.0" });
 
@@ -134,6 +135,10 @@ server.registerTool(
         if (!target_pct || !approval || !max_trade_usd || !max_loss_pct) throw new Error("En una misión real hacen falta target_pct, approval, max_trade_usd y max_loss_pct");
         const running = await signerStatus();
         if (!running?.status.unlocked || running.status.stopped) throw new Error("La cartera real no está desbloqueada: usa start_wallet y pide al usuario que la desbloquee en su página");
+        // Antes de la foto inicial, se recupera la renta de las cuentas de token que quedaron vacías (si se hiciera
+        // después, contaría como ganancia de la misión).
+        const { closeEmptyTokenAccounts } = await import("./live/cleanup.js");
+        const cleaned = await closeEmptyTokenAccounts().catch(() => null);
         const snap = await liveWalletSnapshot();
         const mission = createLiveMission({
           holdings: snap.holdings,
@@ -145,7 +150,7 @@ server.registerTool(
           approval,
           limits: { maxTradeUsd: max_trade_usd, maxLossPct: max_loss_pct },
         });
-        return text(JSON.stringify(mission));
+        return text(JSON.stringify(cleaned ? { ...mission, accountsClosed: `${cleaned.closed} cuentas de token vacías cerradas: recuperados ${cleaned.recoveredSol} SOL` } : mission));
       }
       if (!capital_usd) throw new Error("Falta capital_usd");
       const target = target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined);
@@ -274,7 +279,7 @@ server.registerTool(
       const running = await signerStatus();
       const pub = running?.status.wallet ?? readWalletPublic(liveDir());
       if (!pub) return text(JSON.stringify({ wallet: null, message: "No hay cartera real. Usa start_wallet para crearla." }));
-      const b = await walletBalances(pub);
+      const b = await walletBalances(pub, missionTokens());
       return text(
         JSON.stringify({
           signer: running ? (running.status.stopped ? "parado" : running.status.unlocked ? "desbloqueado" : "bloqueado") : "no está en marcha",

@@ -105,7 +105,11 @@ export async function liveSwap(args: LiveSwapArgs) {
     const prices = await chain.priceUsd([input.address, output.address]).catch(() => ({}) as Record<string, number>);
     usd = (prices[input.address] ?? 0) * amount || (prices[output.address] ?? 0) * quote.amountOut;
   }
-  const side = chain.isCash(output.address) ? "sell" : "buy";
+  // Venta: salir de un token a un estable o al nativo de la cadena (reduce riesgo). Hasta la v0.47 solo contaba el
+  // estable, y una salida a ETH o BNB era "compra": con la pérdida máxima alcanzada, el firmante la habría bloqueado.
+  // Pasar de un estable al nativo sí es compra (se toma riesgo).
+  const toNative = output.address === chain.native.address && !chain.isCash(input.address);
+  const side = chain.isCash(output.address) || toNative ? "sell" : "buy";
   const summary =
     `${side === "sell" ? "Vender" : "Comprar"}: ${Number(amount.toPrecision(6))} ${input.symbol} → ~${Number(quote.amountOut.toPrecision(6))} ${output.symbol} ` +
     `en ${chain.label} (≈ ${usd.toFixed(2)} $). Motivo: ${args.reasoning.slice(0, 160)}`;
@@ -256,7 +260,20 @@ export async function liveSwap(args: LiveSwapArgs) {
   }).catch((err) => console.error(`No se pudo registrar la posición: ${(err as Error).message}`));
   await syncHoldings(m, evmChain ? { [evmChain]: [output].filter((t) => t.address !== NATIVE) } : {}).catch(() => undefined);
   const cancelled = await cancelOrdersForSoldOut(m, chain.id, input).catch(() => []);
-  return cancelled.length ? { ...result, ordersCancelled: cancelled } : result;
+  // Vendido todo un token en Solana: se cierra su cuenta para recuperar la renta (salvo estables y SOL).
+  let accountClosed: string | undefined;
+  if (chain.id === "solana" && input.address !== SOL_MINT && !chain.isCash(input.address) && balance(m, "solana", input.address) <= 0) {
+    const { closeEmptyTokenAccounts } = await import("./cleanup.js");
+    const c = await closeEmptyTokenAccounts([input.address]).catch((err: Error) => {
+      console.error(`No se pudo cerrar la cuenta de ${input.symbol}: ${err.message}`);
+      return null;
+    });
+    if (c) {
+      accountClosed = `cuenta de ${input.symbol} cerrada: recuperados ${c.recoveredSol} SOL de renta`;
+      await syncHoldings(m).catch(() => undefined);
+    }
+  }
+  return { ...result, ...(cancelled.length ? { ordersCancelled: cancelled } : {}), ...(accountClosed ? { accountClosed } : {}) };
 }
 
 /** Holgura de SOL por transacción: comisión, prioridad (≤ 0,001) y la renta de un par de cuentas nuevas. */

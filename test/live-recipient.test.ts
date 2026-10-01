@@ -52,3 +52,26 @@ test("Swap en Solana: lo comprado tiene que llegar a una cuenta de la IA (tambiÃ
   assert.deepEqual(checkSolanaReceive(SOL_ME, [pre[0]!], sol, { mint: SOL, min: 9_000_000n }, 1_000_000n), []);
   assert.match(checkSolanaReceive(SOL_ME, [pre[0]!], sol, { mint: SOL, min: 20_000_000n }, 1_000_000n).join(), /no llega/);
 });
+
+test("Cerrar cuentas vacÃ­as: solo CloseAccount de cuentas propias con la renta hacia la propia cartera", async () => {
+  const { PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction, SystemProgram } = await import("@solana/web3.js");
+  const { checkSolanaCloseOnly } = await import("../src/live/policy.js");
+  const owner = Keypair.generate().publicKey;
+  const other = Keypair.generate().publicKey;
+  const TOKEN = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  const close = (dest: InstanceType<typeof PublicKey>) =>
+    new TransactionInstruction({
+      programId: TOKEN,
+      keys: [
+        { pubkey: Keypair.generate().publicKey, isSigner: false, isWritable: true },
+        { pubkey: dest, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false },
+      ],
+      data: Buffer.from([9]),
+    });
+  const tx = (ixs: InstanceType<typeof TransactionInstruction>[]) =>
+    new VersionedTransaction(new TransactionMessage({ payerKey: owner, recentBlockhash: "11111111111111111111111111111111", instructions: ixs }).compileToV0Message());
+  assert.deepEqual(checkSolanaCloseOnly(tx([close(owner), close(owner)]), owner.toBase58()), []);
+  assert.match(checkSolanaCloseOnly(tx([close(other)]), owner.toBase58()).join(), /volver a la cartera/);
+  assert.match(checkSolanaCloseOnly(tx([SystemProgram.transfer({ fromPubkey: owner, toPubkey: other, lamports: 1 })]), owner.toBase58()).join(), /solo se admiten cierres/);
+});

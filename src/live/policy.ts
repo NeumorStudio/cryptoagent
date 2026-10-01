@@ -91,6 +91,29 @@ export function checkSolanaBridgeRecipient(messageBytes: Uint8Array, evmOwner: s
   return Buffer.from(messageBytes).toString("hex").includes(needle) ? [] : ["el destinatario del puente no es la cartera de la IA"];
 }
 
+/**
+ * Cerrar cuentas de token vacías (para recuperar la renta): solo instrucciones CloseAccount de cuentas de la IA hacia
+ * la propia cartera. No necesita aprobación ni misión porque solo puede devolver SOL a la cartera; la simulación
+ * comprueba además que no baje nada más que la comisión.
+ */
+export function checkSolanaCloseOnly(tx: VersionedTransaction, ownerAddress: string): string[] {
+  const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+  if (keys[0] !== ownerAddress) return ["quien paga la transacción no es la cartera de la IA"];
+  if (tx.message.addressTableLookups.length) return ["un cierre de cuentas no usa tablas de direcciones"];
+  const problems: string[] = [];
+  for (const ix of tx.message.compiledInstructions) {
+    const program = keys[ix.programIdIndex];
+    if (program === COMPUTE_BUDGET) continue;
+    if ((program !== TOKEN_PROGRAM && program !== TOKEN_2022) || ix.data[0] !== 9 || ix.data.length !== 1) {
+      problems.push("solo se admiten cierres de cuentas de token");
+      continue;
+    }
+    const [, dest, authority] = ix.accountKeyIndexes.map((i) => keys[i]);
+    if (dest !== ownerAddress || authority !== ownerAddress) problems.push("la renta tiene que volver a la cartera de la IA");
+  }
+  return problems;
+}
+
 /** Lo máximo que una transacción puede hacer bajar en la cartera (unidades base). */
 export interface SolanaSpendBudget {
   /** SOL de la cuenta principal: lo enviado si es SOL, más comisiones, prioridad y renta de cuentas nuevas. */
@@ -250,7 +273,7 @@ export function checkLimits(c: IntentCheck): string[] {
   if (c.usd > c.maxTradeUsd * 1.02) problems.push(`la operación (${c.usd.toFixed(2)} $) supera el máximo por operación (${c.maxTradeUsd.toFixed(2)} $)`);
   const floor = c.initialUsd * (1 - c.maxLossPct / 100);
   if (c.currentUsd < floor) {
-    problems.push(`la cartera (${c.currentUsd.toFixed(2)} $) está por debajo de la pérdida máxima de la misión (${floor.toFixed(2)} $): solo se puede vender a estables`);
+    problems.push(`la cartera (${c.currentUsd.toFixed(2)} $) está por debajo de la pérdida máxima de la misión (${floor.toFixed(2)} $): solo se puede vender (a estables o al nativo)`);
   }
   return problems;
 }

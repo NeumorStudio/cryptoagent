@@ -1,30 +1,51 @@
-// Tras una transacción propia, las lecturas frescas no aceptan un nodo que aún no tenga su bloque (M22: saldo viejo
-// en Base que contó un puente dos veces).
+// Tras una transacción propia, las lecturas frescas se hacen en un bloque concreto, nunca anterior al de esa
+// transacción: un nodo que aún no lo tiene da error y se reintenta, en lugar de devolver un saldo viejo (M22 y M23:
+// el RPC público de Base reparte incluso los elementos de un lote entre nodos distintos).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setFetchImpl } from "../src/market/http.js";
 import { requireBlock, rpcBatch } from "../src/market/evm.js";
 
-test("una lectura fresca salta los nodos que van por detrás del bloque de la última transacción", async () => {
-  const seen: string[] = [];
-  setFetchImpl((async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    seen.push(url);
-    const calls = JSON.parse(String(init?.body)) as Array<{ id: number; method: string }>;
-    // El primer RPC va por detrás (bloque 99, saldo viejo); el de reserva ya tiene el bloque 100.
-    const behind = url.includes("mainnet.base.org");
+test("una lectura fresca tras una transacción se hace en su bloque y reintenta si el nodo aún no lo tiene", async () => {
+  process.env.NODE_BEHIND_WAIT_MS = "10000";
+  const asked: string[] = [];
+  let misses = 1;
+  setFetchImpl((async (_input: string | URL | Request, init?: RequestInit) => {
+    const calls = JSON.parse(String(init?.body)) as Array<{ id: number; method: string; params: unknown[] }>;
     return new Response(
-      JSON.stringify(calls.map((c) => ({ id: c.id, result: c.method === "eth_blockNumber" ? (behind ? "0x63" : "0x64") : behind ? "0x5" : "0x0" }))),
+      JSON.stringify(
+        calls.map((c) => {
+          // El nodo que contesta el número de bloque va por detrás (99) del de la transacción (100).
+          if (c.method === "eth_blockNumber") return { id: c.id, result: "0x63" };
+          asked.push(String(c.params[1]));
+          // La primera vez, el nodo que lee el saldo aún no tiene el bloque 100.
+          if (misses-- > 0) return { id: c.id, error: { message: "header not found" } };
+          return { id: c.id, result: "0x0" };
+        }),
+      ),
       { status: 200 },
     );
   }) as typeof fetch);
   requireBlock("base", 100n);
   const [bal] = await rpcBatch("base", [{ method: "eth_getBalance", params: ["0xabc", "latest"] }], 0);
   assert.equal(bal, "0x0");
-  assert.ok(seen.length >= 2);
-  // Las lecturas con caché (precios, metadatos) no se ven afectadas: no piden el número de bloque.
-  seen.length = 0;
+  // Nunca se pidió "latest" ni un bloque anterior: siempre el 100 (0x64).
+  assert.deepEqual(asked, ["0x64", "0x64"]);
+});
+
+test("las lecturas con caché no se ven afectadas, y un revert no se reintenta", async () => {
+  const methods: string[] = [];
+  setFetchImpl((async (_input: string | URL | Request, init?: RequestInit) => {
+    const calls = JSON.parse(String(init?.body)) as Array<{ id: number; method: string }>;
+    methods.push(...calls.map((c) => c.method));
+    return new Response(
+      JSON.stringify(calls.map((c) => (c.method === "eth_call" ? { id: c.id, error: { message: "execution reverted" } } : { id: c.id, result: "0x5" }))),
+      { status: 200 },
+    );
+  }) as typeof fetch);
+  requireBlock("base", 100n);
   const [cached] = await rpcBatch("base", [{ method: "eth_getBalance", params: ["0xdef", "latest"] }], 5_000);
   assert.equal(cached, "0x5");
-  assert.equal(seen.length, 1);
+  assert.deepEqual(methods, ["eth_getBalance"]);
+  await assert.rejects(rpcBatch("base", [{ method: "eth_call", params: [{}, "latest"] }], 0), /reverted/);
 });

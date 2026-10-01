@@ -342,7 +342,13 @@ setInterval(async () => {
 // varios, da igual; al acabar la misión todos lo sueltan.
 const missionRunning = () => !!db.prepare("SELECT 1 FROM missions WHERE status IN ('active', 'closing') LIMIT 1").get();
 setInterval(() => {
-  if (supersededBy()) return keepAwake(false);
+  // Un servidor de una versión anterior (de otra sesión que siguió abierta) ya no hace nada útil: se cierra para no
+  // dejar procesos viejos de fondo con su panel y sus temporizadores.
+  if (supersededBy()) {
+    keepAwake(false);
+    console.error(supersededBy());
+    process.exit(0);
+  }
   keepAwake(missionRunning());
 }, 20_000);
 

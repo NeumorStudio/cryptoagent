@@ -7942,7 +7942,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.44.0";
+    CODE_VERSION = "0.45.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8188,27 +8188,40 @@ var init_jupiter = __esm({
 });
 
 // src/market/evm.ts
+function requiredBlock(chain2) {
+  const v = getMeta(minBlockKey(chain2));
+  return v ? BigInt(v) : void 0;
+}
 async function rpcBatch(chain2, calls, ttlMs = 1e4) {
-  const minBlock = ttlMs === 0 ? mustSeeBlock[chain2] : void 0;
-  const all = minBlock !== void 0 ? [...calls, { method: "eth_blockNumber", params: [] }] : calls;
-  const body = all.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
-  const urls = [EVM_CHAINS[chain2].rpc, ...EVM_CHAINS[chain2].fallbackRpcs];
+  const minBlock = ttlMs === 0 ? requiredBlock(chain2) : void 0;
+  if (minBlock === void 0 || !calls.some((c) => c.params.includes("latest"))) return rawBatch(chain2, calls, ttlMs);
   const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
-  for (let i = 0; ; i++) {
-    const url = urls[i % urls.length];
+  for (; ; ) {
     try {
-      const res = await fetchJson(url, { method: "POST", body, ttlMs });
+      const [head] = await rawBatch(chain2, [{ method: "eth_blockNumber", params: [] }], 0);
+      const at = BigInt(head) > minBlock ? BigInt(head) : minBlock;
+      const tag = `0x${at.toString(16)}`;
+      const out = await rawBatch(chain2, calls.map((c) => ({ ...c, params: c.params.map((p) => p === "latest" ? tag : p) })), 0);
+      if (out.some((r) => r === null || r === void 0)) throw new Error(`RPC de ${chain2}: respuesta vac\xEDa en el bloque ${at}`);
+      return out;
+    } catch (err) {
+      if (isRevert(err) || Date.now() > deadline) throw err;
+      await new Promise((r) => setTimeout(r, 1e3));
+    }
+  }
+}
+async function rawBatch(chain2, calls, ttlMs) {
+  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const urls = [EVM_CHAINS[chain2].rpc, ...EVM_CHAINS[chain2].fallbackRpcs];
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
-      const out = body.map((b) => {
+      return body.map((b) => {
         const r = byId.get(b.id);
         if (!r || r.error) throw new Error(`RPC de ${chain2}: ${r?.error?.message ?? "sin respuesta"}`);
         return r.result;
       });
-      if (minBlock === void 0) return out;
-      const seen = BigInt(out.pop());
-      if (seen >= minBlock) return out;
-      if (Date.now() > deadline) throw new Error(`RPC de ${chain2}: los nodos siguen por detr\xE1s de la \xFAltima transacci\xF3n (bloque ${seen} < ${minBlock})`);
-      if ((i + 1) % urls.length === 0) await new Promise((r) => setTimeout(r, 1e3));
     } catch (err) {
       if (i + 1 >= urls.length || !isTransientError(err)) throw err;
     }
@@ -8344,7 +8357,7 @@ async function dexPairs(chain2, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, mustSeeBlock, NODE_BEHIND_WAIT_MS, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, minBlockKey, NODE_BEHIND_WAIT_MS, isRevert, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8356,8 +8369,9 @@ var init_evm = __esm({
       bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
     };
     isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
-    mustSeeBlock = {};
+    minBlockKey = (chain2) => `evm_min_block:${chain2}`;
     NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 2e4);
+    isRevert = (err) => /revert/i.test(err.message);
     UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;

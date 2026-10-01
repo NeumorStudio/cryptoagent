@@ -8359,7 +8359,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.44.0";
+    CODE_VERSION = "0.45.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -8804,29 +8804,42 @@ var init_binance2 = __esm({
 
 // src/market/evm.ts
 function requireBlock(chain, block) {
-  if (!(mustSeeBlock[chain] >= block)) mustSeeBlock[chain] = block;
+  if (!(requiredBlock(chain) >= block)) setMeta(minBlockKey(chain), block.toString());
+}
+function requiredBlock(chain) {
+  const v = getMeta(minBlockKey(chain));
+  return v ? BigInt(v) : void 0;
 }
 async function rpcBatch(chain, calls, ttlMs = 1e4) {
-  const minBlock = ttlMs === 0 ? mustSeeBlock[chain] : void 0;
-  const all = minBlock !== void 0 ? [...calls, { method: "eth_blockNumber", params: [] }] : calls;
-  const body = all.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
-  const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  const minBlock = ttlMs === 0 ? requiredBlock(chain) : void 0;
+  if (minBlock === void 0 || !calls.some((c) => c.params.includes("latest"))) return rawBatch(chain, calls, ttlMs);
   const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
-  for (let i = 0; ; i++) {
-    const url2 = urls[i % urls.length];
+  for (; ; ) {
     try {
-      const res = await fetchJson(url2, { method: "POST", body, ttlMs });
+      const [head] = await rawBatch(chain, [{ method: "eth_blockNumber", params: [] }], 0);
+      const at = BigInt(head) > minBlock ? BigInt(head) : minBlock;
+      const tag = `0x${at.toString(16)}`;
+      const out = await rawBatch(chain, calls.map((c) => ({ ...c, params: c.params.map((p) => p === "latest" ? tag : p) })), 0);
+      if (out.some((r) => r === null || r === void 0)) throw new Error(`RPC de ${chain}: respuesta vac\xEDa en el bloque ${at}`);
+      return out;
+    } catch (err) {
+      if (isRevert(err) || Date.now() > deadline) throw err;
+      await new Promise((r) => setTimeout(r, 1e3));
+    }
+  }
+}
+async function rawBatch(chain, calls, ttlMs) {
+  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetchJson(urls[i], { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
-      const out = body.map((b) => {
+      return body.map((b) => {
         const r = byId.get(b.id);
         if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
         return r.result;
       });
-      if (minBlock === void 0) return out;
-      const seen = BigInt(out.pop());
-      if (seen >= minBlock) return out;
-      if (Date.now() > deadline) throw new Error(`RPC de ${chain}: los nodos siguen por detr\xE1s de la \xFAltima transacci\xF3n (bloque ${seen} < ${minBlock})`);
-      if ((i + 1) % urls.length === 0) await new Promise((r) => setTimeout(r, 1e3));
     } catch (err) {
       if (i + 1 >= urls.length || !isTransientError(err)) throw err;
     }
@@ -8962,7 +8975,7 @@ async function dexPairs(chain, addresses) {
   for (const list of out.values()) list.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   return out;
 }
-var NATIVE, EVM_CHAINS, isAddress, mustSeeBlock, NODE_BEHIND_WAIT_MS, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
+var NATIVE, EVM_CHAINS, isAddress, minBlockKey, NODE_BEHIND_WAIT_MS, isRevert, UNISWAP_V4_STATE_VIEW, pctOrUndefined, flag;
 var init_evm = __esm({
   "src/market/evm.ts"() {
     "use strict";
@@ -8974,8 +8987,9 @@ var init_evm = __esm({
       bsc: { chainId: 56, rpc: "https://bsc-dataseed.binance.org", fallbackRpcs: ["https://bsc-rpc.publicnode.com"], kyber: "bsc", dexscreener: "bsc", gecko: "bsc" }
     };
     isAddress = (s) => /^0x[0-9a-fA-F]{40}$/.test(s);
-    mustSeeBlock = {};
+    minBlockKey = (chain) => `evm_min_block:${chain}`;
     NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 2e4);
+    isRevert = (err) => /revert/i.test(err.message);
     UNISWAP_V4_STATE_VIEW = { base: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71" };
     pctOrUndefined = (v) => v === void 0 || v === null || v === "" ? void 0 : Number((Number(v) * 100).toFixed(2));
     flag = (v) => v === "1" ? true : v === "0" ? false : void 0;
@@ -11667,6 +11681,7 @@ async function liveSwap(args) {
   if (amountIn <= 0n) throw new Error(`No tienes ${input2.symbol} en ${chain.label}`);
   let res;
   let pre = null;
+  let approve = null;
   if (chain.id === "solana") {
     let q = await getQuote(input2.address, output2.address, amountIn, args.slippageBps, 0);
     if (minOutBase !== void 0) {
@@ -11720,6 +11735,7 @@ async function liveSwap(args) {
         const ap = await signTx({ ticket, chain: chain.id, kind: "approve", usd: usd2, evmTx: { chainId: c.chainId, to: input2.address, data, value: "0" } });
         logLiveTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input2.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve fall\xF3 (${explorerTx(chain.id, ap.hash)}): ${ap.error}`);
+        approve = { txHash: ap.hash, explorer: explorerTx(chain.id, ap.hash), note: "transacci\xF3n previa para que el router pueda gastar el token (paga su propia red)" };
       }
     }
     pre = await evmBalancesAt(evmChain, pub.evm, [input2, output2], "latest");
@@ -11755,7 +11771,8 @@ async function liveSwap(args) {
     ...real.networkFee ? { networkFee: real.networkFee } : {},
     ..."accountRent" in real && real.accountRent ? { accountRent: real.accountRent } : {},
     ..."estimated" in real ? { note: "Cantidades estimadas con la cotizaci\xF3n: no se pudo leer la transacci\xF3n todav\xEDa" } : {},
-    route: quote2.route
+    route: quote2.route,
+    ...approve ? { approve } : {}
   };
   const valueUsd = chain.isCash(input2.address) ? real.sold : chain.isCash(output2.address) ? real.received : usd2;
   logJournal({
@@ -11833,7 +11850,12 @@ async function reconcile(chain, hash2, pub, input2, output2, pre) {
     };
   }
   const c = chain;
-  const [receipt] = await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash2] }], 0);
+  let receipt = null;
+  for (let i = 0; i < 14 && !receipt; i++) {
+    [receipt] = await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash2] }], 0).catch(() => [null]);
+    if (!receipt) await new Promise((r) => setTimeout(r, 1500));
+  }
+  if (!receipt) throw new Error("recibo no disponible");
   const block = receipt.blockNumber;
   const post = await evmBalancesAt(c, pub.evm, [input2, output2], block);
   const before = pre ?? await evmBalancesAt(c, pub.evm, [input2, output2], "0x" + (BigInt(block) - 1n).toString(16));
@@ -44947,7 +44969,10 @@ async function startDashboard(opts = {}) {
   const log = opts.log ?? console.error;
   const url2 = `http://localhost:${port}`;
   if (running) return { url: running.url, alreadyRunning: true };
-  if (await isOurDashboard(url2)) return { url: url2, alreadyRunning: true };
+  if (await isOurDashboard(url2)) {
+    await fetch(`${url2}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(3e3) }).catch(() => void 0);
+    for (let i = 0; i < 20 && await isOurDashboard(url2); i++) await new Promise((r) => setTimeout(r, 150));
+  }
   const server2 = http.createServer(handler(port));
   await new Promise((resolve, reject) => {
     server2.once(
@@ -45417,7 +45442,11 @@ setInterval(async () => {
 }, config2.watchIntervalSeconds * 1e3);
 var missionRunning = () => !!db.prepare("SELECT 1 FROM missions WHERE status IN ('active', 'closing') LIMIT 1").get();
 setInterval(() => {
-  if (supersededBy()) return keepAwake(false);
+  if (supersededBy()) {
+    keepAwake(false);
+    console.error(supersededBy());
+    process.exit(0);
+  }
   keepAwake(missionRunning());
 }, 2e4);
 setInterval(async () => {

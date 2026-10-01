@@ -129,6 +129,7 @@ export async function liveSwap(args: LiveSwapArgs) {
   if (amountIn <= 0n) throw new Error(`No tienes ${input.symbol} en ${chain.label}`);
   let res: { hash: string; ok: boolean; error?: string };
   let pre: Record<string, bigint> | null = null;
+  let approve: { txHash: string; explorer: string; note: string } | null = null;
   if (chain.id === "solana") {
     let q = await getQuote(input.address, output.address, amountIn, args.slippageBps, 0);
     if (minOutBase !== undefined) {
@@ -183,6 +184,7 @@ export async function liveSwap(args: LiveSwapArgs) {
         const ap = await signTx({ ticket, chain: chain.id, kind: "approve", usd, evmTx: { chainId: c.chainId, to: input.address, data, value: "0" } });
         logLiveTx(m, chain.id, "approve", ap.ok ? "confirmed" : "failed", `Approve de ${amount} ${input.symbol} al router de KyberSwap`, { hash: ap.hash, error: ap.error });
         if (!ap.ok) throw new Error(`El approve falló (${explorerTx(chain.id, ap.hash)}): ${ap.error}`);
+        approve = { txHash: ap.hash, explorer: explorerTx(chain.id, ap.hash), note: "transacción previa para que el router pueda gastar el token (paga su propia red)" };
       }
     }
     pre = await evmBalancesAt(evmChain!, pub.evm, [input, output], "latest");
@@ -222,6 +224,7 @@ export async function liveSwap(args: LiveSwapArgs) {
     ...("accountRent" in real && real.accountRent ? { accountRent: real.accountRent } : {}),
     ...("estimated" in real ? { note: "Cantidades estimadas con la cotización: no se pudo leer la transacción todavía" } : {}),
     route: quote.route,
+    ...(approve ? { approve } : {}),
   };
   const valueUsd = chain.isCash(input.address) ? real.sold : chain.isCash(output.address) ? real.received : usd;
   logJournal({
@@ -320,7 +323,13 @@ async function reconcile(chain: ChainId, hash: string, pub: { solana: string; ev
     };
   }
   const c = chain as EvmChainId;
-  const [receipt] = (await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash] }], 0)) as [any];
+  // El nodo que contesta puede no tener aún el recibo (M23): se reintenta, como en Solana.
+  let receipt: any = null;
+  for (let i = 0; i < 14 && !receipt; i++) {
+    [receipt] = (await rpcBatch(c, [{ method: "eth_getTransactionReceipt", params: [hash] }], 0).catch(() => [null])) as [any];
+    if (!receipt) await new Promise((r) => setTimeout(r, 1_500));
+  }
+  if (!receipt) throw new Error("recibo no disponible");
   const block = receipt.blockNumber as string;
   const post = await evmBalancesAt(c, pub.evm, [input, output], block);
   const before = pre ?? (await evmBalancesAt(c, pub.evm, [input, output], "0x" + (BigInt(block) - 1n).toString(16)));

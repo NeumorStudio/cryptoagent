@@ -174,15 +174,19 @@ async function isOurDashboard(url: string): Promise<boolean> {
 }
 
 /**
- * Arranca el panel en 127.0.0.1 (solo accesible desde este ordenador). Si ya está en marcha,
- * en este proceso o en otro, devuelve su URL sin arrancar otro.
+ * Arranca el panel en 127.0.0.1 (solo accesible desde este ordenador). Si ya está en marcha en este proceso, devuelve su
+ * URL. Si lo tiene abierto otro proceso (otra sesión, quizá de una versión anterior), lo cierra y arranca este: al
+ * empezar una misión, todo arranca de nuevo y actualizado.
  */
 export async function startDashboard(opts: { port?: number; log?: (msg: string) => void } = {}): Promise<{ url: string; alreadyRunning: boolean }> {
   const port = opts.port ?? Number(process.env.DASHBOARD_PORT || 4321);
   const log = opts.log ?? console.error;
   const url = `http://localhost:${port}`;
   if (running) return { url: running.url, alreadyRunning: true };
-  if (await isOurDashboard(url)) return { url, alreadyRunning: true };
+  if (await isOurDashboard(url)) {
+    await fetch(`${url}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(3000) }).catch(() => undefined);
+    for (let i = 0; i < 20 && (await isOurDashboard(url)); i++) await new Promise((r) => setTimeout(r, 150));
+  }
 
   const server = http.createServer(handler(port));
   await new Promise<void>((resolve, reject) => {

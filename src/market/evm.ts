@@ -3,7 +3,7 @@
 // - KyberSwap (y ParaSwap de reserva): cotizaciones de swaps con su gas estimado.
 // - GoPlus: seguridad del token (honeypot, impuestos de compra y venta, holders).
 // - DexScreener: precio, liquidez y actividad de los pares.
-import { db } from "../db.js";
+import { db, getMeta, setMeta } from "../db.js";
 import { fetchJson, isTransientError } from "./http.js";
 
 export type EvmChainId = "base" | "bsc";
@@ -31,40 +31,56 @@ export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 // ─── RPC ────────────────────────────────────────────────────────────────────
 
 /**
- * Bloque de la última transacción propia confirmada en cada cadena. Los RPC públicos reparten las peticiones entre
- * varios nodos y, justo después de una transacción, alguno aún no tiene su bloque: en la M22 eso dio un saldo viejo en
- * Base (el puente contado dos veces), una lectura fallida del swap y simulaciones que no veían el approve. Las lecturas
- * frescas (ttl 0) no aceptan respuestas de un nodo anterior a este bloque.
+ * Bloque de la última transacción propia confirmada en cada cadena (en la base de datos: lo respetan todos los procesos).
+ * Los RPC públicos reparten las peticiones entre varios nodos, incluso las de un mismo lote, y justo después de una
+ * transacción alguno aún no tiene su bloque: en la M22 y la M23 eso dio saldos viejos en Base (un puente contado dos
+ * veces), una lectura fallida del swap y simulaciones que no veían el approve. Por eso, tras una transacción, las
+ * lecturas frescas (ttl 0) se hacen en un bloque concreto, nunca anterior a ese: un nodo que aún no lo tiene da error
+ * (y se reintenta) en lugar de un saldo viejo.
  */
-const mustSeeBlock: Partial<Record<EvmChainId, bigint>> = {};
+const minBlockKey = (chain: EvmChainId) => `evm_min_block:${chain}`;
 export function requireBlock(chain: EvmChainId, block: bigint) {
-  if (!(mustSeeBlock[chain]! >= block)) mustSeeBlock[chain] = block;
+  if (!(requiredBlock(chain)! >= block)) setMeta(minBlockKey(chain), block.toString());
+}
+function requiredBlock(chain: EvmChainId): bigint | undefined {
+  const v = getMeta(minBlockKey(chain));
+  return v ? BigInt(v) : undefined;
 }
 const NODE_BEHIND_WAIT_MS = Number(process.env.NODE_BEHIND_WAIT_MS ?? 20_000);
+const isRevert = (err: unknown) => /revert/i.test((err as Error).message);
 
 export async function rpcBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>, ttlMs = 10_000): Promise<unknown[]> {
-  const minBlock = ttlMs === 0 ? mustSeeBlock[chain] : undefined;
-  // El número de bloque va en la misma petición que las lecturas: lo contesta el mismo nodo.
-  const all = minBlock !== undefined ? [...calls, { method: "eth_blockNumber", params: [] }] : calls;
-  const body = all.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
-  const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  const minBlock = ttlMs === 0 ? requiredBlock(chain) : undefined;
+  if (minBlock === undefined || !calls.some((c) => c.params.includes("latest"))) return rawBatch(chain, calls, ttlMs);
   const deadline = Date.now() + NODE_BEHIND_WAIT_MS;
-  for (let i = 0; ; i++) {
-    const url = urls[i % urls.length]!;
+  for (;;) {
     try {
-      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(url, { method: "POST", body, ttlMs });
+      const [head] = (await rawBatch(chain, [{ method: "eth_blockNumber", params: [] }], 0)) as [string];
+      const at = BigInt(head) > minBlock ? BigInt(head) : minBlock;
+      const tag = `0x${at.toString(16)}`;
+      const out = await rawBatch(chain, calls.map((c) => ({ ...c, params: c.params.map((p) => (p === "latest" ? tag : p)) })), 0);
+      if (out.some((r) => r === null || r === undefined)) throw new Error(`RPC de ${chain}: respuesta vacía en el bloque ${at}`);
+      return out;
+    } catch (err) {
+      // Un revert es la respuesta de verdad; cualquier otra cosa puede ser un nodo sin ese bloque todavía.
+      if (isRevert(err) || Date.now() > deadline) throw err;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+}
+
+async function rawBatch(chain: EvmChainId, calls: Array<{ method: string; params: unknown[] }>, ttlMs: number): Promise<unknown[]> {
+  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i + 1, ...c }));
+  const urls = [EVM_CHAINS[chain].rpc, ...EVM_CHAINS[chain].fallbackRpcs];
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetchJson<Array<{ id: number; result?: string; error?: { message: string } }>>(urls[i]!, { method: "POST", body, ttlMs });
       const byId = new Map(res.map((r) => [r.id, r]));
-      const out = body.map((b) => {
+      return body.map((b) => {
         const r = byId.get(b.id);
         if (!r || r.error) throw new Error(`RPC de ${chain}: ${r?.error?.message ?? "sin respuesta"}`);
         return r.result;
       });
-      if (minBlock === undefined) return out;
-      const seen = BigInt(out.pop() as string);
-      if (seen >= minBlock) return out;
-      if (Date.now() > deadline) throw new Error(`RPC de ${chain}: los nodos siguen por detrás de la última transacción (bloque ${seen} < ${minBlock})`);
-      // Nodo por detrás: el siguiente RPC y, tras dar la vuelta a todos, una pausa.
-      if ((i + 1) % urls.length === 0) await new Promise((r) => setTimeout(r, 1_000));
     } catch (err) {
       // Límite de peticiones o fallo de red: el siguiente RPC. Un error de la llamada (p. ej. un revert), no.
       if (i + 1 >= urls.length || !isTransientError(err)) throw err;

@@ -246,6 +246,19 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
   return out;
 }
 
+/** Efectivo en una cadena y, si no hay, lo que cuesta llevarlo (para comparar cadenas en scan_market con chain: all). */
+function moneyThere(missionId: number | null, c: ChainId) {
+  if (missionId === null) return {};
+  const chain = getChain(c);
+  const cash = chain.stables.reduce((s, t) => s + sim.balance(missionId, c, t.address), 0);
+  return cash >= 1
+    ? { yourCashHereUsd: Number(cash.toFixed(2)) }
+    : {
+        yourCashHereUsd: Number(cash.toFixed(2)),
+        toBringCapital: `puente desde otra cadena: ~${transfers.STATIC_BRIDGE.feePct} % + ${transfers.STATIC_BRIDGE.fixedUsd} $ y ~${Math.round(transfers.STATIC_BRIDGE.seconds / 60)} min (y algo de ${chain.native.symbol} para el gas)`,
+      };
+}
+
 /** Historial propio con un token (es memoria: en una misión de control no se da). */
 const yourHistory = (missionId: number | null, chain: ChainId, address: string) =>
   mission.isMemoryOff(missionId) ? "misión de control: sin historial" : positions.tokenHistory(chain, address);
@@ -419,13 +432,16 @@ export const SIM_TOOLS = [
     name: "scan_market",
     kind: "research",
     deliversNews: true,
-    researchTarget: () => undefined,
+    // Se registra en qué cadena escanea: el revisor ve si explora las tres o solo la que tiene el dinero.
+    researchTarget: (i) => i.chain,
     description:
-      "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalización, liquidez, " +
+      "Escaneo de mercado de una cadena (o de las tres con chain: all) en una sola llamada, con los datos clave de cada candidato (capitalización, liquidez, " +
       "variación de precio, compradores netos, antigüedad). Los que aparecen en más fuentes van primero. En Solana combina los tokens en " +
-      "tendencia de Jupiter (5 min y 1 h), los que están en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
+      "tendencia de Jupiter (5 min y 1 h), los que están en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal. " +
+      "Con chain: all, los mejores de Solana, Base y BNB Chain a la vez, y de cada cadena cuánto efectivo tienes allí y lo que cuesta llevarlo " +
+      "si no tienes (puente): para comparar las tres sin tres llamadas.",
     schema: z.object({
-      chain: chainParam,
+      chain: z.enum(["all", ...CHAINS] as [string, ...string[]]).describe("Cadena que escaneas, o all para las tres a la vez"),
       limit: z.number().int().min(5).max(60).default(15),
       check_top: z
         .number()
@@ -436,11 +452,27 @@ export const SIM_TOOLS = [
         .describe("A los N primeros les añade los datos de riesgo (los de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no"),
     }),
     run: async ({ chain, limit, check_top }, ctx) => {
-      const scan = compactScan(await getChain(chain).research.scan(limit)) as { candidates?: Array<Record<string, unknown>> };
-      // Actividad del mercado (siempre sobre los 15 primeros, para que sea comparable entre escaneos).
-      if (Array.isArray(scan.candidates)) recordScan(chain, scan.candidates.slice(0, 15));
-      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top, ctx.missionId);
-      return toText(scan);
+      const one = async (c: ChainId, n: number, top: number) => {
+        const scan = compactScan(await getChain(c).research.scan(n)) as { candidates?: Array<Record<string, unknown>> };
+        // Actividad del mercado (siempre sobre los 15 primeros, para que sea comparable entre escaneos).
+        if (Array.isArray(scan.candidates)) {
+          recordScan(c, scan.candidates.slice(0, 15));
+          // Lo que ve, con su precio de ahora: al acabar la misión se mide cómo les fue a los que no compró.
+          void import("../sim/skipped.js").then(({ recordSeen }) => recordSeen(ctx.missionId, c, scan.candidates!)).catch(() => undefined);
+        }
+        if (top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(c, scan.candidates, top, ctx.missionId);
+        return scan;
+      };
+      if (chain !== "all") return toText(await one(chain as ChainId, limit, check_top));
+      // Las tres a la vez: los mejores de cada una, con el efectivo que hay allí y lo que cuesta llevarlo.
+      const perChain = Math.max(5, Math.ceil(limit / CHAINS.length));
+      const results = await Promise.all(
+        CHAINS.map(async (c) => {
+          const scan = await one(c, perChain, Math.min(check_top, 3)).catch((err: Error) => ({ error: err.message }));
+          return [c, { ...moneyThere(ctx.missionId, c), ...scan }] as const;
+        }),
+      );
+      return toText(Object.fromEntries(results));
     },
   }),
   tool({

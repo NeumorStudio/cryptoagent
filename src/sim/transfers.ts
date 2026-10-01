@@ -231,7 +231,7 @@ export function solanaAddress(missionId: number): string {
 const lifiToken = (chain: ChainId, t: TokenRef) => (t.address === getChain(chain).native.address ? lifi.LIFI_NATIVE[chain]! : t.address);
 
 // Estimación sin Li.Fi (si se agota su cupo): comisión del 0,25 % más 5 céntimos, gas típico y 2 minutos.
-const STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solana: 0.00005, base: 0.000005, bsc: 0.00003 } as Record<ChainId, number> };
+export const STATIC_BRIDGE = { feePct: 0.25, fixedUsd: 0.05, seconds: 120, gas: { solana: 0.00005, base: 0.000005, bsc: 0.00003 } as Record<ChainId, number> };
 
 interface BridgeEstimate {
   provider: string;

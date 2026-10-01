@@ -7,6 +7,7 @@
 // La escribe el agente revisor, no el que opera: así el agente no juzga sus propias decisiones.
 // El que opera deja observaciones (report_observation) y el revisor decide qué pasa a la memoria.
 import { db, logActivity, now } from "../db.js";
+import { skippedCandidates } from "./skipped.js";
 import { getActiveMission, getLastMission, getMission, type Mission, CONTROL_EVERY } from "./mission.js";
 import { listPositions } from "./positions.js";
 import { DUPLICATE_THRESHOLD, fingerprint, similarity } from "./text.js";
@@ -494,9 +495,14 @@ export function explorationMap() {
   const perps = closed.filter((p) => p.venue === "hyperliquid");
   const perpsByCoin: Record<string, ReturnType<typeof cell>> = {};
   for (const coin of new Set(perps.map((p) => p.symbol.split("-")[0]!))) perpsByCoin[coin] = cell(perps.filter((p) => p.symbol.startsWith(`${coin}-`)));
+  // Cuánto ha mirado cada cadena (escaneos), frente a cuánto ha operado en ella.
+  const scans = db.prepare("SELECT target, COUNT(*) AS n FROM research_log WHERE tool = 'scan_market' AND target IS NOT NULL GROUP BY target").all() as Array<{ target: string; n: number }>;
+  const scansByChain: Record<string, number> = {};
+  for (const s of scans) for (const c of s.target === "all" ? ["solana", "base", "bsc"] : [s.target]) scansByChain[c] = (scansByChain[c] ?? 0) + s.n;
   return {
     closedTrades: closed.length,
     byVenue,
+    scansByChain,
     spotByAgeAndLiquidity,
     note: "Operaciones cerradas por zona. \"sin probar\" = ninguna operación ahí; con 1-2 operaciones una zona no está probada.",
   };
@@ -1197,6 +1203,15 @@ export function recentApproach(count = 8) {
       resultPct: Number((((m.final_usd! - m.initial_usd) / m.initial_usd) * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
+      // Qué cadenas escaneó en esa misión (no solo dónde operó): si solo mira la del dinero inicial, se ve aquí.
+      scannedChains:
+        [
+          ...new Set(
+            (db.prepare("SELECT DISTINCT target FROM research_log WHERE mission_id = ? AND tool = 'scan_market' AND target IS NOT NULL").all(m.id) as Array<{ target: string }>).flatMap(
+              (r) => (r.target === "all" ? ["solana", "base", "bsc"] : [r.target]),
+            ),
+          ),
+        ].join("+") || "ninguna",
       tokenAgeMinutes: ages.length ? ages[Math.floor(ages.length / 2)] : null,
       closedByDeadline: ps.filter((p) => String(p.exitReason ?? "").startsWith("Cierre automático")).length,
       orders,
@@ -1419,6 +1434,8 @@ export function missionReviewData(missionId: number, since?: string) {
     stats: missionStats(missionId),
     // Curva de valor: pico, caída máxima, lo devuelto desde el pico y, en misiones largas, por tramos.
     equity: equityCurve(missionId),
+    // Lo que vio en los escaneos y no compró, y cómo le fue hasta el final.
+    skippedCandidates: skippedCandidates(missionId),
     briefing: !briefing
       ? null
       : since && briefing.updated_at <= from

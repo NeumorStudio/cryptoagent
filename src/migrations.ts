@@ -253,6 +253,25 @@ export const MIGRATIONS: Migration[] = [
       db.exec("ALTER TABLE missions ADD COLUMN memory_off INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    version: 17,
+    description: "Candidatos vistos en los escaneos, con su precio al verlos y al acabar la misión: aprender también de lo que no compró",
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS scan_seen (
+        id INTEGER PRIMARY KEY,
+        mission_id INTEGER NOT NULL,
+        ts TEXT NOT NULL,
+        chain TEXT NOT NULL,
+        asset TEXT NOT NULL,
+        symbol TEXT,
+        price_usd REAL,
+        features TEXT,
+        end_price_usd REAL,
+        measured_at TEXT
+      )`);
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS scan_seen_first ON scan_seen (mission_id, chain, asset)");
+    },
+  },
 ];
 
 /**

@@ -62,3 +62,22 @@ test("misiones de control: una de cada 10 se juega sin memoria, y la curva compa
   assert.match(lc.verdict, /la memoria le ayuda/);
   assert.equal(getMission(off.id)!.memory_off, 1);
 });
+
+test("lo que vio y no compró: se guarda al escanear, se mide al acabar y el revisor lo ve (sin lo que sí compró)", async () => {
+  const { recordSeen, measureSkipped, skippedCandidates } = await import("../src/sim/skipped.js");
+  const { USDC_MINT, SOL_MINT } = await import("../src/market/jupiter.js");
+  const m = await createMission(100, null, 15, undefined, { solana: 100 }, { memory: "on" });
+  await recordSeen(m.id, "solana", [
+    { mint: SOL_MINT, symbol: "SOL", liquidityUsd: 1_000_000 },
+    { mint: USDC_MINT, symbol: "USDC", liquidityUsd: 5_000_000 },
+  ]);
+  // Compró USDC (por ejemplo): ese no cuenta como descartado.
+  db.prepare("INSERT INTO positions (mission_id, venue, asset, symbol, opened_at, status, qty_open, cost_open_usd, realized_cost_usd, realized_proceeds_usd) VALUES (?, 'solana', ?, 'USDC', ?, 'open', 1, 1, 0, 0)").run(m.id, USDC_MINT, new Date().toISOString());
+  db.prepare("UPDATE scan_seen SET price_usd = price_usd / 2 WHERE mission_id = ? AND asset = ?").run(m.id, SOL_MINT); // al verlo valía la mitad
+  await measureSkipped(m.id);
+  const s = skippedCandidates(m.id)!;
+  assert.equal(s.seenNotBought, 1);
+  assert.equal(s.biggestMoves[0]!.symbol, "SOL");
+  assert.equal(s.biggestMoves[0]!.changeUntilEndPct, 100);
+  assert.equal(s.upMoreThan20Pct, 1);
+});

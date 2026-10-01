@@ -8144,6 +8144,25 @@ var init_migrations = __esm({
           db2.exec("UPDATE beliefs SET condition_since = created_at WHERE condition_since IS NULL");
           db2.exec("ALTER TABLE missions ADD COLUMN memory_off INTEGER NOT NULL DEFAULT 0");
         }
+      },
+      {
+        version: 17,
+        description: "Candidatos vistos en los escaneos, con su precio al verlos y al acabar la misi\xF3n: aprender tambi\xE9n de lo que no compr\xF3",
+        up: (db2) => {
+          db2.exec(`CREATE TABLE IF NOT EXISTS scan_seen (
+        id INTEGER PRIMARY KEY,
+        mission_id INTEGER NOT NULL,
+        ts TEXT NOT NULL,
+        chain TEXT NOT NULL,
+        asset TEXT NOT NULL,
+        symbol TEXT,
+        price_usd REAL,
+        features TEXT,
+        end_price_usd REAL,
+        measured_at TEXT
+      )`);
+          db2.exec("CREATE UNIQUE INDEX IF NOT EXISTS scan_seen_first ON scan_seen (mission_id, chain, asset)");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -8376,7 +8395,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.51.0";
+    CODE_VERSION = "0.52.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -42937,6 +42956,81 @@ var init_transfers = __esm({
   }
 });
 
+// src/sim/skipped.ts
+var skipped_exports = {};
+__export(skipped_exports, {
+  measureSkipped: () => measureSkipped,
+  recordSeen: () => recordSeen,
+  skippedCandidates: () => skippedCandidates
+});
+async function recordSeen(missionId, chain, candidates) {
+  if (missionId === null) return;
+  const top = candidates.slice(0, SEEN_PER_SCAN).map((c) => ({ c, asset: String(c.mint ?? c.token ?? c.address ?? "") })).filter((x) => x.asset);
+  const fresh = top.filter(({ asset: asset2 }) => !db.prepare("SELECT 1 FROM scan_seen WHERE mission_id = ? AND chain = ? AND asset = ?").get(missionId, chain, asset2));
+  if (!fresh.length) return;
+  const prices = await getChain(chain).priceUsd(fresh.map((x) => x.asset)).catch(() => ({}));
+  const insert = db.prepare(
+    "INSERT OR IGNORE INTO scan_seen (mission_id, ts, chain, asset, symbol, price_usd, features) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+  for (const { c, asset: asset2 } of fresh) {
+    const price = prices[asset2];
+    if (!price) continue;
+    const features = {
+      liquidityUsd: c.liquidityUsd,
+      ageMinutes: c.ageMinutes,
+      priceChange5mPct: c.priceChange5mPct,
+      priceChange1hPct: c.priceChange1hPct,
+      netBuyers5m: c.netBuyers5m,
+      mcapUsd: c.mcapUsd
+    };
+    insert.run(missionId, now(), chain, asset2, typeof c.symbol === "string" ? c.symbol : null, price, JSON.stringify(features));
+  }
+}
+async function measureSkipped(missionId) {
+  const rows = db.prepare("SELECT id, chain, asset FROM scan_seen WHERE mission_id = ? AND end_price_usd IS NULL").all(missionId);
+  const update = db.prepare("UPDATE scan_seen SET end_price_usd = ?, measured_at = ? WHERE id = ?");
+  for (const chain of new Set(rows.map((r) => r.chain))) {
+    const list = rows.filter((r) => r.chain === chain);
+    const prices = await getChain(chain).priceUsd(list.map((r) => r.asset)).catch(() => ({}));
+    for (const r of list) if (prices[r.asset]) update.run(prices[r.asset], now(), r.id);
+  }
+}
+function skippedCandidates(missionId) {
+  const startedAt = db.prepare("SELECT COALESCE(started_at, created_at) AS t FROM missions WHERE id = ?").get(missionId)?.t;
+  const bought = new Set(
+    db.prepare("SELECT venue, asset FROM positions WHERE mission_id = ?").all(missionId).map(
+      (p) => `${p.venue}:${p.asset.toLowerCase()}`
+    )
+  );
+  const rows = db.prepare("SELECT ts, chain, asset, symbol, price_usd, end_price_usd, features FROM scan_seen WHERE mission_id = ? AND end_price_usd IS NOT NULL").all(missionId).filter((r) => !bought.has(`${r.chain}:${r.asset.toLowerCase()}`));
+  if (!rows.length) return null;
+  const list = rows.map((r) => ({
+    symbol: r.symbol ?? r.asset.slice(0, 6),
+    chain: r.chain,
+    ...startedAt ? { seenAtMinute: Math.round((new Date(r.ts).getTime() - new Date(startedAt).getTime()) / 6e4) } : {},
+    changeUntilEndPct: Number(((r.end_price_usd - r.price_usd) / r.price_usd * 100).toFixed(1)),
+    ...JSON.parse(r.features ?? "{}")
+  })).sort((a, b) => Math.abs(b.changeUntilEndPct) - Math.abs(a.changeUntilEndPct));
+  const changes = list.map((x) => x.changeUntilEndPct).sort((a, b) => a - b);
+  return {
+    seenNotBought: list.length,
+    medianChangePct: changes[Math.floor(changes.length / 2)],
+    upMoreThan20Pct: changes.filter((x) => x >= 20).length,
+    downMoreThan20Pct: changes.filter((x) => x <= -20).length,
+    note: "Candidatos que viste en tus escaneos y no compraste: cu\xE1nto se movi\xF3 su precio desde que los viste hasta el final de la misi\xF3n (sin costes de entrar y salir). Sirve para saber si tus filtros descartaron lo que luego subi\xF3 o lo que luego cay\xF3.",
+    biggestMoves: list.slice(0, 15)
+  };
+}
+var SEEN_PER_SCAN;
+var init_skipped = __esm({
+  "src/sim/skipped.ts"() {
+    "use strict";
+    init_db();
+    init_venues();
+    SEEN_PER_SCAN = 10;
+  }
+});
+
 // src/sim/mission.ts
 function getMission(id) {
   return db.prepare("SELECT * FROM missions WHERE id = ?").get(id);
@@ -43168,7 +43262,7 @@ function idleCheck(mission, v, secondsLeft) {
   const idleMin = minutesSinceLastTrade(mission);
   if (cashPct < 80 || idleMin < Math.max(2, durationMin * 0.15)) return null;
   const needPct = (mission.target_usd - v.totalUsd) / v.totalUsd * 100;
-  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; ` + (mission.open_target ? "" : `te falta un +${needPct.toFixed(0)} % y `) + `quedan ${Math.round(secondsLeft / 60)} min.` + (mission.instructions ? " Las instrucciones del usuario mandan." : "");
+  return `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; ` + (mission.open_target ? "" : `te falta un +${needPct.toFixed(0)} % y `) + `quedan ${Math.round(secondsLeft / 60)} min.` + (mission.mode === "live" ? "" : " En simulaci\xF3n, ese tiempo no te est\xE1 dando datos de los que aprender.") + (mission.instructions ? " Las instrucciones del usuario mandan." : "");
 }
 function bustFloor(mission) {
   return Math.max(2, mission.initial_usd * 0.05);
@@ -43255,6 +43349,7 @@ async function checkOne(mission) {
   const succeeded = !mission.open_target && (reached || !closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd);
   const finalStatus = succeeded ? "succeeded" : status;
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(finalStatus, now(), final.totalUsd, mission.id);
+  await Promise.resolve().then(() => (init_skipped(), skipped_exports)).then(({ measureSkipped: measureSkipped2 }) => measureSkipped2(mission.id)).catch(() => void 0);
   const resultPct = (final.totalUsd - mission.initial_usd) / mission.initial_usd * 100;
   const summary = `Misi\xF3n #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR P\xC9RDIDA M\xC1XIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} \u2192 ${final.totalUsd.toFixed(2)} USD (${resultPct >= 0 ? "+" : ""}${resultPct.toFixed(1)} %; ${targetText(mission)})`;
   logJournal({ missionId: mission.id, sessionId: null, kind: "mission", summary, details: { problems } });
@@ -44414,9 +44509,13 @@ function explorationMap() {
   const perps = closed.filter((p) => p.venue === "hyperliquid");
   const perpsByCoin = {};
   for (const coin of new Set(perps.map((p) => p.symbol.split("-")[0]))) perpsByCoin[coin] = cell3(perps.filter((p) => p.symbol.startsWith(`${coin}-`)));
+  const scans = db.prepare("SELECT target, COUNT(*) AS n FROM research_log WHERE tool = 'scan_market' AND target IS NOT NULL GROUP BY target").all();
+  const scansByChain = {};
+  for (const s of scans) for (const c of s.target === "all" ? ["solana", "base", "bsc"] : [s.target]) scansByChain[c] = (scansByChain[c] ?? 0) + s.n;
   return {
     closedTrades: closed.length,
     byVenue,
+    scansByChain,
     spotByAgeAndLiquidity,
     note: 'Operaciones cerradas por zona. "sin probar" = ninguna operaci\xF3n ah\xED; con 1-2 operaciones una zona no est\xE1 probada.'
   };
@@ -44871,6 +44970,14 @@ function recentApproach(count = 8) {
       resultPct: Number(((m.final_usd - m.initial_usd) / m.initial_usd * 100).toFixed(1)),
       positions: ps.length,
       venues: [...new Set(ps.map((p) => p.venue))].join("+") || "ninguno",
+      // Qué cadenas escaneó en esa misión (no solo dónde operó): si solo mira la del dinero inicial, se ve aquí.
+      scannedChains: [
+        ...new Set(
+          db.prepare("SELECT DISTINCT target FROM research_log WHERE mission_id = ? AND tool = 'scan_market' AND target IS NOT NULL").all(m.id).flatMap(
+            (r) => r.target === "all" ? ["solana", "base", "bsc"] : [r.target]
+          )
+        )
+      ].join("+") || "ninguna",
       tokenAgeMinutes: ages.length ? ages[Math.floor(ages.length / 2)] : null,
       closedByDeadline: ps.filter((p) => String(p.exitReason ?? "").startsWith("Cierre autom\xE1tico")).length,
       orders
@@ -45047,6 +45154,8 @@ function missionReviewData(missionId, since) {
     stats: missionStats(missionId),
     // Curva de valor: pico, caída máxima, lo devuelto desde el pico y, en misiones largas, por tramos.
     equity: equityCurve(missionId),
+    // Lo que vio en los escaneos y no compró, y cómo le fue hasta el final.
+    skippedCandidates: skippedCandidates(missionId),
     briefing: !briefing ? null : since && briefing.updated_at <= from ? { updated_at: briefing.updated_at, seen_at: briefing.seen_at, text: "(sin cambios desde tu \xFAltima revisi\xF3n)" } : briefing,
     ...since ? { checkpoints: `${db.prepare("SELECT COUNT(*) AS n FROM review_checkpoints WHERE mission_id = ?").get(missionId).n} revisiones anteriores` } : { checkpoints: db.prepare("SELECT ts, summary FROM review_checkpoints WHERE mission_id = ? ORDER BY id").all(missionId) },
     positions,
@@ -45220,6 +45329,7 @@ var init_memory = __esm({
   "src/sim/memory.ts"() {
     "use strict";
     init_db();
+    init_skipped();
     init_mission();
     init_positions();
     init_text();
@@ -75546,6 +75656,15 @@ async function mapLimit(items, limit, fn) {
   );
   return out;
 }
+function moneyThere(missionId, c) {
+  if (missionId === null) return {};
+  const chain = getChain(c);
+  const cash = chain.stables.reduce((s, t) => s + balance(missionId, c, t.address), 0);
+  return cash >= 1 ? { yourCashHereUsd: Number(cash.toFixed(2)) } : {
+    yourCashHereUsd: Number(cash.toFixed(2)),
+    toBringCapital: `puente desde otra cadena: ~${STATIC_BRIDGE.feePct} % + ${STATIC_BRIDGE.fixedUsd} $ y ~${Math.round(STATIC_BRIDGE.seconds / 60)} min (y algo de ${chain.native.symbol} para el gas)`
+  };
+}
 var yourHistory = (missionId, chain, address) => isMemoryOff(missionId) ? "misi\xF3n de control: sin historial" : tokenHistory(chain, address);
 function memoryCell(chain, f, address, missionId = null) {
   if (isMemoryOff(missionId)) return "misi\xF3n de control: sin memoria";
@@ -75676,18 +75795,33 @@ var SIM_TOOLS = [
     name: "scan_market",
     kind: "research",
     deliversNews: true,
-    researchTarget: () => void 0,
-    description: "Escaneo de mercado de una cadena en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal.",
+    // Se registra en qué cadena escanea: el revisor ve si explora las tres o solo la que tiene el dinero.
+    researchTarget: (i) => i.chain,
+    description: "Escaneo de mercado de una cadena (o de las tres con chain: all) en una sola llamada, con los datos clave de cada candidato (capitalizaci\xF3n, liquidez, variaci\xF3n de precio, compradores netos, antig\xFCedad). Los que aparecen en m\xE1s fuentes van primero. En Solana combina los tokens en tendencia de Jupiter (5 min y 1 h), los que est\xE1n en directo en pump.fun, los promocionados en DexScreener y las tendencias de GeckoTerminal. Con chain: all, los mejores de Solana, Base y BNB Chain a la vez, y de cada cadena cu\xE1nto efectivo tienes all\xED y lo que cuesta llevarlo si no tienes (puente): para comparar las tres sin tres llamadas.",
     schema: external_exports.object({
-      chain: chainParam,
+      chain: external_exports.enum(["all", ...CHAINS]).describe("Cadena que escaneas, o all para las tres a la vez"),
       limit: external_exports.number().int().min(5).max(60).default(15),
       check_top: external_exports.number().int().min(0).max(8).default(5).describe("A los N primeros les a\xF1ade los datos de riesgo (los de riskCheck) y tu memoria (creencias que frenan, avisan o apoyan). 0 = no")
     }),
     run: async ({ chain, limit, check_top }, ctx) => {
-      const scan = compactScan(await getChain(chain).research.scan(limit));
-      if (Array.isArray(scan.candidates)) recordScan(chain, scan.candidates.slice(0, 15));
-      if (check_top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(chain, scan.candidates, check_top, ctx.missionId);
-      return toText(scan);
+      const one2 = async (c, n3, top) => {
+        const scan = compactScan(await getChain(c).research.scan(n3));
+        if (Array.isArray(scan.candidates)) {
+          recordScan(c, scan.candidates.slice(0, 15));
+          void Promise.resolve().then(() => (init_skipped(), skipped_exports)).then(({ recordSeen: recordSeen2 }) => recordSeen2(ctx.missionId, c, scan.candidates)).catch(() => void 0);
+        }
+        if (top && Array.isArray(scan.candidates)) scan.candidates = await screenCandidates(c, scan.candidates, top, ctx.missionId);
+        return scan;
+      };
+      if (chain !== "all") return toText(await one2(chain, limit, check_top));
+      const perChain = Math.max(5, Math.ceil(limit / CHAINS.length));
+      const results = await Promise.all(
+        CHAINS.map(async (c) => {
+          const scan = await one2(c, perChain, Math.min(check_top, 3)).catch((err) => ({ error: err.message }));
+          return [c, { ...moneyThere(ctx.missionId, c), ...scan }];
+        })
+      );
+      return toText(Object.fromEntries(results));
     }
   }),
   tool({

@@ -398,6 +398,7 @@ export function idleCheck(mission: Mission, v: Awaited<ReturnType<typeof valuati
     `Llevas ${Math.round(idleMin)} min sin operar, con el ${Math.round(cashPct)} % en efectivo; ` +
     (mission.open_target ? "" : `te falta un +${needPct.toFixed(0)} % y `) +
     `quedan ${Math.round(secondsLeft / 60)} min.` +
+    (mission.mode === "live" ? "" : " En simulación, ese tiempo no te está dando datos de los que aprender.") +
     (mission.instructions ? " Las instrucciones del usuario mandan." : "")
   );
 }
@@ -541,6 +542,8 @@ async function checkOne(mission: Mission): Promise<string[]> {
   const succeeded = !mission.open_target && (reached || (!closesOnTarget && expired && !bust && !lossHit && final.reliable && final.totalUsd >= mission.target_usd));
   const finalStatus = succeeded ? "succeeded" : status;
   db.prepare("UPDATE missions SET status = ?, ended_at = ?, final_usd = ? WHERE id = ?").run(finalStatus, now(), final.totalUsd, mission.id);
+  // Cómo les fue a los candidatos que vio y no compró (para que aprenda también de lo que descarta).
+  await import("./skipped.js").then(({ measureSkipped }) => measureSkipped(mission.id)).catch(() => undefined);
   const resultPct = ((final.totalUsd - mission.initial_usd) / mission.initial_usd) * 100;
   const summary =
     `Misión #${mission.id} ${succeeded ? "CONSEGUIDA" : bust ? "SIN FONDOS (bancarrota)" : lossHit ? "PARADA POR PÉRDIDA MÁXIMA" : "TERMINADA POR TIEMPO"}: ${mission.initial_usd.toFixed(2)} → ${final.totalUsd.toFixed(2)} USD ` +

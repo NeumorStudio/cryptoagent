@@ -39278,6 +39278,25 @@ var init_migrations = __esm({
           db2.exec("UPDATE beliefs SET condition_since = created_at WHERE condition_since IS NULL");
           db2.exec("ALTER TABLE missions ADD COLUMN memory_off INTEGER NOT NULL DEFAULT 0");
         }
+      },
+      {
+        version: 17,
+        description: "Candidatos vistos en los escaneos, con su precio al verlos y al acabar la misi\xF3n: aprender tambi\xE9n de lo que no compr\xF3",
+        up: (db2) => {
+          db2.exec(`CREATE TABLE IF NOT EXISTS scan_seen (
+        id INTEGER PRIMARY KEY,
+        mission_id INTEGER NOT NULL,
+        ts TEXT NOT NULL,
+        chain TEXT NOT NULL,
+        asset TEXT NOT NULL,
+        symbol TEXT,
+        price_usd REAL,
+        features TEXT,
+        end_price_usd REAL,
+        measured_at TEXT
+      )`);
+          db2.exec("CREATE UNIQUE INDEX IF NOT EXISTS scan_seen_first ON scan_seen (mission_id, chain, asset)");
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -39474,7 +39493,7 @@ var init_db = __esm({
       }
     }
     runMigrations(db, config.dataDir);
-    CODE_VERSION = "0.51.0";
+    CODE_VERSION = "0.52.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];

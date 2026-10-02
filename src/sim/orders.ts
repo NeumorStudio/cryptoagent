@@ -69,6 +69,18 @@ async function watchedPrice(venue: VenueId, missionId: number, triggerAsset: str
 const isTriggered = (condition: "above" | "below", price: number, trigger: number) =>
   condition === "above" ? price >= trigger : price <= trigger;
 
+/**
+ * Último precio visto de cada orden por precio. Las que están cerca de saltar (a menos de NEAR_TRIGGER de su precio)
+ * se miran también en la revisión rápida (cada 5 s); las demás, solo en la completa (cada 15 s). Jupiter da una
+ * petición por segundo para todo: así el presupuesto extra va solo a las órdenes que están a punto de saltar.
+ */
+const lastSeen = new Map<number, number>();
+const NEAR_TRIGGER = 0.15;
+const isNear = (order: { id: number; trigger_price: number }) => {
+  const p = lastSeen.get(order.id);
+  return p !== undefined && Math.abs(p / order.trigger_price - 1) <= NEAR_TRIGGER;
+};
+
 function describeAction(venue: VenueId, action: SwapAction | BinanceAction): string {
   const v = getVenue(venue);
   if (v.kind === "chain") {
@@ -200,12 +212,19 @@ function close(id: number, status: string, result: unknown) {
 }
 
 /** Revisa las órdenes abiertas y ejecuta las que se hayan disparado. Devuelve líneas de log. */
-export async function checkOrders(): Promise<string[]> {
-  // Primero, las transferencias que ya han llegado: una orden puede depender de ese saldo.
-  const log: string[] = await settleTransfers().catch((err) => [`Error abonando transferencias: ${(err as Error).message}`]);
-  // Futuros: funding, liquidaciones y take profit / stop loss.
-  const { checkPerps } = await import("./perps.js");
-  log.push(...(await checkPerps().catch((err) => [`Error revisando futuros: ${(err as Error).message}`])));
+/**
+ * Revisa las órdenes abiertas. Con `nearOnly` (la revisión rápida), solo las de tiempo y las de precio que estaban
+ * cerca de saltar en la última lectura; sin él, todas, y antes las transferencias y los futuros.
+ */
+export async function checkOrders(opts: { nearOnly?: boolean } = {}): Promise<string[]> {
+  const log: string[] = [];
+  if (!opts.nearOnly) {
+    // Primero, las transferencias que ya han llegado: una orden puede depender de ese saldo.
+    log.push(...(await settleTransfers().catch((err) => [`Error abonando transferencias: ${(err as Error).message}`])));
+    // Futuros: funding, liquidaciones y take profit / stop loss.
+    const { checkPerps } = await import("./perps.js");
+    log.push(...(await checkPerps().catch((err) => [`Error revisando futuros: ${(err as Error).message}`])));
+  }
 
   const expired = db
     .prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?")
@@ -227,10 +246,15 @@ export async function checkOrders(): Promise<string[]> {
       await execute(order, `Orden por tiempo #${order.id} ejecutada (hora alcanzada: ${hms(order.trigger_price)}). Motivo original: ${order.reasoning ?? "-"}`, null, log);
       continue;
     }
-    // El precio de venta depende de la cantidad: una clave por orden. El de la API, uno por activo.
+    if (opts.nearOnly && !isNear(order)) continue;
+    // El precio de venta depende de la cantidad: las órdenes que venden lo mismo (la toma de beneficio y el stop que
+    // venden todo el saldo) comparten cotización. El de la API, uno por activo.
     const action = JSON.parse(order.action) as SwapAction | BinanceAction;
     const sells = getVenue(order.venue).kind === "chain" && (action as SwapAction).input !== undefined;
-    const key = sells ? `orden:${order.id}` : `${order.venue}:${order.trigger_asset}`;
+    const sa = action as SwapAction;
+    const key = sells
+      ? `venta:${order.mission_id}:${order.venue}:${sa.input}:${sa.output}:${sa.sellAll ? "todo" : sa.amount}:${order.trigger_asset}`
+      : `${order.venue}:${order.trigger_asset}`;
     // Una orden que vende todo un token del que ya no queda nada (se vendió a mano o saltó la otra orden)
     // sobra: se cancela sola en vez de dispararse y fallar.
     if (sells && (action as SwapAction).sellAll && (action as SwapAction).input === order.trigger_asset) {
@@ -248,7 +272,9 @@ export async function checkOrders(): Promise<string[]> {
       continue;
     }
     const price = prices.get(key)!;
+    lastSeen.set(order.id, price);
     if (!isTriggered(order.condition, price, order.trigger_price)) continue;
+    lastSeen.delete(order.id);
 
     await execute(order, `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condición ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`, price, log);
   }
@@ -294,7 +320,7 @@ async function execute(order: OrderRow, reasoning: string, price: number | null,
     };
     const result =
       getVenue(order.venue).kind === "chain"
-        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), ...limit })
+        ? await swap({ ...base, chain: order.venue as ChainId, ...(action as SwapAction), ...limit, fromOrder: true })
         : await binanceMarketOrder({ ...base, ...(action as BinanceAction) });
     const atLimit = "fillAtLimit" in limit ? { filledAtLimitPrice: order.trigger_price } : {};
     close(order.id, "filled", { ...seen, ...atLimit, ...result });

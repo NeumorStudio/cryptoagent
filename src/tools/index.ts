@@ -16,7 +16,7 @@ import { checkBuyAgainstMemory } from "../sim/guard.js";
 import { asset } from "../paths.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 import { toText } from "./format.js";
-import { recordFeatures, recordRead, recordScan } from "../sim/market-state.js";
+import { readTrend, recordFeatures, recordRead, recordScan } from "../sim/market-state.js";
 
 /** Misión del contexto; las herramientas que la necesitan solo se ejecutan si existe. */
 const mid = (ctx: ToolCtx): number => {
@@ -79,15 +79,22 @@ const formatThesis = (t: z.infer<typeof thesis>) =>
   (t.overrides?.length ? `\nIgnora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 
 /**
- * Tras una compra, qué creencias citadas en la tesis no cumple el token (y por qué dato). No frena nada: se lo
- * dice y lo guarda en la posición.
+ * Tras una compra, con los datos con que quedó registrada (su última lectura, o los del momento si no leyó): qué
+ * creencias citadas en la tesis no cumple el token y qué creencias de "tiende a perder" cumple la entrada. En la M33
+ * la ficha ya marcaba +147 % en 5 min y el agente compró creyendo que eran +85 %. No frena nada: se lo dice (y lo
+ * citado lo guarda en la posición).
  */
 async function withCitedCheck<T extends object>(missionId: number, chain: ChainId, output: string, cited: number[], trade: Promise<T>) {
   const result = await trade;
-  if (!cited.length) return result;
   const token = await getChain(chain).resolveToken(output).catch(() => null);
-  const notes = token ? memory.checkCitedBeliefs(missionId, chain, token.address, cited) : [];
-  return notes.length ? { ...result, citedBeliefsNotMet: notes } : result;
+  if (!token) return result;
+  const notes = cited.length ? memory.checkCitedBeliefs(missionId, chain, token.address, cited) : [];
+  const warnings = mission.isMemoryOff(missionId) ? [] : memory.negativeBeliefsAtEntry(missionId, chain, token.address);
+  return {
+    ...result,
+    ...(notes.length ? { citedBeliefsNotMet: notes } : {}),
+    ...(warnings.length ? { negativeBeliefsAtEntry: warnings } : {}),
+  };
 }
 
 const tradeMeta = (t: z.infer<typeof thesis>) => ({
@@ -139,6 +146,26 @@ function riskCheck(chain: ChainId, token: string, f: Features, missionId: number
           },
         }
       : { sinceLastRead: "primera lectura" }),
+    ...(missionId !== null ? { trendForBeliefs: trendForBeliefs(missionId, chain, token) } : {}),
+  };
+}
+
+/** Lecturas más juntas que esto no dan una tendencia: en la M29, tres lecturas en 12 s "confirmaron" un token. */
+const MIN_TREND_MINUTES = 1;
+
+/**
+ * La tendencia con la que se comprueban sus creencias: de la primera lectura a la última (no de la anterior a esta,
+ * que es sinceLastRead). En la M23 vio los compradores netos 174 → 183 y creyó que subían; la creencia medía 266 → 183.
+ */
+function trendForBeliefs(missionId: number, chain: ChainId, token: string) {
+  const t = readTrend(missionId, chain, token);
+  if (t.readsBeforeBuy < 2) return undefined;
+  return {
+    ...t,
+    note:
+      (t.minutesBetweenReads ?? 0) < MIN_TREND_MINUTES
+        ? `Lecturas muy juntas (${t.minutesBetweenReads} min entre la primera y esta): la tendencia todavía no mide nada.`
+        : "De tu primera lectura a esta: es la tendencia con la que se comprueban tus creencias (liquidityTrendPct, netBuyersTrend).",
   };
 }
 
@@ -310,7 +337,10 @@ export async function screenCandidates(chain: ChainId, candidates: Array<Record<
  */
 function memoryData(f: Features) {
   return {
-    note: "Son los valores con los que se evalúan las condiciones de tus creencias. buySellRatio5m es por volumen en USD; buySellCountRatio5m, por número de operaciones.",
+    note:
+      "Son los valores con los que se evalúan las condiciones de tus creencias. buySellRatio5m es por volumen en USD; buySellCountRatio5m, por número de operaciones. " +
+      "Hay dos subidas de 5 min distintas: priceChange5mPct es la del token entero (Jupiter, todos sus pools) y pairPriceChange5mPct la de su par principal en DexScreener; " +
+      "en tokens recién graduados pueden diferir mucho (HER en la M33: +147 % frente a +21 %). Cada creencia usa la que dice su condición.",
     ageMinutes: f.ageMinutes,
     pairAgeMinutes: f.pairAgeMinutes,
     liquidityUsd: f.liquidityUsd,
@@ -366,6 +396,19 @@ export async function briefReports(chain: ChainId, tokens: string[], missionId: 
             ]
               .filter(Boolean)
               .join(", "),
+      // La tendencia que usan sus creencias (desde la primera lectura), no solo desde la anterior.
+      ...(rc.trendForBeliefs
+        ? {
+            trendForBeliefs: [
+              `${rc.trendForBeliefs.readsBeforeBuy} lecturas en ${rc.trendForBeliefs.minutesBetweenReads} min`,
+              rc.trendForBeliefs.liquidityTrendPct !== undefined ? `liq ${rc.trendForBeliefs.liquidityTrendPct > 0 ? "+" : ""}${rc.trendForBeliefs.liquidityTrendPct} %` : "",
+              rc.trendForBeliefs.netBuyersTrend !== undefined ? `compradores ${rc.trendForBeliefs.netBuyersTrend > 0 ? "+" : ""}${rc.trendForBeliefs.netBuyersTrend}` : "",
+              (rc.trendForBeliefs.minutesBetweenReads ?? 0) < MIN_TREND_MINUTES ? "muy juntas: aún no mide nada" : "",
+            ]
+              .filter(Boolean)
+              .join(", "),
+          }
+        : {}),
     };
   });
   return toText({
@@ -1295,16 +1338,27 @@ export const SIM_TOOLS = [
       "Guarda una creencia sobre el mercado (una hipótesis, no un hecho). Si puedes expresarla como condición sobre los datos de entrada " +
       "de las posiciones, añádela: el simulador la contrastará con todas las operaciones pasadas y futuras (devuelve el resultado al momento). " +
       `Campos de la condición: ${memory.CONDITION_FIELDS.join(", ")}. Con condición, expectation dice si cumplirla tiende a ganar (positive) o a perder (negative). ` +
-      "Si ya hay una casi igual o con la misma condición, se rechaza: corrígela con revise_belief.",
+      "Si ya hay una casi igual o con la misma condición, se rechaza: corrígela con revise_belief. " +
+      "Si dice lo mismo que una que ya retiraste, también se rechaza y te dice por qué la retiraste; para volver a probarla a propósito, retest: true.",
     schema: z.object({
       statement: z.string().min(1).describe("La creencia, con los datos que la originan"),
       applies_to: z.string().min(1).describe("A qué misiones o situaciones se aplica"),
       expectation: z.enum(["positive", "negative"]).optional(),
       condition: conditionSchema.optional(),
       mission_id: z.number().int().optional().describe("Misión de la que sale"),
+      retest: z.boolean().optional().describe("Volver a probar a propósito una idea que ya retiraste (si los datos pueden haber cambiado)"),
     }),
     run: async (i) =>
-      json(memory.writeBelief({ statement: i.statement, appliesTo: i.applies_to, expectation: i.expectation, condition: i.condition, missionId: i.mission_id ?? null })),
+      json(
+        memory.writeBelief({
+          statement: i.statement,
+          appliesTo: i.applies_to,
+          expectation: i.expectation,
+          condition: i.condition,
+          missionId: i.mission_id ?? null,
+          retest: i.retest,
+        }),
+      ),
   }),
   tool({
     name: "revise_belief",

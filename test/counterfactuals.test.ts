@@ -47,3 +47,19 @@ test("el precio de entrada es el de antes de comprar, no el cierre de la vela en
   assert.equal(cf.marketMovePct, 500);
   assert.equal(cf.unreliable, undefined);
 });
+
+test("si la venta real queda por debajo de lo más bajo de las velas, la lectura no es fiable (las velas no vieron el precio)", async () => {
+  // Velas planas en 1 (mínimo 0,99) y una venta real a -8 %: diferencia de menos de 15 puntos, pero por debajo del mínimo.
+  const flat: Array<[number, number, number, number, number]> = [];
+  for (let i = -2; i < 50; i++) flat.push([base + i * 60, 1, 1.01, 0.99, 1]);
+  setFetchImpl((async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("/pools?page=1")) return json({ data: [{ attributes: { address: url.includes("Flat") ? "FLATPOOL" : "POOL", reserve_in_usd: "10000" } }] });
+    if (url.includes("/ohlcv/minute")) return json({ data: { attributes: { ohlcv_list: url.includes("FLATPOOL") ? flat : candles } } });
+    return new Response("{}", { status: 404 });
+  }) as typeof fetch);
+  insert("Flat", base + 10, base + 310, 9.2);
+  const cf = (await missionCounterfactuals(m.id)).find((c) => c.symbol === "Flat")!;
+  assert.equal(cf.lowWhileHeldPct, -1);
+  assert.match(String(cf.unreliable), /por debajo de lo más bajo de las velas/);
+});

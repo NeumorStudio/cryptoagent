@@ -20,6 +20,11 @@ export interface Counterfactual {
   worstWhileHeldPct?: number;
   /** Lo más alto dentro de cada minuto mientras la tenía: puede ser un pico de segundos que no se podía vender. */
   highWhileHeldPct?: number;
+  /**
+   * Lo más bajo dentro de cada minuto mientras la tenía. Para la bajada sí cuenta la mecha: es donde salta un stop.
+   * Con los cierres, en la M21 CATE "nunca bajó del -0,6 %" y el revisor leyó que el stop del -4 % saltó por ruido.
+   */
+  lowWhileHeldPct?: number;
   /** Si la hubiera mantenido 15 o 30 minutos más (sobre el precio de entrada). */
   ifHeld15Pct?: number;
   ifHeld30Pct?: number;
@@ -30,6 +35,12 @@ export interface Counterfactual {
 }
 
 const cache = new Map<number, Counterfactual>();
+
+/** Coste medido de entrar y salir de la posición (si se midió); si no, un 3 % por defecto. */
+const roundTrip = (p: Pos) => {
+  const r = Number((p.research as Record<string, unknown> | undefined)?.roundTripAtEntryPct);
+  return Number.isFinite(r) ? Math.abs(r) : 3;
+};
 const pct = (a: number, b: number, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
 
 async function candles(venue: string, token: string, fromSec: number, toSec: number): Promise<Array<[number, number, number, number, number]>> {
@@ -107,6 +118,7 @@ async function one(p: Pos): Promise<Counterfactual> {
     bestWhileHeldPct: held.length ? pct(entry, Math.max(...held.map((c) => c[4])), d) : undefined,
     worstWhileHeldPct: held.length ? pct(entry, Math.min(...held.map((c) => c[4])), d) : undefined,
     highWhileHeldPct: touched.length ? pct(entry, Math.max(...touched.map((c) => c[2])), d) : undefined,
+    lowWhileHeldPct: touched.length ? pct(entry, Math.min(...touched.map((c) => c[3])), d) : undefined,
     ifHeld15Pct: at15 ? pct(entry, at15, d) : undefined,
     ifHeld30Pct: at30 ? pct(entry, at30, d) : undefined,
   };
@@ -133,6 +145,11 @@ async function one(p: Pos): Promise<Counterfactual> {
     notes.unshift("lectura poco fiable, ver unreliable");
   } else if (out.marketMovePct !== undefined && base.actualPct !== null && Math.abs(out.marketMovePct - base.actualPct) > 15) {
     out.unreliable = `el precio del pool (${out.marketMovePct} %) no cuadra con la venta real (${base.actualPct} %): no eran precios de venta`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  } else if (!perp && out.lowWhileHeldPct !== undefined && base.actualPct !== null && base.actualPct < out.lowWhileHeldPct - (roundTrip(p) + 2)) {
+    // Vendió por debajo de lo más bajo que marcan las velas (más el coste de entrar y salir): las velas no vieron el
+    // precio real (otro pool, o una caída más rápida que el minuto).
+    out.unreliable = `la venta real (${base.actualPct} %) quedó por debajo de lo más bajo de las velas (${out.lowWhileHeldPct} %): las velas no recogieron el precio real`;
     notes.unshift("lectura poco fiable, ver unreliable");
   }
   out.reading = notes.join("; ") || "sin nada destacable";

@@ -242,6 +242,24 @@ export function checkCitedBeliefs(missionId: number, venue: string, asset: strin
   return notes;
 }
 
+/**
+ * Tras una compra: las creencias de "tiende a perder" que cumple la entrada con los datos del momento de comprar.
+ * La ficha ya las marca al leer, pero el agente no siempre lo ve: en la M33 la ficha daba +147 % en 5 min y compró
+ * creyendo que eran +85 %. Se le repite al comprar, con el dato que la activa. No frena nada.
+ */
+export function negativeBeliefsAtEntry(missionId: number, venue: string, asset: string): string[] {
+  const p = listPositions(missionId).find((x) => x.venue === venue && x.asset === asset && x.status === "open");
+  if (!p) return [];
+  const rows = db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all() as unknown as BeliefRow[];
+  return rows
+    .filter((b) => matches(JSON.parse(b.condition!) as Condition, p))
+    .map((b) => {
+      const cond = JSON.parse(b.condition!) as Condition;
+      const data = cond.all.map(({ f }) => `${f} = ${JSON.stringify(fieldValue(p, f))}`).join(", ");
+      return `Al comprar, la entrada cumple #${b.id} (tiende a perder): ${b.statement.slice(0, 140)} [${data}]`;
+    });
+}
+
 const describeCondition = (c: Condition) => c.all.map(({ f, op, v }) => `${f} ${op} ${JSON.stringify(v)}`).join(" y ");
 
 // ─── Evidencia (calculada con las posiciones cerradas) ──────────────────────
@@ -923,7 +941,33 @@ function validateCondition(cond: Condition | undefined, expectation: string | un
 const sameCondition = (cond: Condition | undefined, exceptId = 0) =>
   cond ? (db.prepare("SELECT id FROM beliefs WHERE status = 'active' AND condition = ? AND id != ?").get(JSON.stringify(cond), exceptId) as { id: number } | undefined)?.id : undefined;
 
-export function writeBelief(a: { statement: string; appliesTo: string; expectation?: "positive" | "negative"; condition?: Condition; missionId: number | null }) {
+/**
+ * Una creencia retirada que dice lo mismo: misma condición, texto casi igual o casi las mismas operaciones con la
+ * misma expectativa. El revisor escribió "la 2.ª entrada y siguientes pierden" tres veces (#19, #21, #22) y las tres
+ * la retiró por lo mismo: el control de duplicados solo miraba las activas.
+ */
+function retiredTwin(a: { statement: string; expectation?: string; condition?: Condition }, fp: string) {
+  const rows = db.prepare("SELECT * FROM beliefs WHERE status = 'retired' ORDER BY id DESC").all() as unknown as BeliefRow[];
+  const cond = a.condition ? JSON.stringify(a.condition) : undefined;
+  const closed = a.condition && a.expectation ? closedPositions() : [];
+  const mine = a.condition ? closed.filter((p) => matches(a.condition!, p)).map((p) => p.id) : [];
+  return rows.find((r) => {
+    if (cond && r.condition === cond) return true;
+    if (similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD) return true;
+    if (mine.length < 3 || !r.condition || r.expectation !== a.expectation) return false;
+    return overlap(mine, closed.filter((p) => matches(JSON.parse(r.condition!) as Condition, p)).map((p) => p.id)) >= 0.8;
+  });
+}
+
+export function writeBelief(a: {
+  statement: string;
+  appliesTo: string;
+  expectation?: "positive" | "negative";
+  condition?: Condition;
+  missionId: number | null;
+  /** Volver a probar a propósito una idea ya retirada (si han llegado operaciones que pueden cambiar el resultado). */
+  retest?: boolean;
+}) {
   validateCondition(a.condition, a.expectation);
   if (activeCount("beliefs") >= BELIEF_LIMIT) {
     throw new Error(
@@ -936,6 +980,13 @@ export function writeBelief(a: { statement: string; appliesTo: string; expectati
   if (dup) throw new Error(`Ya hay una creencia casi igual o con la misma condición (#${dup}). Corrígela con revise_belief en lugar de crear otra.`);
   const twin = a.condition && a.expectation ? evidenceTwin(a.condition, a.expectation, closedPositions()) : undefined;
   if (twin) throw new Error(`La creencia #${twin} ya cubre casi las mismas operaciones con la misma expectativa: dicen lo mismo según los datos. Corrígela con revise_belief en lugar de crear otra.`);
+  const retired = a.retest ? undefined : retiredTwin(a, fp);
+  if (retired) {
+    throw new Error(
+      `Ya la probaste como #${retired.id} y la retiraste el ${retired.updated_at.slice(0, 10)} porque: ${retired.status_reason ?? "sin motivo anotado"}. ` +
+        "Si crees que los datos han cambiado (han llegado operaciones que pueden darle la vuelta), vuelve a escribirla con retest: true.",
+    );
+  }
   const id = Number(
     db
       .prepare(

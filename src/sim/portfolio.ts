@@ -253,6 +253,12 @@ export async function swap(args: {
    * órdenes límite de Jupiter recibes lo que fijaste; lo que el mercado dé por encima se lo queda quien la ejecuta.
    */
   fillAtLimit?: boolean;
+  /**
+   * La ejecuta una orden condicional al saltar: no se mide contra la última cotización que hizo el agente (era de
+   * otro momento), sino que se llena al precio de ahora, como un stop real. En la M28 el stop de blofomo se comparó
+   * con la cotización de un minuto antes, revirtió con el precio un 50 % abajo y hubo que vender a mano más abajo.
+   */
+  fromOrder?: boolean;
 }) {
   // Misión real: se ejecuta en la cadena con la cartera de la IA (firma el firmante, no este proceso).
   if (isLiveMission(args.missionId)) {
@@ -307,8 +313,9 @@ export async function swap(args: {
   // Como al firmar la cotización que viste: si hace poco cotizaste este mismo swap, la ejecución no puede
   // salir peor que esa cotización menos tu slippage. Si sale peor, la transacción revierte y pagas la red.
   const key = quoteKey(m, chain.id, input.address, output.address);
-  const ref = lastQuotes.get(key);
-  lastQuotes.delete(key);
+  // Una orden no usa ni gasta la cotización del agente: sigue protegiendo su próximo swap a mano.
+  const ref = args.fromOrder ? undefined : lastQuotes.get(key);
+  if (!args.fromOrder) lastQuotes.delete(key);
   // Vale también si la cantidad cambia algo (hasta un 25 %), en proporción: en la M30 de la v0.37.3 cotizó 40 $,
   // compró 42 y se llenó un 30 % por debajo sin protección. Con más cantidad, lo esperado queda algo alto (el
   // impacto crece más que la cantidad): protege de más, nunca de menos.

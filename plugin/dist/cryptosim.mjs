@@ -8402,7 +8402,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.55.0";
+    CODE_VERSION = "0.56.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -43993,8 +43993,8 @@ async function swap(args) {
     throw new Error(settled.error);
   }
   const key = quoteKey(m, chain.id, input2.address, output2.address);
-  const ref = lastQuotes.get(key);
-  lastQuotes.delete(key);
+  const ref = args.fromOrder ? void 0 : lastQuotes.get(key);
+  if (!args.fromOrder) lastQuotes.delete(key);
   if (ref && Date.now() - ref.at <= QUOTE_TTL_MS && Math.abs(amount - ref.amountIn) <= ref.amountIn * QUOTE_AMOUNT_TOLERANCE) {
     const expected = ref.amountOut * (amount / ref.amountIn);
     const minOut = expected * (1 - args.slippageBps / 1e4);
@@ -44324,6 +44324,7 @@ __export(memory_exports, {
   memoryHygiene: () => memoryHygiene,
   missionReviewData: () => missionReviewData,
   missionStats: () => missionStats,
+  negativeBeliefsAtEntry: () => negativeBeliefsAtEntry,
   overrideRecord: () => overrideRecord,
   pendingReviews: () => pendingReviews,
   recall: () => recall,
@@ -44415,6 +44416,16 @@ function checkCitedBeliefs(missionId, venue, asset2, ids) {
     db.prepare("UPDATE positions SET research = ? WHERE id = ?").run(JSON.stringify(research), p.id);
   }
   return notes;
+}
+function negativeBeliefsAtEntry(missionId, venue, asset2) {
+  const p = listPositions(missionId).find((x) => x.venue === venue && x.asset === asset2 && x.status === "open");
+  if (!p) return [];
+  const rows = db.prepare("SELECT * FROM beliefs WHERE status = 'active' AND expectation = 'negative' AND condition IS NOT NULL").all();
+  return rows.filter((b) => matches(JSON.parse(b.condition), p)).map((b) => {
+    const cond = JSON.parse(b.condition);
+    const data = cond.all.map(({ f }) => `${f} = ${JSON.stringify(fieldValue(p, f))}`).join(", ");
+    return `Al comprar, la entrada cumple #${b.id} (tiende a perder): ${b.statement.slice(0, 140)} [${data}]`;
+  });
 }
 function summarizeTrades(ps) {
   if (!ps.length) return { trades: 0 };
@@ -44830,6 +44841,18 @@ function updateHowto(a) {
 function validateCondition(cond, expectation) {
   if (cond && !expectation) throw new Error("Una creencia con condici\xF3n necesita expectation: positive (tiende a ganar) o negative (tiende a perder)");
 }
+function retiredTwin(a, fp) {
+  const rows = db.prepare("SELECT * FROM beliefs WHERE status = 'retired' ORDER BY id DESC").all();
+  const cond = a.condition ? JSON.stringify(a.condition) : void 0;
+  const closed = a.condition && a.expectation ? closedPositions() : [];
+  const mine = a.condition ? closed.filter((p) => matches(a.condition, p)).map((p) => p.id) : [];
+  return rows.find((r) => {
+    if (cond && r.condition === cond) return true;
+    if (similarity(r.fingerprint, fp) >= DUPLICATE_THRESHOLD) return true;
+    if (mine.length < 3 || !r.condition || r.expectation !== a.expectation) return false;
+    return overlap(mine, closed.filter((p) => matches(JSON.parse(r.condition), p)).map((p) => p.id)) >= 0.8;
+  });
+}
 function writeBelief(a) {
   validateCondition(a.condition, a.expectation);
   if (activeCount("beliefs") >= BELIEF_LIMIT) {
@@ -44842,6 +44865,12 @@ function writeBelief(a) {
   if (dup) throw new Error(`Ya hay una creencia casi igual o con la misma condici\xF3n (#${dup}). Corr\xEDgela con revise_belief en lugar de crear otra.`);
   const twin = a.condition && a.expectation ? evidenceTwin(a.condition, a.expectation, closedPositions()) : void 0;
   if (twin) throw new Error(`La creencia #${twin} ya cubre casi las mismas operaciones con la misma expectativa: dicen lo mismo seg\xFAn los datos. Corr\xEDgela con revise_belief en lugar de crear otra.`);
+  const retired = a.retest ? void 0 : retiredTwin(a, fp);
+  if (retired) {
+    throw new Error(
+      `Ya la probaste como #${retired.id} y la retiraste el ${retired.updated_at.slice(0, 10)} porque: ${retired.status_reason ?? "sin motivo anotado"}. Si crees que los datos han cambiado (han llegado operaciones que pueden darle la vuelta), vuelve a escribirla con retest: true.`
+    );
+  }
   const id = Number(
     db.prepare(
       `INSERT INTO beliefs (created_at, condition_since, updated_at, source_mission_id, statement, applies_to, expectation, condition, fingerprint)
@@ -45706,6 +45735,7 @@ async function one(p) {
     bestWhileHeldPct: held.length ? pct2(entry, Math.max(...held.map((c) => c[4])), d) : void 0,
     worstWhileHeldPct: held.length ? pct2(entry, Math.min(...held.map((c) => c[4])), d) : void 0,
     highWhileHeldPct: touched.length ? pct2(entry, Math.max(...touched.map((c) => c[2])), d) : void 0,
+    lowWhileHeldPct: touched.length ? pct2(entry, Math.min(...touched.map((c) => c[3])), d) : void 0,
     ifHeld15Pct: at15 ? pct2(entry, at15, d) : void 0,
     ifHeld30Pct: at30 ? pct2(entry, at30, d) : void 0
   };
@@ -45731,6 +45761,9 @@ async function one(p) {
   } else if (out.marketMovePct !== void 0 && base2.actualPct !== null && Math.abs(out.marketMovePct - base2.actualPct) > 15) {
     out.unreliable = `el precio del pool (${out.marketMovePct} %) no cuadra con la venta real (${base2.actualPct} %): no eran precios de venta`;
     notes.unshift("lectura poco fiable, ver unreliable");
+  } else if (!perp && out.lowWhileHeldPct !== void 0 && base2.actualPct !== null && base2.actualPct < out.lowWhileHeldPct - (roundTrip(p) + 2)) {
+    out.unreliable = `la venta real (${base2.actualPct} %) qued\xF3 por debajo de lo m\xE1s bajo de las velas (${out.lowWhileHeldPct} %): las velas no recogieron el precio real`;
+    notes.unshift("lectura poco fiable, ver unreliable");
   }
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== void 0) cache3.set(p.id, out);
@@ -45749,7 +45782,7 @@ async function missionCounterfactuals(missionId, limit = 8) {
   }
   return out;
 }
-var NETWORK2, cache3, pct2, priceAt, MIN_MEASURABLE_SEC;
+var NETWORK2, cache3, roundTrip, pct2, priceAt, MIN_MEASURABLE_SEC;
 var init_counterfactuals = __esm({
   "src/sim/counterfactuals.ts"() {
     "use strict";
@@ -45757,6 +45790,10 @@ var init_counterfactuals = __esm({
     init_positions();
     NETWORK2 = { solana: "solana", base: "base", bsc: "bsc" };
     cache3 = /* @__PURE__ */ new Map();
+    roundTrip = (p) => {
+      const r = Number(p.research?.roundTripAtEntryPct);
+      return Number.isFinite(r) ? Math.abs(r) : 3;
+    };
     pct2 = (a, b, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
     priceAt = (cs, sec) => {
       let p;
@@ -75221,6 +75258,12 @@ async function watchedPrice(venue, missionId, triggerAsset, action) {
   return sell ?? await currentPrice(venue, triggerAsset);
 }
 var isTriggered = (condition, price, trigger) => condition === "above" ? price >= trigger : price <= trigger;
+var lastSeen = /* @__PURE__ */ new Map();
+var NEAR_TRIGGER = 0.15;
+var isNear = (order) => {
+  const p = lastSeen.get(order.id);
+  return p !== void 0 && Math.abs(p / order.trigger_price - 1) <= NEAR_TRIGGER;
+};
 function describeAction(venue, action) {
   const v = getVenue(venue);
   if (v.kind === "chain") {
@@ -75307,10 +75350,13 @@ function listOrders(missionId, status, limit = 50) {
 function close(id, status, result) {
   db.prepare("UPDATE orders SET status = ?, closed_at = ?, result = ? WHERE id = ?").run(status, now(), JSON.stringify(result), id);
 }
-async function checkOrders() {
-  const log = await settleTransfers().catch((err) => [`Error abonando transferencias: ${err.message}`]);
-  const { checkPerps: checkPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
-  log.push(...await checkPerps2().catch((err) => [`Error revisando futuros: ${err.message}`]));
+async function checkOrders(opts = {}) {
+  const log = [];
+  if (!opts.nearOnly) {
+    log.push(...await settleTransfers().catch((err) => [`Error abonando transferencias: ${err.message}`]));
+    const { checkPerps: checkPerps2 } = await Promise.resolve().then(() => (init_perps(), perps_exports));
+    log.push(...await checkPerps2().catch((err) => [`Error revisando futuros: ${err.message}`]));
+  }
   const expired = db.prepare("SELECT id, mission_id FROM orders WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at < ?").all(now());
   for (const { id, mission_id } of expired) {
     if (db.prepare("UPDATE orders SET status = 'expired', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), id).changes) {
@@ -75326,9 +75372,11 @@ async function checkOrders() {
       await execute(order, `Orden por tiempo #${order.id} ejecutada (hora alcanzada: ${hms(order.trigger_price)}). Motivo original: ${order.reasoning ?? "-"}`, null, log);
       continue;
     }
+    if (opts.nearOnly && !isNear(order)) continue;
     const action = JSON.parse(order.action);
     const sells = getVenue(order.venue).kind === "chain" && action.input !== void 0;
-    const key = sells ? `orden:${order.id}` : `${order.venue}:${order.trigger_asset}`;
+    const sa = action;
+    const key = sells ? `venta:${order.mission_id}:${order.venue}:${sa.input}:${sa.output}:${sa.sellAll ? "todo" : sa.amount}:${order.trigger_asset}` : `${order.venue}:${order.trigger_asset}`;
     if (sells && action.sellAll && action.input === order.trigger_asset) {
       const left = getHoldings(order.mission_id).find((h) => h.venue === order.venue && h.asset === order.trigger_asset)?.amount ?? 0;
       if (left <= 0 && db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE id = ? AND status = 'open'").run(now(), order.id).changes) {
@@ -75344,7 +75392,9 @@ async function checkOrders() {
       continue;
     }
     const price = prices.get(key);
+    lastSeen.set(order.id, price);
     if (!isTriggered(order.condition, price, order.trigger_price)) continue;
+    lastSeen.delete(order.id);
     await execute(order, `Orden condicional #${order.id} disparada (${order.trigger_label} = ${price}, condici\xF3n ${order.condition} ${order.trigger_price}). Motivo original: ${order.reasoning ?? "-"}`, price, log);
   }
   return log;
@@ -75374,7 +75424,7 @@ async function execute(order, reasoning2, price, log) {
       reasoning: reasoning2,
       meta: { exitReason: `orden condicional #${order.id}`, thesis: order.reasoning ?? void 0 }
     };
-    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action, ...limit }) : await binanceMarketOrder({ ...base2, ...action });
+    const result = getVenue(order.venue).kind === "chain" ? await swap({ ...base2, chain: order.venue, ...action, ...limit, fromOrder: true }) : await binanceMarketOrder({ ...base2, ...action });
     const atLimit = "fillAtLimit" in limit ? { filledAtLimitPrice: order.trigger_price } : {};
     close(order.id, "filled", { ...seen, ...atLimit, ...result });
     log.push(
@@ -75600,10 +75650,15 @@ Riesgos comprobados: ${t.risks_checked}` : "") + (t.overrides?.length ? `
 Ignora a sabiendas: ${t.overrides.map((o) => `#${o.id} (${o.reason})`).join("; ")}` : "");
 async function withCitedCheck(missionId, chain, output2, cited, trade) {
   const result = await trade;
-  if (!cited.length) return result;
   const token2 = await getChain(chain).resolveToken(output2).catch(() => null);
-  const notes = token2 ? checkCitedBeliefs(missionId, chain, token2.address, cited) : [];
-  return notes.length ? { ...result, citedBeliefsNotMet: notes } : result;
+  if (!token2) return result;
+  const notes = cited.length ? checkCitedBeliefs(missionId, chain, token2.address, cited) : [];
+  const warnings = isMemoryOff(missionId) ? [] : negativeBeliefsAtEntry(missionId, chain, token2.address);
+  return {
+    ...result,
+    ...notes.length ? { citedBeliefsNotMet: notes } : {},
+    ...warnings.length ? { negativeBeliefsAtEntry: warnings } : {}
+  };
 }
 var tradeMeta = (t) => ({
   thesis: formatThesis(t),
@@ -75640,7 +75695,17 @@ function riskCheck(chain, token2, f, missionId) {
         holders: prev.f.holders !== void 0 && f.holders !== void 0 ? `${prev.f.holders} \u2192 ${f.holders}` : void 0,
         netBuyers5m: prev.f.netBuyers5m !== void 0 && f.netBuyers5m !== void 0 ? `${prev.f.netBuyers5m} \u2192 ${f.netBuyers5m}` : void 0
       }
-    } : { sinceLastRead: "primera lectura" }
+    } : { sinceLastRead: "primera lectura" },
+    ...missionId !== null ? { trendForBeliefs: trendForBeliefs(missionId, chain, token2) } : {}
+  };
+}
+var MIN_TREND_MINUTES = 1;
+function trendForBeliefs(missionId, chain, token2) {
+  const t = readTrend(missionId, chain, token2);
+  if (t.readsBeforeBuy < 2) return void 0;
+  return {
+    ...t,
+    note: (t.minutesBetweenReads ?? 0) < MIN_TREND_MINUTES ? `Lecturas muy juntas (${t.minutesBetweenReads} min entre la primera y esta): la tendencia todav\xEDa no mide nada.` : "De tu primera lectura a esta: es la tendencia con la que se comprueban tus creencias (liquidityTrendPct, netBuyersTrend)."
   };
 }
 function riskCell(rc) {
@@ -75762,7 +75827,7 @@ async function screenCandidates(chain, candidates, n3, missionId = null) {
 }
 function memoryData(f) {
   return {
-    note: "Son los valores con los que se eval\xFAan las condiciones de tus creencias. buySellRatio5m es por volumen en USD; buySellCountRatio5m, por n\xFAmero de operaciones.",
+    note: "Son los valores con los que se eval\xFAan las condiciones de tus creencias. buySellRatio5m es por volumen en USD; buySellCountRatio5m, por n\xFAmero de operaciones. Hay dos subidas de 5 min distintas: priceChange5mPct es la del token entero (Jupiter, todos sus pools) y pairPriceChange5mPct la de su par principal en DexScreener; en tokens reci\xE9n graduados pueden diferir mucho (HER en la M33: +147 % frente a +21 %). Cada creencia usa la que dice su condici\xF3n.",
     ageMinutes: f.ageMinutes,
     pairAgeMinutes: f.pairAgeMinutes,
     liquidityUsd: f.liquidityUsd,
@@ -75807,7 +75872,16 @@ async function briefReports(chain, tokens, missionId = null) {
         since.liquidityChangePct !== void 0 ? `liq ${since.liquidityChangePct > 0 ? "+" : ""}${since.liquidityChangePct} %` : "",
         since.mcapChangePct !== void 0 ? `mcap ${since.mcapChangePct > 0 ? "+" : ""}${since.mcapChangePct} %` : "",
         since.netBuyers5m ? `compradores ${since.netBuyers5m}` : ""
-      ].filter(Boolean).join(", ")
+      ].filter(Boolean).join(", "),
+      // La tendencia que usan sus creencias (desde la primera lectura), no solo desde la anterior.
+      ...rc.trendForBeliefs ? {
+        trendForBeliefs: [
+          `${rc.trendForBeliefs.readsBeforeBuy} lecturas en ${rc.trendForBeliefs.minutesBetweenReads} min`,
+          rc.trendForBeliefs.liquidityTrendPct !== void 0 ? `liq ${rc.trendForBeliefs.liquidityTrendPct > 0 ? "+" : ""}${rc.trendForBeliefs.liquidityTrendPct} %` : "",
+          rc.trendForBeliefs.netBuyersTrend !== void 0 ? `compradores ${rc.trendForBeliefs.netBuyersTrend > 0 ? "+" : ""}${rc.trendForBeliefs.netBuyersTrend}` : "",
+          (rc.trendForBeliefs.minutesBetweenReads ?? 0) < MIN_TREND_MINUTES ? "muy juntas: a\xFAn no mide nada" : ""
+        ].filter(Boolean).join(", ")
+      } : {}
     };
   });
   return toText({
@@ -75915,12 +75989,12 @@ var SIM_TOOLS = [
         resolving.then((t) => t ? c.entryFeatures(t.address) : null).catch(() => null)
       ]);
       const history = resolved ? yourHistory(ctx.missionId, chain, resolved.address) : void 0;
-      const roundTrip = resolved ? await roundTripCost(chain, resolved).catch(() => void 0) : void 0;
+      const roundTrip2 = resolved ? await roundTripCost(chain, resolved).catch(() => void 0) : void 0;
       return json2({
         ...compactReport(report),
         ...features ? { memoryData: memoryData(features), riskCheck: riskCheck(chain, token2.trim(), features, ctx.missionId) } : {},
         yourHistory: history ?? "nunca lo has operado",
-        ...roundTrip ? { roundTrip } : {}
+        ...roundTrip2 ? { roundTrip: roundTrip2 } : {}
       });
     }
   }),
@@ -76557,15 +76631,25 @@ ${body.slice(0, 2e4)}${body.length > 2e4 ? `
     kind: "memory",
     role: "reviewer",
     journaled: true,
-    description: `Guarda una creencia sobre el mercado (una hip\xF3tesis, no un hecho). Si puedes expresarla como condici\xF3n sobre los datos de entrada de las posiciones, a\xF1\xE1dela: el simulador la contrastar\xE1 con todas las operaciones pasadas y futuras (devuelve el resultado al momento). Campos de la condici\xF3n: ${CONDITION_FIELDS.join(", ")}. Con condici\xF3n, expectation dice si cumplirla tiende a ganar (positive) o a perder (negative). Si ya hay una casi igual o con la misma condici\xF3n, se rechaza: corr\xEDgela con revise_belief.`,
+    description: `Guarda una creencia sobre el mercado (una hip\xF3tesis, no un hecho). Si puedes expresarla como condici\xF3n sobre los datos de entrada de las posiciones, a\xF1\xE1dela: el simulador la contrastar\xE1 con todas las operaciones pasadas y futuras (devuelve el resultado al momento). Campos de la condici\xF3n: ${CONDITION_FIELDS.join(", ")}. Con condici\xF3n, expectation dice si cumplirla tiende a ganar (positive) o a perder (negative). Si ya hay una casi igual o con la misma condici\xF3n, se rechaza: corr\xEDgela con revise_belief. Si dice lo mismo que una que ya retiraste, tambi\xE9n se rechaza y te dice por qu\xE9 la retiraste; para volver a probarla a prop\xF3sito, retest: true.`,
     schema: external_exports.object({
       statement: external_exports.string().min(1).describe("La creencia, con los datos que la originan"),
       applies_to: external_exports.string().min(1).describe("A qu\xE9 misiones o situaciones se aplica"),
       expectation: external_exports.enum(["positive", "negative"]).optional(),
       condition: conditionSchema.optional(),
-      mission_id: external_exports.number().int().optional().describe("Misi\xF3n de la que sale")
+      mission_id: external_exports.number().int().optional().describe("Misi\xF3n de la que sale"),
+      retest: external_exports.boolean().optional().describe("Volver a probar a prop\xF3sito una idea que ya retiraste (si los datos pueden haber cambiado)")
     }),
-    run: async (i) => json2(writeBelief({ statement: i.statement, appliesTo: i.applies_to, expectation: i.expectation, condition: i.condition, missionId: i.mission_id ?? null }))
+    run: async (i) => json2(
+      writeBelief({
+        statement: i.statement,
+        appliesTo: i.applies_to,
+        expectation: i.expectation,
+        condition: i.condition,
+        missionId: i.mission_id ?? null,
+        retest: i.retest
+      })
+    )
   }),
   tool({
     name: "revise_belief",
@@ -77667,8 +77751,18 @@ setInterval(() => {
   }
   keepAwake(missionRunning());
 }, 2e4);
+var orderTick = 0;
+var checkingOrders = false;
 setInterval(async () => {
-  if (supersededBy() || !holdsTickLease()) return;
+  if (supersededBy() || !holdsTickLease() || checkingOrders) return;
   const open2 = db.prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1").get();
-  if (open2) await checkOrders().catch((err) => console.error(`Error revisando \xF3rdenes: ${err.message}`));
-}, 15e3);
+  if (!open2) return;
+  checkingOrders = true;
+  try {
+    await checkOrders({ nearOnly: orderTick++ % 3 !== 0 });
+  } catch (err) {
+    console.error(`Error revisando \xF3rdenes: ${err.message}`);
+  } finally {
+    checkingOrders = false;
+  }
+}, 5e3);

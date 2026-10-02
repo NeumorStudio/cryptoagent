@@ -388,12 +388,23 @@ setInterval(() => {
   keepAwake(missionRunning());
 }, 20_000);
 
-// Con órdenes por precio abiertas, se miran cada 15 s: un pico de un memecoin dura segundos y con la revisión
-// de cada minuto la toma de beneficios no llegaba a saltar (en las órdenes reales vigilan bots sin pausa).
+// Con órdenes por precio abiertas, se miran todas cada 15 s y, cada 5 s, las que estaban cerca de saltar: un pico de
+// un memecoin dura segundos (en la M14 la toma de beneficio del +25 % no saltó con un pico de +28,9 %). Jupiter da
+// una petición por segundo para todo, así que la revisión rápida solo cotiza las órdenes cercanas.
+let orderTick = 0;
+let checkingOrders = false;
 setInterval(async () => {
-  if (supersededBy() || !holdsTickLease()) return;
+  if (supersededBy() || !holdsTickLease() || checkingOrders) return;
   const open = db
     .prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1")
     .get();
-  if (open) await checkOrders().catch((err) => console.error(`Error revisando órdenes: ${(err as Error).message}`));
-}, 15_000);
+  if (!open) return;
+  checkingOrders = true;
+  try {
+    await checkOrders({ nearOnly: orderTick++ % 3 !== 0 });
+  } catch (err) {
+    console.error(`Error revisando órdenes: ${(err as Error).message}`);
+  } finally {
+    checkingOrders = false;
+  }
+}, 5_000);

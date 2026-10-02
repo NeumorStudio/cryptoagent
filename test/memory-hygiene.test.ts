@@ -105,3 +105,16 @@ test("el resumen de memoria es ligero: howtos por título y su texto bajo demand
   const cat = await runTool("memory_catalog", {}, { sessionId: 1, missionId: mission.id });
   assert.match(String(cat.content), /Catálogo compacto/);
 });
+
+test("una idea ya retirada no se vuelve a escribir sin querer: dice por qué se retiró, y con retest sí se puede", () => {
+  const cond = { all: [{ f: "entryNumberInMission" as const, op: ">=" as const, v: 7 }] };
+  const b = memory.writeBelief({ statement: "La séptima entrada de una misión y siguientes tienden a perder", appliesTo: "todas", expectation: "negative", condition: cond, missionId: null });
+  memory.reviseBelief({ id: b.id, retire: true, reason: "Los datos no la sostienen: media mejor que la global" });
+  assert.throws(
+    () => memory.writeBelief({ statement: "Entrar por séptima vez o más en la misma misión suele salir mal", appliesTo: "todas", expectation: "negative", condition: cond, missionId: null }),
+    new RegExp(`Ya la probaste como #${b.id}.*Los datos no la sostienen.*retest: true`),
+  );
+  const again = memory.writeBelief({ statement: "Entrar por séptima vez o más en la misma misión suele salir mal", appliesTo: "todas", expectation: "negative", condition: cond, missionId: null, retest: true });
+  assert.ok(again.id > b.id);
+  memory.reviseBelief({ id: again.id, retire: true, reason: "test" });
+});

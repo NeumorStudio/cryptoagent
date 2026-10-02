@@ -163,6 +163,44 @@ test("slippage: protege la cotización recién vista; si el precio se mueve más
   assert.equal(bal(m, "solana", MEME), 0);
 });
 
+test("un stop que salta se llena al precio del momento aunque el agente cotizara antes esa venta", async () => {
+  setPrice(MEME, 0.01);
+  const mm = (await createMission(1000, 5000, 60, undefined, { solana: 100 })).id;
+  await swap({ missionId: mm, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 10, slippageBps: 100, reasoning: "test" });
+  const qty = bal(mm, "solana", MEME);
+  // Cotiza la venta (como hace el agente antes de poner el stop) y deja el stop.
+  await quoteSwap("solana", MEME, "USDC", qty, 1500, mm);
+  await placeOrder({ missionId: mm, sessionId: null, venue: "solana", triggerAsset: MEME, condition: "below", triggerPrice: 0.008, action: { input: MEME, output: "USDC", amount: 0, sellAll: true, slippageBps: 1500 }, reasoning: "stop" });
+  setPrice(MEME, 0.005); // -50 %: mucho más que el 15 % de slippage frente a la cotización
+  await checkOrders();
+  assert.equal(bal(mm, "solana", MEME), 0, "el stop vende en lugar de revertir");
+  const o = db.prepare("SELECT status FROM orders WHERE mission_id = ? ORDER BY id DESC LIMIT 1").get(mm) as { status: string };
+  assert.equal(o.status, "filled");
+});
+
+test("la revisión rápida solo mira las órdenes cerca de saltar; la completa, todas", async () => {
+  setPrice(MEME, 0.01);
+  const mm = (await createMission(1000, 5000, 60, undefined, { solana: 100 })).id;
+  await swap({ missionId: mm, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 10, slippageBps: 100, reasoning: "test" });
+  await placeOrder({ missionId: mm, sessionId: null, venue: "solana", triggerAsset: MEME, condition: "below", triggerPrice: 0.008, action: { input: MEME, output: "USDC", amount: 0, sellAll: true, slippageBps: 1500 }, reasoning: "stop" });
+  await checkOrders(); // ve el precio a ~0,01: lejos del stop (25 %)
+  setPrice(MEME, 0.007);
+  await checkOrders({ nearOnly: true });
+  assert.ok(bal(mm, "solana", MEME) > 0, "lejos en la última lectura: la rápida no la mira");
+  await checkOrders();
+  assert.equal(bal(mm, "solana", MEME), 0, "la completa sí");
+  // Cerca del stop en la última lectura: la rápida ya la ejecuta.
+  setPrice(MEME, 0.01);
+  await swap({ missionId: mm, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 10, slippageBps: 100, reasoning: "test" });
+  await placeOrder({ missionId: mm, sessionId: null, venue: "solana", triggerAsset: MEME, condition: "below", triggerPrice: 0.008, action: { input: MEME, output: "USDC", amount: 0, sellAll: true, slippageBps: 1500 }, reasoning: "stop" });
+  setPrice(MEME, 0.0087);
+  await checkOrders();
+  assert.ok(bal(mm, "solana", MEME) > 0);
+  setPrice(MEME, 0.007);
+  await checkOrders({ nearOnly: true });
+  assert.equal(bal(mm, "solana", MEME), 0);
+});
+
 test("liquidar deja la cartera en stablecoins (el SOL reservado paga la última transacción)", async () => {
   await swap({ missionId: m, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 50, slippageBps: 50, reasoning: "test" });
   const problems = await liquidateAll(m, null, "Cierre automático: test");

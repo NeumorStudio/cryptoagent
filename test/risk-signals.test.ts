@@ -119,3 +119,29 @@ test("al comprar, dice qué creencias citadas no cumple el token, y no cuentan c
   const view = (memory.recall() as unknown as { beliefs: Array<{ id: number; evidence: { appliedIn: Record<string, number> } }> }).beliefs.find((x) => x.id === b.id)!;
   assert.deepEqual(view.evidence.appliedIn, { trades: 0, citedWithoutMeetingIt: 1 });
 });
+
+test("al comprar, avisa de las creencias de 'tiende a perder' que cumple la entrada, con el dato que la activa", async () => {
+  const b = memory.writeBelief({
+    statement: "En Solana, comprar con las compras por encima de las ventas tiende a perder",
+    appliesTo: "Solana",
+    expectation: "negative",
+    condition: { all: [{ f: "venue", op: "=", v: "solana" }, { f: "buySellRatio5m", op: ">=", v: 1 }] },
+    missionId: null,
+  });
+  await runTool("token_report", { chain: "solana", token: STONK }, ctx);
+  const r = await runTool("simulate_swap", { chain: "solana", input: "USDC", output: STONK, amount: 10, slippage_bps: 300, thesis }, ctx);
+  assert.ok(!r.isError, String(r.content));
+  const out = JSON.parse(String(r.content));
+  assert.ok(out.negativeBeliefsAtEntry.some((w: string) => w.startsWith(`Al comprar, la entrada cumple #${b.id}`) && w.includes("buySellRatio5m = 1.15")));
+  db.prepare("UPDATE beliefs SET status = 'retired' WHERE id = ?").run(b.id);
+});
+
+test("la ficha da la tendencia que usan las creencias (desde la primera lectura) y avisa si las lecturas van muy juntas", async () => {
+  const m2 = await createMission(1000, 1200, 60, undefined, { solana: 100 });
+  const c2 = { sessionId: 1, missionId: m2.id };
+  const first = JSON.parse(String((await runTool("token_report", { chain: "solana", token: STONK }, c2)).content));
+  assert.equal(first.riskCheck.trendForBeliefs, undefined);
+  const second = JSON.parse(String((await runTool("token_report", { chain: "solana", token: STONK }, c2)).content));
+  assert.equal(second.riskCheck.trendForBeliefs.readsBeforeBuy, 2);
+  assert.match(second.riskCheck.trendForBeliefs.note, /muy juntas/);
+});

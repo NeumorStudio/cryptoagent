@@ -457,17 +457,51 @@ export async function quoteSwap(chainId: ChainId, inputRef: string, outputRef: s
   const q = await chain.quote({ input, output, amountIn: amount, slippageBps });
   for (const [k, v] of lastQuotes) if (Date.now() - v.at > QUOTE_TTL_MS) lastQuotes.delete(k); // si no, crece con cada token cotizado
   if (missionId != null) lastQuotes.set(quoteKey(missionId, chain.id, input.address, output.address), { amountIn: amount, amountOut: q.amountOut, at: Date.now() });
+  const buy = chain.isCash(input.address) && !chain.isCash(output.address) ? await buyCost(chain, input, output, amount, q.amountOut, slippageBps) : undefined;
   return {
     chain: chain.id,
     input: `${amount} ${input.symbol} (${input.address})`,
     output: `${q.amountOut} ${output.symbol} (${output.address})`,
     priceImpactPct: q.priceImpactPct,
     route: q.route,
+    ...(buy ?? {}),
     ...(q.warnings.length ? { warnings: q.warnings } : {}),
     note:
       "Sin contar los costes de red: se calculan al ejecutar, según tu monedero. Si ejecutas este mismo swap (con un importe hasta un 25 % " +
       "distinto) en menos de 60 s, tu slippage se mide contra esta cotización: si el precio se ha movido más, el swap revierte y pagas solo la red.",
   };
+}
+
+/**
+ * Al cotizar una compra: lo que darían venderlo enseguida (el coste de entrar y salir) y cuánto se aleja el precio
+ * pagado del publicado. El impacto de precio no lo anticipa: en la M22, impacto 0,16 % y coste de ida y vuelta
+ * 19,6 % (pagó un 18 % por encima del publicado), y el agente compró sin cotizar la venta en 4 misiones de la tanda.
+ */
+async function buyCost(chain: ReturnType<typeof getChain>, input: TokenRef, output: TokenRef, amount: number, amountOut: number, slippageBps: number) {
+  try {
+    const [sell, prices] = await Promise.all([
+      chain.quote({ input: output, output: input, amountIn: amountOut, slippageBps }),
+      chain.priceUsd([output.address]).catch(() => ({}) as Record<string, number>),
+    ]);
+    const roundTripPct = Number(((1 - sell.amountOut / amount) * 100).toFixed(1));
+    const published = prices[output.address];
+    const vsPublishedPct = published ? Number((((amount / amountOut) / published - 1) * 100).toFixed(1)) : undefined;
+    const high = roundTripPct >= 3 || (vsPublishedPct ?? 0) >= 5;
+    return {
+      roundTripNowPct: roundTripPct,
+      ...(vsPublishedPct !== undefined ? { paidVsPublishedPct: vsPublishedPct } : {}),
+      ...(high
+        ? {
+            costWarning:
+              `Comprar y vender ahora mismo costaría un ${roundTripPct} %` +
+              (vsPublishedPct !== undefined ? ` y pagarías un ${vsPublishedPct} % sobre el precio publicado` : "") +
+              ": la toma de beneficio tiene que superar eso antes de dar nada. Calcúlala sobre la cotización de venta, no sobre lo pagado.",
+          }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── Órdenes de mercado en Binance ──────────────────────────────────────────

@@ -2,6 +2,7 @@
 // cuánto llegó a subir mientras la tenía, cuánto habría ganado o perdido manteniéndola 15 o 30 minutos
 // más, y el resultado de no haber entrado (0 %). Así el revisor separa una mala entrada de una mala salida
 // y no juzga solo por el resultado (sesgo retrospectivo).
+import { db } from "../db.js";
 import { fetchJson } from "../market/http.js";
 import { listPositions } from "./positions.js";
 
@@ -35,6 +36,20 @@ export interface Counterfactual {
 }
 
 const cache = new Map<number, Counterfactual>();
+
+/** El stop más ajustado que tuvo la posición y no llegó a saltar, en % sobre el precio de entrada de las velas. */
+function untriggeredStopPct(p: Pos, entry: number): number | undefined {
+  if (!entry) return undefined;
+  const rows = db
+    .prepare(
+      `SELECT trigger_price FROM orders WHERE mission_id = ? AND venue = ? AND trigger_asset = ? AND condition = 'below' AND status != 'filled'
+         AND created_at >= ? AND created_at <= ?`,
+    )
+    .all(p.missionId, p.venue, p.asset, p.openedAt, p.closedAt ?? p.openedAt) as Array<{ trigger_price: number }>;
+  if (!rows.length) return undefined;
+  const highest = Math.max(...rows.map((r) => r.trigger_price));
+  return Number(((highest / entry - 1) * 100).toFixed(1));
+}
 
 /** Coste medido de entrar y salir de la posición (si se midió); si no, un 3 % por defecto. */
 const roundTrip = (p: Pos) => {
@@ -151,6 +166,18 @@ async function one(p: Pos): Promise<Counterfactual> {
     // precio real (otro pool, o una caída más rápida que el minuto).
     out.unreliable = `la venta real (${base.actualPct} %) quedó por debajo de lo más bajo de las velas (${out.lowWhileHeldPct} %): las velas no recogieron el precio real`;
     notes.unshift("lectura poco fiable, ver unreliable");
+  } else if (!perp && out.highWhileHeldPct !== undefined && base.actualPct !== null && base.actualPct > out.highWhileHeldPct + 2) {
+    // Vendió por encima de lo más alto que marcan las velas (en la M13, un TP de +6 % con velas que nunca pasaron de 0).
+    out.unreliable = `la venta real (${base.actualPct} %) quedó por encima de lo más alto de las velas (${out.highWhileHeldPct} %): las velas no recogieron el precio real`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  } else {
+    // Un stop que no saltó aunque las velas bajan bastante más allá de él: esa bajada no la vio el precio que vigila
+    // las órdenes (en la M30, velas a -19 % con un stop a -12 % sin disparar y venta en -7 %).
+    const stop = untriggeredStopPct(p, entry);
+    if (!perp && stop !== undefined && out.lowWhileHeldPct !== undefined && out.lowWhileHeldPct < stop - 3) {
+      out.unreliable = `las velas bajan a ${out.lowWhileHeldPct} % pero el stop en ${stop} % no saltó: no son el precio al que se vendía`;
+      notes.unshift("lectura poco fiable, ver unreliable");
+    }
   }
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== undefined) cache.set(p.id, out); // completa: ya no cambia

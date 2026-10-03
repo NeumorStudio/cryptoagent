@@ -63,3 +63,28 @@ test("si la venta real queda por debajo de lo más bajo de las velas, la lectura
   assert.equal(cf.lowWhileHeldPct, -1);
   assert.match(String(cf.unreliable), /por debajo de lo más bajo de las velas/);
 });
+
+test("también es poco fiable si la venta queda por encima de lo más alto de las velas, o si un stop no saltó aunque las velas bajan más", async () => {
+  // Velas planas en 1 (máximo 1,01, mínimo 0,99) y una venta real a +8 %: por encima de lo más alto.
+  const flat: Array<[number, number, number, number, number]> = [];
+  for (let i = -2; i < 50; i++) flat.push([base + i * 60, 1, 1.01, 0.99, 1]);
+  // Velas con una mecha a 0,7 (-30 %) y un stop a 0,85 que no saltó.
+  const wick: Array<[number, number, number, number, number]> = [];
+  for (let i = -2; i < 50; i++) wick.push([base + i * 60, 1, 1.01, i === 2 ? 0.7 : 0.99, 1]);
+  setFetchImpl((async (input: string | URL | Request) => {
+    const url = String(input);
+    const pool = url.includes("Up") ? "UPPOOL" : url.includes("Wick") ? "WICKPOOL" : "POOL";
+    if (url.includes("/pools?page=1")) return json({ data: [{ attributes: { address: pool, reserve_in_usd: "10000" } }] });
+    if (url.includes("/ohlcv/minute")) return json({ data: { attributes: { ohlcv_list: url.includes("UPPOOL") ? flat : url.includes("WICKPOOL") ? wick : candles } } });
+    return new Response("{}", { status: 404 });
+  }) as typeof fetch);
+  insert("Up", base + 10, base + 310, 10.8);
+  insert("Wick", base + 10, base + 310, 9.5);
+  db.prepare(
+    `INSERT INTO orders (created_at, mission_id, venue, trigger_asset, trigger_label, condition, trigger_price, action, reasoning, status)
+     VALUES (?, ?, 'solana', 'Wick', 'Wick/USD', 'below', 0.85, '{}', 'stop', 'cancelled')`,
+  ).run(new Date((base + 20) * 1000).toISOString(), m.id);
+  const cfs = await missionCounterfactuals(m.id);
+  assert.match(String(cfs.find((c) => c.symbol === "Up")!.unreliable), /por encima de lo más alto/);
+  assert.match(String(cfs.find((c) => c.symbol === "Wick")!.unreliable), /stop en -15 % no saltó/);
+});

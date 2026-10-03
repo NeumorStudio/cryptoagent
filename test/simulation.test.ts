@@ -201,6 +201,18 @@ test("la revisión rápida solo mira las órdenes cerca de saltar; la completa, 
   assert.equal(bal(mm, "solana", MEME), 0);
 });
 
+test("al cotizar una compra da el coste de entrar y salir y el precio frente al publicado", async () => {
+  setPrice(MEME, 0.01);
+  const q = await quoteSwap("solana", "USDC", MEME, 10, 100);
+  assert.equal(typeof q.roundTripNowPct, "number");
+  assert.ok(q.roundTripNowPct! > 0 && q.roundTripNowPct! < 3, "en el mercado falso solo pagas las comisiones del pool");
+  assert.equal(typeof q.paidVsPublishedPct, "number");
+  assert.equal(q.costWarning, undefined);
+  // Una venta no lleva estos datos.
+  const sell = await quoteSwap("solana", MEME, "USDC", 100, 100);
+  assert.equal(sell.roundTripNowPct, undefined);
+});
+
 test("liquidar deja la cartera en stablecoins (el SOL reservado paga la última transacción)", async () => {
   await swap({ missionId: m, sessionId: null, chain: "solana", input: "USDC", output: MEME, amount: 50, slippageBps: 50, reasoning: "test" });
   const problems = await liquidateAll(m, null, "Cierre automático: test");

@@ -8402,7 +8402,7 @@ var init_db = __esm({
     }
     runMigrations(db, config2.dataDir);
     now = () => (/* @__PURE__ */ new Date()).toISOString();
-    CODE_VERSION = "0.56.0";
+    CODE_VERSION = "0.57.0";
     semver = (v) => v.split(".").map((n3) => Number.parseInt(n3, 10) || 0);
     newer = (a, b) => {
       const [x, y] = [semver(a), semver(b)];
@@ -44091,15 +44091,38 @@ async function quoteSwap(chainId, inputRef, outputRef, amount, slippageBps = 50,
   const q = await chain.quote({ input: input2, output: output2, amountIn: amount, slippageBps });
   for (const [k, v] of lastQuotes) if (Date.now() - v.at > QUOTE_TTL_MS) lastQuotes.delete(k);
   if (missionId != null) lastQuotes.set(quoteKey(missionId, chain.id, input2.address, output2.address), { amountIn: amount, amountOut: q.amountOut, at: Date.now() });
+  const buy = chain.isCash(input2.address) && !chain.isCash(output2.address) ? await buyCost(chain, input2, output2, amount, q.amountOut, slippageBps) : void 0;
   return {
     chain: chain.id,
     input: `${amount} ${input2.symbol} (${input2.address})`,
     output: `${q.amountOut} ${output2.symbol} (${output2.address})`,
     priceImpactPct: q.priceImpactPct,
     route: q.route,
+    ...buy ?? {},
     ...q.warnings.length ? { warnings: q.warnings } : {},
     note: "Sin contar los costes de red: se calculan al ejecutar, seg\xFAn tu monedero. Si ejecutas este mismo swap (con un importe hasta un 25 % distinto) en menos de 60 s, tu slippage se mide contra esta cotizaci\xF3n: si el precio se ha movido m\xE1s, el swap revierte y pagas solo la red."
   };
+}
+async function buyCost(chain, input2, output2, amount, amountOut, slippageBps) {
+  try {
+    const [sell, prices] = await Promise.all([
+      chain.quote({ input: output2, output: input2, amountIn: amountOut, slippageBps }),
+      chain.priceUsd([output2.address]).catch(() => ({}))
+    ]);
+    const roundTripPct = Number(((1 - sell.amountOut / amount) * 100).toFixed(1));
+    const published = prices[output2.address];
+    const vsPublishedPct = published ? Number(((amount / amountOut / published - 1) * 100).toFixed(1)) : void 0;
+    const high = roundTripPct >= 3 || (vsPublishedPct ?? 0) >= 5;
+    return {
+      roundTripNowPct: roundTripPct,
+      ...vsPublishedPct !== void 0 ? { paidVsPublishedPct: vsPublishedPct } : {},
+      ...high ? {
+        costWarning: `Comprar y vender ahora mismo costar\xEDa un ${roundTripPct} %` + (vsPublishedPct !== void 0 ? ` y pagar\xEDas un ${vsPublishedPct} % sobre el precio publicado` : "") + ": la toma de beneficio tiene que superar eso antes de dar nada. Calc\xFAlala sobre la cotizaci\xF3n de venta, no sobre lo pagado."
+      } : {}
+    };
+  } catch {
+    return void 0;
+  }
 }
 async function binanceMarketOrder(args) {
   assertSimulated(args.missionId, "operar en Binance");
@@ -45685,6 +45708,16 @@ var counterfactuals_exports = {};
 __export(counterfactuals_exports, {
   missionCounterfactuals: () => missionCounterfactuals
 });
+function untriggeredStopPct(p, entry) {
+  if (!entry) return void 0;
+  const rows = db.prepare(
+    `SELECT trigger_price FROM orders WHERE mission_id = ? AND venue = ? AND trigger_asset = ? AND condition = 'below' AND status != 'filled'
+         AND created_at >= ? AND created_at <= ?`
+  ).all(p.missionId, p.venue, p.asset, p.openedAt, p.closedAt ?? p.openedAt);
+  if (!rows.length) return void 0;
+  const highest = Math.max(...rows.map((r) => r.trigger_price));
+  return Number(((highest / entry - 1) * 100).toFixed(1));
+}
 async function candles(venue, token2, fromSec, toSec) {
   const net = NETWORK2[venue];
   if (!net) throw new Error("cadena sin datos de velas");
@@ -45764,6 +45797,15 @@ async function one(p) {
   } else if (!perp && out.lowWhileHeldPct !== void 0 && base2.actualPct !== null && base2.actualPct < out.lowWhileHeldPct - (roundTrip(p) + 2)) {
     out.unreliable = `la venta real (${base2.actualPct} %) qued\xF3 por debajo de lo m\xE1s bajo de las velas (${out.lowWhileHeldPct} %): las velas no recogieron el precio real`;
     notes.unshift("lectura poco fiable, ver unreliable");
+  } else if (!perp && out.highWhileHeldPct !== void 0 && base2.actualPct !== null && base2.actualPct > out.highWhileHeldPct + 2) {
+    out.unreliable = `la venta real (${base2.actualPct} %) qued\xF3 por encima de lo m\xE1s alto de las velas (${out.highWhileHeldPct} %): las velas no recogieron el precio real`;
+    notes.unshift("lectura poco fiable, ver unreliable");
+  } else {
+    const stop = untriggeredStopPct(p, entry);
+    if (!perp && stop !== void 0 && out.lowWhileHeldPct !== void 0 && out.lowWhileHeldPct < stop - 3) {
+      out.unreliable = `las velas bajan a ${out.lowWhileHeldPct} % pero el stop en ${stop} % no salt\xF3: no son el precio al que se vend\xEDa`;
+      notes.unshift("lectura poco fiable, ver unreliable");
+    }
   }
   out.reading = notes.join("; ") || "sin nada destacable";
   if (at30 !== void 0) cache3.set(p.id, out);
@@ -45786,6 +45828,7 @@ var NETWORK2, cache3, roundTrip, pct2, priceAt, MIN_MEASURABLE_SEC;
 var init_counterfactuals = __esm({
   "src/sim/counterfactuals.ts"() {
     "use strict";
+    init_db();
     init_http();
     init_positions();
     NETWORK2 = { solana: "solana", base: "base", bsc: "bsc" };

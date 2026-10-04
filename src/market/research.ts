@@ -238,25 +238,26 @@ export async function tokenReport(mint: string) {
         risks: (r.risks ?? []).map((x: any) => `${x.level}: ${x.name}${x.value ? ` (${x.value})` : ""}`),
       };
     }),
-    mint.endsWith("pump")
-      ? attempt("pumpfun", async () => {
-          const c = await fetchJson<any>(`https://frontend-api-v3.pump.fun/coins-v2/${mint}`);
-          return {
-            description: c.description,
-            twitter: c.twitter,
-            telegram: c.telegram,
-            website: c.website,
-            replies: c.reply_count,
-            participants: c.num_participants,
-            graduated: c.complete,
-            mcapUsd: n(c.usd_market_cap, 0),
-            athMcapUsd: n(c.ath_market_cap, 0),
-            securityVerdict: c.security_verdict,
-            createdMinutesAgo: ageMinutes(c.created_timestamp),
-            url: `https://pump.fun/coin/${mint}`,
-          };
-        })
-      : Promise.resolve(undefined),
+    attempt("pumpfun", async () => {
+      // coins-v2 vale para cualquier token de pump.fun, también los de la meta "agency" cuyo mint no acaba
+      // en "pump" (CLAUDIA, IDOL…). Para un token que no es de pump.fun devuelve error: se omite.
+      const c = await fetchJson<any>(`https://frontend-api-v3.pump.fun/coins-v2/${mint}`);
+      if (!c || !c.mint) throw new Error("sin datos en pump.fun");
+      return {
+        description: c.description,
+        twitter: c.twitter,
+        telegram: c.telegram,
+        website: c.website,
+        replies: c.reply_count,
+        participants: c.num_participants,
+        graduated: c.complete,
+        mcapUsd: n(c.usd_market_cap, 0),
+        athMcapUsd: n(c.ath_market_cap, 0),
+        securityVerdict: c.security_verdict,
+        createdMinutesAgo: ageMinutes(c.created_timestamp),
+        url: `https://pump.fun/coin/${mint}`,
+      };
+    }).then((r) => (r && typeof r === "object" && "error" in r ? undefined : r)),
   ]);
   const volumeCheck = volumeJupiterVsDex(jupiter as any, dexscreener as any);
   return { mint, jupiter, dexscreener, ...(volumeCheck ? { volumeCheck } : {}), rugcheck, ...(pumpfun ? { pumpfun } : {}) };

@@ -29,6 +29,9 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   // GeckoTerminal gratis: unas 30 peticiones por minuto. La usan a la vez el escaneo del trader y los
   // contrafactuales del revisor; sin turnos, el revisor se quedaba sin velas (HTTP 429).
   "api.geckoterminal.com": 2_100,
+  // pump.fun (web y analytics): sin límite publicado, se va despacio.
+  "frontend-api-v3.pump.fun": 1_200,
+  "advanced-api-v2.pump.fun": 1_500,
   // Binance limita por "peso" (6000 por minuto e IP); si se pasa, bloquea la IP (HTTP 418).
   "api.binance.com": 100,
 };

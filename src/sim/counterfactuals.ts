@@ -58,21 +58,148 @@ const roundTrip = (p: Pos) => {
 };
 const pct = (a: number, b: number, decimals = 1) => Number(((b / a - 1) * 100).toFixed(decimals));
 
+/** Campos de la curva de una posición que se guardan en su `research` para que las creencias puedan condicionar. */
+const PATH_FIELDS = ["marketMovePct", "bestWhileHeldPct", "worstWhileHeldPct", "highWhileHeldPct", "lowWhileHeldPct"] as const;
+
+/**
+ * Guarda en la posición los datos de su curva (pico, valle y movimiento), calculados al revisar. Así las
+ * creencias pueden condicionar sobre la gestión de la salida (p. ej. "cuando llegó a +X % y la dejé caer").
+ */
+function persistPathFeatures(p: Pos, cf: Counterfactual) {
+  const row = db.prepare("SELECT research FROM positions WHERE id = ?").get(p.id) as { research: string | null } | undefined;
+  if (!row) return;
+  const research = JSON.parse(row.research ?? "{}") as Record<string, unknown>;
+  let changed = false;
+  for (const k of PATH_FIELDS) {
+    const v = cf[k];
+    if (v !== undefined && research[k] !== v) {
+      research[k] = v;
+      changed = true;
+    }
+  }
+  if (changed) db.prepare("UPDATE positions SET research = ? WHERE id = ?").run(JSON.stringify(research), p.id);
+}
+
+/** El pool con más liquidez del token en GeckoTerminal (el primero de la lista puede ser pequeño o manipulado). */
+async function resolvePool(net: string, token: string): Promise<string> {
+  const pools = await fetchJson<{ data: Array<{ attributes: { address: string; reserve_in_usd?: string } }> }>(
+    `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${token}/pools?page=1`,
+    { ttlMs: 3_600_000 },
+  );
+  const pool = [...pools.data].sort((a, b) => Number(b.attributes.reserve_in_usd ?? 0) - Number(a.attributes.reserve_in_usd ?? 0))[0]?.attributes.address;
+  if (!pool) throw new Error("sin pool en GeckoTerminal");
+  return pool;
+}
+
 async function candles(venue: string, token: string, fromSec: number, toSec: number): Promise<Array<[number, number, number, number, number]>> {
   const net = NETWORK[venue];
   if (!net) throw new Error("cadena sin datos de velas");
-  const pools = await fetchJson<{ data: Array<{ attributes: { address: string; reserve_in_usd?: string } }> }>(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${token}/pools?page=1`, {
-    ttlMs: 3_600_000,
-  });
-  // El pool con más liquidez: el primero de la lista puede ser uno pequeño (o manipulado) que no es donde se opera.
-  const pool = [...pools.data].sort((a, b) => Number(b.attributes.reserve_in_usd ?? 0) - Number(a.attributes.reserve_in_usd ?? 0))[0]?.attributes.address;
-  if (!pool) throw new Error("sin pool en GeckoTerminal");
+  const pool = await resolvePool(net, token);
   const limit = Math.min(1000, Math.ceil((toSec - fromSec) / 60) + 3);
   const res = await fetchJson<{ data: { attributes: { ohlcv_list: Array<[number, number, number, number, number]> } } }>(
     `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${pool}/ohlcv/minute?aggregate=1&limit=${limit}&before_timestamp=${toSec}&currency=usd&token=${token}`,
     { ttlMs: 600_000 },
   );
   return [...res.data.attributes.ohlcv_list].sort((a, b) => a[0] - b[0]);
+}
+
+/** Precio del token a partir de sus operaciones en el pool, segundo a segundo: [segundos, precioUSD] ordenado. */
+async function tradesSeries(net: string, pool: string, token: string): Promise<Array<[number, number]>> {
+  const res = await fetchJson<{ data?: Array<{ attributes?: Record<string, unknown> }> }>(
+    `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${pool}/trades`,
+  );
+  const tokenKey = token.toLowerCase();
+  const out: Array<[number, number]> = [];
+  for (const t of res.data ?? []) {
+    const a = t.attributes ?? {};
+    const ts = typeof a.block_timestamp === "string" ? new Date(a.block_timestamp).getTime() / 1000 : NaN;
+    if (!Number.isFinite(ts)) continue;
+    // Precio del token en USD: si es el que se envía, price_from_in_usd; si es el que se recibe, price_to_in_usd.
+    const from = String(a.from_token_address ?? "").toLowerCase();
+    const price = from === tokenKey ? Number(a.price_from_in_usd) : Number(a.price_to_in_usd);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    out.push([ts, price]);
+  }
+  return out.sort((a, b) => a[0] - b[0]);
+}
+
+/** Último precio del token a `sec` (el último punto anterior o igual). */
+const seriesPriceAt = (s: Array<[number, number]>, sec: number): number | undefined => {
+  let p: number | undefined;
+  for (const [t, price] of s) {
+    if (t <= sec) p = price;
+    else break;
+  }
+  return p;
+};
+
+/** Precio del punto más cercano en el tiempo a `sec` (antes o después). */
+const seriesPriceNear = (s: Array<[number, number]>, sec: number): number | undefined => {
+  let best: number | undefined;
+  let bestDist = Infinity;
+  for (const [t, price] of s) {
+    const d = Math.abs(t - sec);
+    if (d < bestDist) {
+      bestDist = d;
+      best = price;
+    }
+  }
+  return best;
+};
+
+/**
+ * Contrafactual de una operación corta (< 2 min) con las operaciones reales del pool (segundo a segundo), en
+ * lugar de las velas de 1 min que no la miden. Devuelve null si no hay datos suficientes y hay que seguir con
+ * velas (y marcarla como poco fiable).
+ */
+async function fineFromTrades(p: Pos, open: number, close: number): Promise<Counterfactual | null> {
+  const net = NETWORK[p.venue];
+  if (!net) return null;
+  try {
+    const pool = await resolvePool(net, p.asset);
+    const series = await tradesSeries(net, pool, p.asset);
+    if (series.length < 2) return null;
+    const inWindow = series.filter(([t]) => t >= open && t <= close);
+    if (!inWindow.length) return null;
+    const entry = seriesPriceAt(series, open) ?? seriesPriceNear(series, open);
+    const exit = seriesPriceAt(series, close) ?? seriesPriceNear(series, close);
+    if (!entry || !exit || entry <= 0) return null;
+    const prices = inWindow.map(([, pr]) => pr);
+    const best = Math.max(...prices);
+    const worst = Math.min(...prices);
+    const now = Math.floor(Date.now() / 1000);
+    const at15 = close + 15 * 60 <= now ? (seriesPriceAt(series, close + 15 * 60) ?? seriesPriceNear(series, close + 15 * 60)) : undefined;
+    const at30 = close + 30 * 60 <= now ? (seriesPriceAt(series, close + 30 * 60) ?? seriesPriceNear(series, close + 30 * 60)) : undefined;
+    const pct = (a: number, b: number) => Number(((b / a - 1) * 100).toFixed(1));
+    const out: Counterfactual = {
+      positionId: p.id,
+      symbol: p.symbol,
+      actualPct: p.pnlPct ?? null,
+      marketMovePct: pct(entry, exit),
+      bestWhileHeldPct: pct(entry, best),
+      worstWhileHeldPct: pct(entry, worst),
+      highWhileHeldPct: pct(entry, best),
+      lowWhileHeldPct: pct(entry, worst),
+      ...(at15 !== undefined ? { ifHeld15Pct: pct(entry, at15) } : {}),
+      ...(at30 !== undefined ? { ifHeld30Pct: pct(entry, at30) } : {}),
+    };
+    const notes: string[] = [];
+    if (out.bestWhileHeldPct !== undefined && out.marketMovePct !== undefined && out.bestWhileHeldPct >= 3 && out.bestWhileHeldPct - out.marketMovePct >= 20) {
+      notes.push(`llegó a +${out.bestWhileHeldPct} % mientras la tenía y salió en ${out.marketMovePct} %: la salida dejó dinero en la mesa`);
+    }
+    if (out.ifHeld15Pct !== undefined && out.marketMovePct !== undefined && out.ifHeld15Pct > out.marketMovePct + 30) {
+      notes.push(`a los 15 min de vender iba ${out.ifHeld15Pct} %`);
+    }
+    if (out.bestWhileHeldPct !== undefined && out.bestWhileHeldPct < 3 && (p.pnlPct ?? 0) < 0) {
+      notes.push("nunca llegó a ir en positivo: el problema fue la entrada, no la salida");
+    }
+    if (out.highWhileHeldPct !== undefined && out.highWhileHeldPct >= 10) notes.push(`llegó a +${out.highWhileHeldPct} % (puede ser un pico no vendible)`);
+    out.reading = notes.join("; ") || `medido segundo a segundo con las operaciones del pool (${inWindow.length} en la ventana)`;
+    persistPathFeatures(p, out);
+    return out;
+  } catch {
+    return null; // sin datos finos: se sigue por velas de 1 min
+  }
 }
 
 /** Velas de 1 min del subyacente de un futuro en Binance (SOL, ETH, BNB…), en segundos como las de GeckoTerminal. */
@@ -112,6 +239,16 @@ async function one(p: Pos): Promise<Counterfactual> {
   const close = Math.floor(new Date(p.closedAt).getTime() / 1000);
   const now = Math.floor(Date.now() / 1000);
   const end = Math.min(now, close + 30 * 60);
+  const shortTrade = close - open < MIN_MEASURABLE_SEC;
+  // Operación de segundos: las velas de 1 min no la miden. Se intenta con las operaciones reales del pool
+  // (segundo a segundo); si no hay datos suficientes, se sigue con velas y se marca como poco fiable.
+  if (shortTrade && !perp) {
+    const fine = await fineFromTrades(p, open, close);
+    if (fine) {
+      if (fine.ifHeld30Pct !== undefined) cache.set(p.id, fine);
+      return fine;
+    }
+  }
   const raw = perp ? await perpCandles(perp[1]!, open - 120, end) : await candles(p.venue, p.asset, open - 120, end);
   // En un corto se invierten las velas (1/precio): así "subir" siempre es a favor y el resto no cambia.
   const cs = perp?.[2] === "corto" ? raw.map(([t, o, h, l, c]) => [t, 1 / o, 1 / l, 1 / h, 1 / c] as [number, number, number, number, number]) : raw;
@@ -121,7 +258,6 @@ async function one(p: Pos): Promise<Counterfactual> {
   // Cierres de los minutos terminados mientras la tenía, y máximos de los minutos que tocó.
   const held = cs.filter((c) => c[0] + 60 > open && c[0] + 60 <= close);
   const touched = cs.filter((c) => c[0] + 60 > open && c[0] <= close);
-  const shortTrade = close - open < MIN_MEASURABLE_SEC;
   const at15 = close + 15 * 60 <= now ? priceAt(cs, close + 15 * 60) : undefined;
   const at30 = close + 30 * 60 <= now ? priceAt(cs, close + 30 * 60) : undefined;
   const d = perp ? 2 : 1;
@@ -180,6 +316,7 @@ async function one(p: Pos): Promise<Counterfactual> {
     }
   }
   out.reading = notes.join("; ") || "sin nada destacable";
+  persistPathFeatures(p, out);
   if (at30 !== undefined) cache.set(p.id, out); // completa: ya no cambia
   return out;
 }

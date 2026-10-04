@@ -76,6 +76,21 @@ van uno detrás de otro (el revisor prepara, el trader trabaja y el revisor hace
 mitad), no hay navegador ni aviso al terminar, y el panel no muestra la transcripción del agente (sí todo lo demás).
 Tras actualizar el código, vuelve a ejecutar `npm run install:opencode`.
 
+## Usar en Antigravity
+
+También funciona en **Google Antigravity** (CLI o IDE), con el modelo que tengas seleccionado (Gemini, Claude, etc.):
+
+```bash
+npm install
+npm run install:antigravity
+```
+
+Copia el simulador a `~/.cryptoagent/antigravity`, añade el servidor MCP `cryptosim` a `~/.gemini/config/mcp_config.json` (sin tocar el resto de servidores), y genera las skills en `.agents/skills/` y `~/.gemini/config/skills/`, las reglas en `AGENTS.md` y los prompts de los subagentes `trader` y `reviewer`.
+
+Antigravity tiene su propia base de datos (`~/.cryptoagent/antigravity-data`) y su propio panel (http://localhost:4323), independientes de Claude Code y OpenCode para comparar cómo aprende cada modelo.
+
+Tras actualizar el código, vuelve a ejecutar `npm run install:antigravity`.
+
 ## Actualizaciones
 
 En marketplaces que no son de Anthropic la actualización automática viene desactivada. Para actualizar:

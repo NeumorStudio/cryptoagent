@@ -49,6 +49,11 @@ const NOT_TOOLS = new Set([
   "wake_on_move_pct",
   "belief_ids",
   "superseded_by",
+  "trailing_stop",
+  "trailing_tp",
+  "num_participants",
+  "security_verdict",
+  "auto_add",
 ]);
 
 const docs = [

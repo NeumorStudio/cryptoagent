@@ -2,8 +2,8 @@
 // llega al objetivo o se acaba el tiempo; entonces se cierran todas las posiciones a mercado.
 // Cada misión tiene su propia cartera, órdenes, diario y posiciones.
 import { db, logJournal, now } from "../db.js";
-import { CloseAborted, liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
-import { DEFAULT_ALLOCATION, type Allocation, type ChainId, type Holding } from "./types.js";
+import { adjust, CloseAborted, liquidateAll, planPortfolio, resetPortfolio, validateAllocation, valuation } from "./portfolio.js";
+import { DEFAULT_ALLOCATION, type Allocation, type ChainId, type Holding, type VenueId } from "./types.js";
 import { settleTransfers } from "./transfers.js";
 import { allChains, getVenue } from "./venues/index.js";
 
@@ -40,6 +40,8 @@ export interface Mission {
   open_target: number;
   /** 1: misión de control, sin memoria (como si fuera la primera): para medir si la memoria hace que juegue mejor. */
   memory_off: number;
+  /** 1: misión continua sin límite de tiempo (no expira por plazo). */
+  continuous?: number;
 }
 
 export interface MissionLimits {
@@ -120,12 +122,16 @@ function insertMission(args: {
   live?: { approval: "manual" | "auto"; limits: MissionLimits };
   closeOnTarget?: boolean;
   memoryOff?: boolean;
+  continuous?: boolean;
 }): number {
-  const deadline = new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
+  const isContinuous = !!args.continuous;
+  const deadline = isContinuous
+    ? new Date(Date.now() + 365 * 24 * 60 * 60_000).toISOString()
+    : new Date(Date.now() + args.durationMinutes * 60_000).toISOString();
   const id = Number(
     db
       .prepare(
-        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target, open_target, memory_off) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO missions (created_at, initial_usd, target_usd, deadline, instructions, allocation, benchmark, mode, approval, limits, close_on_target, open_target, memory_off, continuous) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         now(),
@@ -141,6 +147,7 @@ function insertMission(args: {
         args.closeOnTarget === false || args.targetUsd === null ? 0 : 1,
         args.targetUsd === null ? 1 : 0,
         args.memoryOff ? 1 : 0,
+        isContinuous ? 1 : 0,
       ).lastInsertRowid,
   );
   // En una misión real, los saldos son los de la cadena (holdings es su espejo).
@@ -151,7 +158,9 @@ function insertMission(args: {
     kind: "mission",
     summary:
       `${args.live ? "Misión REAL" : "Misión"} #${id} iniciada: ${args.targetUsd === null ? `${args.initialUsd.toFixed(2)} USD, sin objetivo (máximo rendimiento)` : `de ${args.initialUsd.toFixed(2)} USD a ${args.targetUsd.toFixed(2)} USD`} ` +
-      `en ${Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)} min (el reloj arranca cuando el agente empieza a trabajar)` +
+      (isContinuous
+        ? "en modo continuo (sin límite de tiempo)"
+        : `en ${Math.round((new Date(deadline).getTime() - Date.now()) / 60_000)} min (el reloj arranca cuando el agente empieza a trabajar)`) +
       (args.memoryOff ? ". MISIÓN DE CONTROL: el agente juega sin memoria, para medir si la memoria le ayuda" : ""),
   });
   return id;
@@ -174,9 +183,9 @@ export function isMemoryOff(missionId: number | null | undefined): boolean {
   return (db.prepare("SELECT memory_off FROM missions WHERE id = ?").get(missionId) as { memory_off: number } | undefined)?.memory_off === 1;
 }
 
-function validate(initialUsd: number, targetUsd: number | null, durationMinutes: number) {
+function validate(initialUsd: number, targetUsd: number | null, durationMinutes: number, continuous = false) {
   if (targetUsd !== null && !(targetUsd > initialUsd)) throw new Error("El objetivo debe ser mayor que el capital inicial");
-  if (!(durationMinutes > 0)) throw new Error("La duración debe ser positiva");
+  if (!continuous && !(durationMinutes > 0)) throw new Error("La duración debe ser positiva");
 }
 
 /** Crea una misión (cancela la anterior si seguía activa). */
@@ -187,9 +196,11 @@ export async function createMission(
   durationMinutes: number,
   instructions?: string,
   allocation: Allocation = DEFAULT_ALLOCATION,
-  opts: { closeOnTarget?: boolean; memory?: "auto" | "on" | "off" } = {},
+  opts: { closeOnTarget?: boolean; memory?: "auto" | "on" | "off"; continuous?: boolean } = {},
 ): Promise<Mission> {
-  validate(initialUsd, targetUsd, durationMinutes);
+  const isContinuous = !!opts.continuous;
+  const minutes = isContinuous ? (durationMinutes > 0 ? durationMinutes : 525600) : durationMinutes;
+  validate(initialUsd, targetUsd, minutes, isContinuous);
   const plan = validateAllocation(allocation);
   // Precio de los nativos de las cadenas con capital, para entregar la parte de gas.
   const prices: Partial<Record<ChainId, number>> = {};
@@ -204,7 +215,7 @@ export async function createMission(
   cancelActive();
   // Cada misión tiene su propia cartera, órdenes y notas: empieza de cero sin arrastrar nada de la anterior.
   return getMission(
-    insertMission({ initialUsd, targetUsd, durationMinutes, instructions, allocation: plan, holdings, closeOnTarget: opts.closeOnTarget, memoryOff: controlMission(opts.memory) }),
+    insertMission({ initialUsd, targetUsd, durationMinutes: minutes, instructions, allocation: plan, holdings, closeOnTarget: opts.closeOnTarget, memoryOff: controlMission(opts.memory), continuous: isContinuous }),
   )!;
 }
 
@@ -214,6 +225,46 @@ function cancelActive() {
   db.prepare("UPDATE missions SET status = 'cancelled', ended_at = ? WHERE id = ?").run(now(), previous.id);
   db.prepare("UPDATE orders SET status = 'cancelled', closed_at = ? WHERE status = 'open' AND mission_id = ?").run(now(), previous.id);
   logJournal({ missionId: previous.id, sessionId: null, kind: "mission", summary: `Misión #${previous.id} cancelada por el usuario al crear una nueva` });
+}
+
+/**
+ * Inyecta capital adicional en una misión activa (por ejemplo, para continuar aprendiendo en simulación
+ * sin reiniciar la misión ni empezar de cero).
+ */
+export async function injectCapital(
+  missionId: number,
+  amountUsd: number,
+  allocation?: Allocation,
+): Promise<{ missionId: number; injectedUsd: number; newInitialUsd: number; addedHoldings: Holding[] }> {
+  const mission = getMission(missionId);
+  if (!mission || mission.status !== "active") throw new Error("No hay ninguna misión activa para inyectar capital");
+  if (!(amountUsd > 0)) throw new Error("El importe a inyectar debe ser mayor que 0");
+
+  const plan = validateAllocation(allocation ?? (mission.allocation ? JSON.parse(mission.allocation) : DEFAULT_ALLOCATION));
+  const prices: Partial<Record<ChainId, number>> = {};
+  for (const venue of Object.keys(plan)) {
+    const v = getVenue(venue);
+    if (v.kind !== "chain") continue;
+    const price = (await v.priceUsd([v.native.address]))[v.native.address];
+    if (price) prices[v.id] = price;
+  }
+  const addedHoldings = planPortfolio(amountUsd, plan, prices);
+  for (const h of addedHoldings) {
+    adjust(missionId, h.venue as VenueId, h.asset, h.symbol, h.decimals, h.amount);
+  }
+  db.prepare("UPDATE missions SET initial_usd = initial_usd + ? WHERE id = ?").run(amountUsd, missionId);
+  logJournal({
+    missionId,
+    sessionId: null,
+    kind: "mission",
+    summary: `Inyección de capital: +${amountUsd.toFixed(2)} USD añadidos para continuar operando en simulación (nuevo capital base: ${(mission.initial_usd + amountUsd).toFixed(2)} USD)`,
+  });
+  return {
+    missionId,
+    injectedUsd: amountUsd,
+    newInitialUsd: mission.initial_usd + amountUsd,
+    addedHoldings,
+  };
 }
 
 /**
@@ -300,18 +351,20 @@ export async function missionStatus(missionId?: number) {
     };
   }
   const v = await valuation(mission.id);
+  const isContinuous = mission.continuous === 1;
   const left = remaining(mission.deadline);
-  const idle = idleCheck(mission, v, left.seconds);
+  const idle = isContinuous ? undefined : idleCheck(mission, v, left.seconds);
   return {
     ...(idle ? { idle } : {}),
     active: true,
     missionId: mission.id,
     initialUsd: mission.initial_usd,
+    ...(isContinuous ? { continuous: true } : {}),
     ...(mission.memory_off
       ? { control: "Misión de control: juegas sin memoria (sin creencias, howtos, briefing ni historial), como si fuera la primera. Sirve para medir si tu memoria te ayuda: juega lo mejor que sepas con lo que veas." }
       : {}),
     ...(mission.open_target
-      ? { goal: "SIN OBJETIVO: el usuario quiere el máximo rendimiento posible al final del plazo. No hay una meta que alcanzar ni cierre al llegar a nada: cuenta lo que valga la cartera al acabar." }
+      ? { goal: isContinuous ? "MODO CONTINUO: sin plazo forzoso ni meta rígida. Gestiona la cartera para conseguir beneficios sostenidos y mantener ganancias protegidas en USDC." : "SIN OBJETIVO: el usuario quiere el máximo rendimiento posible al final del plazo. No hay una meta que alcanzar ni cierre al llegar a nada: cuenta lo que valga la cartera al acabar." }
       : {
           targetUsd: mission.target_usd,
           missingUsd: Number((mission.target_usd - v.totalUsd).toFixed(2)),
@@ -320,15 +373,17 @@ export async function missionStatus(missionId?: number) {
     currentUsd: Number(v.totalUsd.toFixed(2)),
     currentUsdNote: "Valor de liquidación con cotizaciones de hasta 10 s: en tokens que se mueven rápido, vender puede dar algo distinto.",
     now: new Date().toISOString(),
-    deadline: mission.deadline,
-    timeLeft: left.text,
-    secondsLeft: left.seconds,
+    deadline: isContinuous ? "sin plazo fijo (modo continuo)" : mission.deadline,
+    timeLeft: isContinuous ? "indefinido (modo continuo)" : left.text,
+    secondsLeft: isContinuous ? null : left.seconds,
     resultPct: Number((((v.totalUsd - mission.initial_usd) / mission.initial_usd) * 100).toFixed(1)),
-    closesOnTarget: mission.open_target
-      ? "no hay objetivo: la misión dura hasta el plazo y al final se vende todo"
-      : mission.close_on_target !== 0
-        ? "sí: al llegar al objetivo se vende todo y la misión termina conseguida"
-        : "no: la misión dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o más. Llegar antes no la termina: qué hacer entonces lo decides tú",
+    closesOnTarget: isContinuous
+      ? "modo continuo: no se cierra automáticamente al objetivo ni por plazo. El agente opera y gestiona beneficios."
+      : mission.open_target
+        ? "no hay objetivo: la misión dura hasta el plazo y al final se vende todo"
+        : mission.close_on_target !== 0
+          ? "sí: al llegar al objetivo se vende todo y la misión termina conseguida"
+          : "no: la misión dura hasta el plazo. Al final se vende todo y cuenta como conseguida si vale el objetivo o más. Llegar antes no la termina: qué hacer entonces lo decides tú",
     userInstructions: mission.instructions ?? "ninguna: modo libre",
     ...(isLive(mission)
       ? {
@@ -442,7 +497,8 @@ const lastSync = new Map<number, number>();
 const endedByAgent = new Set<number>();
 
 async function checkOne(mission: Mission): Promise<string[]> {
-  const expired = remaining(mission.deadline).ms <= 0 || endedByAgent.has(mission.id);
+  const isContinuous = mission.continuous === 1;
+  const expired = (!isContinuous && remaining(mission.deadline).ms <= 0) || endedByAgent.has(mission.id);
   // Misión real: los saldos se leen de la cadena (como mucho cada 20 s por proceso).
   if (isLive(mission) && (expired || Date.now() - (lastSync.get(mission.id) ?? 0) > 20_000)) {
     const { syncHoldings } = await import("../live/sync.js");
@@ -476,8 +532,8 @@ async function checkOne(mission: Mission): Promise<string[]> {
   // Misión real: al llegar a la pérdida máxima se para sola (se vende a estables y se cierra).
   const floor = lossFloor(mission);
   const lossHit = !reached && floor !== null && v.reliable && value < floor;
-  // Sin fondos: lo que queda no da para operar (comisiones, renta de cuentas). La misión ha muerto.
-  const bust = !reached && v.reliable && value < bustFloor(mission);
+  // Sin fondos: lo que queda no da para operar (comisiones, renta de cuentas). La misión ha muerto (en continuas se mantiene activa para recapitalización).
+  const bust = !isContinuous && !reached && v.reliable && value < bustFloor(mission);
   if (!expired && !reached && !lossHit && !bust) return [];
 
   // Reclamo atómico: solo un proceso cierra la misión.

@@ -129,6 +129,13 @@ export const CONDITION_FIELDS = [
   "drawdownFromPeakPctAtEntry",
   "cashPctAtEntry",
   "riskingProfitsPct",
+  // Curva de la posición mientras se tenía (se guarda al revisar, con los contrafactuales): sirve para
+  // aprender de la gestión de la salida, no solo de la entrada. No frenan compras (son datos de salida).
+  "marketMovePct",
+  "bestWhileHeldPct",
+  "worstWhileHeldPct",
+  "highWhileHeldPct",
+  "lowWhileHeldPct",
 ] as const;
 export const CONDITION_OPS = ["<", "<=", ">", ">=", "=", "!="] as const;
 
@@ -172,6 +179,11 @@ const RESEARCH_FIELDS = new Set([
   "drawdownFromPeakPctAtEntry",
   "cashPctAtEntry",
   "riskingProfitsPct",
+  "marketMovePct",
+  "bestWhileHeldPct",
+  "worstWhileHeldPct",
+  "highWhileHeldPct",
+  "lowWhileHeldPct",
 ]);
 
 function fieldValue(p: Pos, f: Clause["f"]): unknown {
@@ -1134,7 +1146,7 @@ export function pendingReviews() {
 export function writeMissionReview(a: { missionId: number; whatWasTried: string; whatHappened: string; surprises?: string; nextTime: string }) {
   const m = getMission(a.missionId);
   if (!m) throw new Error(`No existe la misión #${a.missionId}`);
-  if (m.status === "active" || m.status === "closing") throw new Error(`La misión #${a.missionId} sigue activa: para revisarla a mitad usa review_checkpoint`);
+  if ((m.status === "active" || m.status === "closing") && m.continuous !== 1) throw new Error(`La misión #${a.missionId} sigue activa: para revisarla a mitad usa review_checkpoint`);
   db.prepare(
     `INSERT INTO mission_reviews (mission_id, created_at, what_was_tried, what_happened, surprises, next_time) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(mission_id) DO UPDATE SET created_at = excluded.created_at, origin = 'reviewer', what_was_tried = excluded.what_was_tried,

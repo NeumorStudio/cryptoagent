@@ -41,7 +41,7 @@ export function balance(missionId: number, venue: Venue, asset: string): number 
   return row?.amount ?? 0;
 }
 
-function adjust(missionId: number, venue: Venue, asset: string, symbol: string, decimals: number, delta: number) {
+export function adjust(missionId: number, venue: Venue, asset: string, symbol: string, decimals: number, delta: number) {
   const next = balance(missionId, venue, asset) + delta;
   if (next < -DUST) throw new Error(`Saldo insuficiente de ${symbol} en ${venue}`);
   db.prepare(
@@ -695,5 +695,67 @@ export async function valuation(missionId: number, recordSnapshot = false, opts:
           })),
         }
       : {}),
+  };
+}
+
+/**
+ * Estado de tesorería y colchón de beneficios en USDC:
+ * Muestra el capital base, el saldo en estables, y calcula cuánto beneficio debe preservarse
+ * en USDC para no sobre-arriesgar ganancias en activos especulativos.
+ */
+export async function treasuryStatus(missionId: number) {
+  const v = await valuation(missionId);
+  const holdings = getHoldings(missionId);
+  const mission = db.prepare("SELECT initial_usd, open_target, continuous FROM missions WHERE id = ?").get(missionId) as
+    | { initial_usd: number; open_target: number; continuous?: number }
+    | undefined;
+  const initialUsd = mission?.initial_usd ?? config.initialUsd;
+  const totalUsd = Number(v.totalUsd.toFixed(2));
+  const netPnlUsd = Number((v.totalUsd - initialUsd).toFixed(2));
+  const netPnlPct = Number((((v.totalUsd - initialUsd) / initialUsd) * 100).toFixed(1));
+
+  const isCash = (s: string) => /^(USDC|USDT|USDbC|FDUSD)$/i.test(s);
+  const lines = await Promise.all(holdings.map(async (h) => ({ ...h, ...(await getVenue(h.venue).liquidationValue(h)) })));
+  const stableBalanceUsd = Number(lines.filter((l) => isCash(l.symbol)).reduce((s, l) => s + l.usd, 0).toFixed(2));
+  const volatileBalanceUsd = Number(lines.filter((l) => !isCash(l.symbol)).reduce((s, l) => s + l.usd, 0).toFixed(2));
+
+  const accumulatedProfitUsd = Math.max(0, netPnlUsd);
+  const tradingRiskCapUsd = initialUsd;
+  const availableToRiskUsd = Number(Math.max(0, stableBalanceUsd - accumulatedProfitUsd).toFixed(2));
+
+  const recapitalizationNeeded = totalUsd < 5 || (mission?.continuous === 1 && totalUsd < initialUsd * 0.15);
+
+  let guidance = "";
+  if (recapitalizationNeeded) {
+    guidance =
+      `Capital crítico (${totalUsd} USD). Puedes solicitar una inyección de capital con request_capability o usar inject_capital ` +
+      `para recargar el saldo y continuar explorando sin cerrar la misión.`;
+  } else if (netPnlUsd > 0) {
+    guidance =
+      `Llevas +${netPnlUsd} USD de beneficio (+${netPnlPct} %). Regla de Preservación: mantén esos ${accumulatedProfitUsd} USD protegidos en USDC ` +
+      `como colchón de seguridad. No arriesgues más de tu capital base (${initialUsd} USD) en memecoins o posiciones especulativas. ` +
+      `Actualmente tienes ${volatileBalanceUsd} USD en activos volátiles y ${stableBalanceUsd} USD en estables.`;
+  } else if (netPnlUsd < 0) {
+    guidance =
+      `La cartera está en drawdown (-${Math.abs(netPnlUsd)} USD, ${netPnlPct} %). Tu capital actual es ${totalUsd} USD. ` +
+      `Opera con convicción y tamaño controlado para recuperar sin precipitarte.`;
+  } else {
+    guidance =
+      `Cartera en equilibrio inicial (${initialUsd} USD). A medida que consigas beneficios, déjalos en USDC como reserva líquida.`;
+  }
+
+  return {
+    initialCapitalUsd: initialUsd,
+    currentTotalUsd: totalUsd,
+    netPnlUsd,
+    netPnlPct,
+    stableBalanceUsd,
+    volatileBalanceUsd,
+    accumulatedProfitUsd,
+    tradingRiskCapUsd,
+    availableToRiskUsd,
+    isContinuous: mission?.continuous === 1,
+    recapitalizationNeeded,
+    guidance,
   };
 }

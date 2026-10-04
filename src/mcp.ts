@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { slimToolList } from "./tools/schema-slim.js";
 import { z } from "zod";
-import { checkOrders } from "./sim/orders.js";
+import { checkHotOrders, checkOrders } from "./sim/orders.js";
 import { openInBrowser, startDashboard, stopDashboard } from "./dashboard/server.js";
 import { checkMission, createLiveMission, createMission, getActiveMission, getLastMission, startMissionClock, stopMission, targetText } from "./sim/mission.js";
 import { liveWalletSnapshot } from "./live/sync.js";
@@ -106,7 +106,8 @@ server.registerTool(
       capital_usd: z.number().positive().optional().describe("Solo sim: capital ficticio"),
       target_usd: z.number().positive().optional().describe("Solo sim: objetivo en USD"),
       target_pct: z.number().positive().optional().describe("Objetivo como % de subida (obligatorio en live; en sim sustituye a target_usd)"),
-      duration_minutes: z.number().positive(),
+      duration_minutes: z.number().positive().optional().describe("Minutos de duración (opcional si continuous = true)"),
+      continuous: z.boolean().default(false).describe("true: misión continua sin límite de tiempo. No expira por plazo"),
       approval: z.enum(["manual", "auto"]).optional().describe("Solo live: manual = el usuario aprueba cada operación; auto = dentro de los límites"),
       max_trade_usd: z.number().positive().optional().describe("Solo live: máximo en USD por operación"),
       max_loss_pct: z.number().positive().max(100).optional().describe("Solo live: pérdida máxima de la misión en %; por debajo, solo se puede vender a estables"),
@@ -130,13 +131,18 @@ server.registerTool(
         .describe(`Reparto del capital en porcentaje por cadena o exchange (suma 100). Por defecto: ${JSON.stringify(DEFAULT_ALLOCATION)}`),
     },
   },
-  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target, open_target, memory }) => {
+  async ({ mode, capital_usd, target_usd, target_pct, duration_minutes, continuous, approval, max_trade_usd, max_loss_pct, replace, instructions, allocation, close_on_target, open_target, memory }) => {
     const active = getActiveMission();
     if (active && !replace) {
       return {
         ...text(`Ya hay una misión activa (#${active.id}, ${targetText(active)}, plazo ${active.deadline}). Pregunta al usuario si quiere reemplazarla.`),
         isError: true,
       };
+    }
+    const isContinuous = !!continuous;
+    const duration = duration_minutes ?? (isContinuous ? 525600 : 0);
+    if (!isContinuous && !duration_minutes) {
+      return { ...text("Falta duration_minutes (o indica continuous: true para una misión continua)"), isError: true };
     }
     try {
       if (mode === "live") {
@@ -155,7 +161,7 @@ server.registerTool(
           totalUsd: snap.totalUsd,
           byChain: snap.byChain,
           targetPct: open_target ? null : target_pct!,
-          durationMinutes: duration_minutes,
+          durationMinutes: duration,
           instructions,
           approval,
           limits: { maxTradeUsd: max_trade_usd, maxLossPct: max_loss_pct },
@@ -165,7 +171,7 @@ server.registerTool(
       if (!capital_usd) throw new Error("Falta capital_usd");
       const target = open_target ? null : (target_usd ?? (target_pct ? capital_usd * (1 + target_pct / 100) : undefined));
       if (target === undefined) throw new Error("Falta target_usd o target_pct (o open_target: true para una misión sin objetivo)");
-      const mission = await createMission(capital_usd, target, duration_minutes, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target, memory });
+      const mission = await createMission(capital_usd, target, duration, instructions, allocation ?? DEFAULT_ALLOCATION, { closeOnTarget: close_on_target, memory, continuous: isContinuous });
       return text(JSON.stringify(mission));
     } catch (err) {
       return { ...text(`Error: ${(err as Error).message}`), isError: true };
@@ -395,16 +401,36 @@ let orderTick = 0;
 let checkingOrders = false;
 setInterval(async () => {
   if (supersededBy() || !holdsTickLease() || checkingOrders) return;
+  // Con el carril rápido activo, este tick se ocupa solo de las órdenes de precio y de tiempo: las trailing
+  // las mira el carril de ~1 s.
+  const where = config.enableFastMonitor ? "AND o.condition NOT IN ('time', 'trailing_stop', 'trailing_tp')" : "AND o.condition != 'time'";
   const open = db
-    .prepare("SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' AND o.condition != 'time' AND m.status = 'active' LIMIT 1")
+    .prepare(`SELECT 1 FROM orders o JOIN missions m ON m.id = o.mission_id WHERE o.status = 'open' ${where} AND m.status = 'active' LIMIT 1`)
     .get();
   if (!open) return;
   checkingOrders = true;
   try {
-    await checkOrders({ nearOnly: orderTick++ % 3 !== 0 });
+    await checkOrders({ nearOnly: orderTick++ % 3 !== 0, skipTrailing: config.enableFastMonitor });
   } catch (err) {
     console.error(`Error revisando órdenes: ${(err as Error).message}`);
   } finally {
     checkingOrders = false;
   }
 }, 5_000);
+
+// Carril rápido del monitor (Fase 2): mira las órdenes trailing cada ~1 s para reaccionar al segundo. Respeta
+// el presupuesto de cotizaciones por tick (no se come el de Jupiter) y solo actúa si está activado.
+if (config.enableFastMonitor) {
+  let hotChecking = false;
+  setInterval(async () => {
+    if (supersededBy() || !holdsTickLease() || hotChecking) return;
+    hotChecking = true;
+    try {
+      await checkHotOrders({ maxQuotes: config.fastMonitorQuotesPerTick });
+    } catch (err) {
+      console.error(`Error en el carril rápido: ${(err as Error).message}`);
+    } finally {
+      hotChecking = false;
+    }
+  }, config.monitorFastSeconds * 1000);
+}

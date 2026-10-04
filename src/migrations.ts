@@ -279,6 +279,33 @@ export const MIGRATIONS: Migration[] = [
       db.exec("ALTER TABLE scan_seen ADD COLUMN deadline_price_usd REAL");
     },
   },
+  {
+    version: 19,
+    description: "Órdenes trailing (stop y take-profit con seguimiento): el máximo de la posición se guarda en la orden",
+    up: (db) => {
+      db.exec("ALTER TABLE orders ADD COLUMN trail_peak REAL");
+    },
+  },
+  {
+    version: 20,
+    description: "Modo continuo (sin plazo forzoso) y tabla de smart wallets para rastreo de billeteras rentables",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE missions ADD COLUMN continuous INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS smart_wallets (
+          address TEXT PRIMARY KEY,
+          label TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          win_rate REAL,
+          avg_trade_usd REAL,
+          notes TEXT,
+          last_seen_at TEXT,
+          active INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_smart_wallets_active ON smart_wallets (active);
+      `);
+    },
+  },
 ];
 
 /**

@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { db, logActivity, logJournal, now } from "../db.js";
 import { fetchText } from "../market/http.js";
+import { tradeTape } from "../market/tape.js";
+import { pumpHolders, pumpFeed } from "../market/pump.js";
+import * as smartWallets from "../market/smart-wallets.js";
 import { CHAINS, VENUES, type ChainId, type Features } from "../sim/types.js";
 import { getChain } from "../sim/venues/index.js";
 import type { TokenRef } from "../sim/venues/types.js";
@@ -14,6 +17,7 @@ import * as transfers from "../sim/transfers.js";
 import { estimateTokenLaunch } from "../sim/launch.js";
 import { checkBuyAgainstMemory } from "../sim/guard.js";
 import { asset } from "../paths.js";
+import { config } from "../config.js";
 import { json, tool, type ToolCtx, type ToolOutput } from "./define.js";
 import { toText } from "./format.js";
 import { readTrend, recordFeatures, recordRead, recordScan } from "../sim/market-state.js";
@@ -560,6 +564,145 @@ export const SIM_TOOLS = [
     },
   }),
   tool({
+    name: "trade_tape",
+    kind: "research",
+    deliversNews: true,
+    researchTarget: (i) => i.token,
+    description:
+      "Últimas operaciones (compras y ventas) de un token, una a una: hora, lado, tamaño en USD, monedero y firma. " +
+      "Sirve para ver quién y cuánto está entrando o saliendo de un token al entrar o al seguirlo (no es el agregado de " +
+      "scan_market, sino la cinta). Fuente: GeckoTerminal. Incluye un resumen del flujo de los últimos 5 minutos (compras/ventas " +
+      "y neto en USD). Un token que aún está en la curva de pump.fun (sin pool DEX) no tiene cinta por esta vía: lo avisa.",
+    schema: z.object({
+      chain: chainParam,
+      token: z.string().describe("Dirección del token (mint en Solana, 0x… en Base o BNB Chain)"),
+      limit: z.number().int().min(1).max(50).default(25).describe("Cuántas operaciones mostrar (de la más reciente hacia atrás)"),
+    }),
+    run: async ({ chain, token, limit }, ctx) => {
+      const c = getChain(chain);
+      const resolved = await c.resolveToken(token.trim()).catch(() => null);
+      if (!resolved) throw new Error(`Token no encontrado en ${chain}: ${token}`);
+      return json(await tradeTape(chain, resolved.address, limit));
+    },
+  }),
+  tool({
+    name: "pump_holders",
+    kind: "research",
+    role: "trader",
+    researchTarget: (i) => i.token,
+    description:
+      "Top holders de un token de pump.fun, con sus flags de riesgo: quién es el dev (y si aún conserva), cuántos " +
+      "snipers (compraron en el lanzamiento) y cuántos bundlers (agruparon la compra). Es una señal de granja coordinada " +
+      "distinta de los agregados de token_report (topHoldersPct). Fuente: la misma API que usa la web de pump.fun.",
+    schema: z.object({
+      token: z.string().describe("Mint del token (Solana), o un alias"),
+    }),
+    run: async ({ token }) => {
+      const resolved = await getChain("solana").resolveToken(token.trim()).catch(() => null);
+      if (!resolved) throw new Error(`Token no encontrado en Solana: ${token}`);
+      return json(await pumpHolders(resolved.address));
+    },
+  }),
+  tool({
+    name: "pump_feed",
+    kind: "research",
+    role: "trader",
+    description:
+      "Feed social de pump.fun: el leaderboard de traders con más ganancia y los 'callouts' (comentarios y monedas que se " +
+      "están shilleando ahora). No hay API pública para esto: se renderiza la web con un navegador headless. Es señal de " +
+      "sentimiento, no de seguridad. Tarda unos segundos.",
+    schema: z.object({}),
+    run: async () => json(await pumpFeed()),
+  }),
+  tool({
+    name: "smart_wallets",
+    kind: "research",
+    role: "both",
+    description:
+      "Lista de seguimiento de Smart Wallets (billeteras de traders minoristas inteligentes en Solana). " +
+      "Permite ver la lista activa (action: 'list'), añadir una billetera (action: 'add', con address, label y opcionalmente notes/win_rate/avg_trade_usd) " +
+      "o retirarla (action: 'remove', con address).",
+    schema: z.object({
+      action: z.enum(["list", "add", "remove"]).default("list").describe("Acción a realizar: list (ver lista), add (añadir) o remove (quitar)"),
+      address: z.string().optional().describe("Dirección de la billetera en Solana (obligatorio para add y remove)"),
+      label: z.string().optional().describe("Nombre o etiqueta descriptiva (para add)"),
+      notes: z.string().optional().describe("Notas sobre su estrategia o comportamiento (opcional, para add)"),
+      win_rate: z.number().optional().describe("Porcentaje de acierto estimado (opcional)"),
+      avg_trade_usd: z.number().optional().describe("Tamaño habitual de operación en USD (opcional)"),
+    }),
+    run: async ({ action, address, label, notes, win_rate, avg_trade_usd }) => {
+      if (action === "list") {
+        return json(smartWallets.listSmartWallets());
+      }
+      if (action === "add") {
+        if (!address || !label) throw new Error("Para añadir una Smart Wallet se requiere address y label");
+        return json(smartWallets.addSmartWallet({ address, label, notes, winRate: win_rate, avgTradeUsd: avg_trade_usd }));
+      }
+      if (action === "remove") {
+        if (!address) throw new Error("Para quitar una Smart Wallet se requiere address");
+        return json({ removed: smartWallets.removeSmartWallet(address) });
+      }
+      return json({ error: "Acción no reconocida" });
+    },
+  }),
+  tool({
+    name: "discover_smart_buyers",
+    kind: "research",
+    role: "both",
+    researchTarget: (i) => i.token,
+    description:
+      "Inspecciona los primeros compradores o compradores recientes de un token en Solana para descubrir smart wallets minoristas " +
+      "(descartando al dev, granjas de bundlers y ballenas > 1.000 $). Devuelve monederos candidatos con su puntuación de entrada y ganancia. " +
+      "Con auto_add = true, guarda automáticamente los mejores candidatos en tu lista de seguimiento.",
+    schema: z.object({
+      token: z.string().describe("Mint del token en Solana"),
+      chain: chainParam.default("solana"),
+      auto_add: z.boolean().default(false).describe("true: añade automáticamente los mejores candidatos (score >= 70) a la lista de seguimiento"),
+    }),
+    run: async ({ token, chain, auto_add }) => {
+      const c = getChain(chain);
+      const resolved = await c.resolveToken(token.trim()).catch(() => null);
+      if (!resolved) throw new Error(`Token no encontrado en ${chain}: ${token}`);
+      return json(await smartWallets.discoverSmartBuyers(resolved.address, chain, auto_add));
+    },
+  }),
+  tool({
+    name: "smart_money_activity",
+    kind: "research",
+    role: "both",
+    deliversNews: true,
+    description:
+      "Escanea la actividad reciente de las smart wallets en tu lista de seguimiento. Detecta si han operado recientemente " +
+      "y lanza una ALERTA DE CONFLUENCIA si 2 o más carteras de la lista blanca han comprado el mismo token.",
+    schema: z.object({
+      chain: chainParam.default("solana"),
+    }),
+    run: async ({ chain }) => json(await smartWallets.scanSmartActivity(chain)),
+  }),
+  tool({
+    name: "treasury_status",
+    kind: "misc",
+    role: "both",
+    description:
+      "Estado de tesorería y colchón de beneficios en USDC: compara el capital inicial con el valor actual, desglosa el saldo en estables " +
+      "(USDC/USDT) frente a activos volátiles, e indica qué parte del beneficio debe mantenerse protegida en estables como reserva líquida " +
+      "para no sobre-arriesgar ganancias en memecoins especulativas.",
+    schema: z.object({}),
+    run: async (_i, ctx) => json(await sim.treasuryStatus(mid(ctx))),
+  }),
+  tool({
+    name: "inject_capital",
+    kind: "misc",
+    role: "both",
+    description:
+      "Inyecta capital adicional en la misión activa para continuar aprendiendo y operando sin tener que cerrarla ni empezar en una misión nueva. " +
+      "Por defecto inyecta 45 USD respetando el reparto inicial de la misión.",
+    schema: z.object({
+      amount_usd: z.number().positive().default(45).describe("Importe en USD a inyectar (por defecto 45)"),
+    }),
+    run: async ({ amount_usd }, ctx) => json(await mission.injectCapital(mid(ctx), amount_usd)),
+  }),
+  tool({
     name: "strategy_fit",
     kind: "research",
     role: "both",
@@ -634,7 +777,7 @@ export const SIM_TOOLS = [
       "pedir portfolio ni mission_status después). El tiempo también pasa mientras investigas u operas.",
     schema: z.object({
       minutes: z.number().min(1).max(MAX_WAIT_MINUTES),
-      wake_on_move_pct: z.number().min(3).max(100).default(15).describe("Vuelve antes si una posición sube o baja este % desde que empezaste a esperar"),
+      wake_on_move_pct: z.number().min(0.5).max(100).default(15).describe("Vuelve antes si una posición sube o baja este % desde que empezaste a esperar (por debajo de 1, solo si el token es muy volátil)"),
     }),
     run: async ({ minutes, wake_on_move_pct }, ctx) => {
       const m = mid(ctx);
@@ -987,13 +1130,18 @@ export const SIM_TOOLS = [
       "El saldo no se bloquea: si al dispararse no hay saldo suficiente, la orden falla. Con sell_all vende todo el saldo que tengas en ese momento. " +
       "Con condition: time se ejecuta dentro de in_minutes pase lo que pase con el precio (sin trigger_asset ni trigger_price): sirve para cumplir tu plan " +
       "(\"si a los 3 min no ha saltado la toma de beneficio, vendo\") aunque no estés pendiente. Cuando ya no te queda nada de un token (lo vendes a mano o salta otra orden), sus órdenes que venden " +
-      "todo el saldo, de precio y de tiempo, se cancelan solas en ese momento (lo verás en ordersCancelled). Las demás, cancélalas tú.",
+      "todo el saldo, de precio y de tiempo, se cancelan solas en ese momento (lo verás en ordersCancelled). Las demás, cancélalas tú. " +
+      "Con condition trailing_stop, la orden vende el token cuando cae trail_pct % desde el máximo que alcance la posición (el máximo se guarda en la orden y sobrevive a reinicios). " +
+      "Con trailing_tp, además no empieza a seguir hasta que el precio sube activate_at_pct % sobre el precio actual; a partir de ahí se comporta como un trailing stop. " +
+      "El precio que se vigila es el de vender de verdad (la cotización de vender tu saldo), no el de pantalla.",
     schema: z.object({
       chain: chainParam,
       trigger_asset: z.string().optional().describe(`Dirección del token cuyo precio se vigila, o un alias (${TOKEN_ALIASES}). No en las de tiempo`),
-      condition: z.enum(["above", "below", "time"]),
-      trigger_price: z.number().positive().optional().describe("Precio en USD. No en las de tiempo"),
+      condition: z.enum(["above", "below", "time", "trailing_stop", "trailing_tp"]),
+      trigger_price: z.number().positive().optional().describe("Precio en USD. No en las de tiempo ni en las trailing"),
       in_minutes: z.number().positive().optional().describe("Solo con condition: time. Dentro de cuántos minutos se ejecuta"),
+      trail_pct: z.number().positive().max(90).optional().describe("Solo trailing_stop/trailing_tp: % de caída desde el máximo de la posición que dispara la venta (p. ej. 8)"),
+      activate_at_pct: z.number().positive().optional().describe("Solo trailing_tp: % de subida sobre el precio actual a partir del que la orden empieza a seguir (p. ej. 30)"),
       input: z.string(),
       output: z.string(),
       amount: z.number().positive().optional().describe("Cantidad del token de entrada"),
@@ -1004,6 +1152,10 @@ export const SIM_TOOLS = [
     }),
     run: async (i, ctx) => {
       if (!i.sell_all && i.amount === undefined) throw new Error("Indica amount o sell_all");
+      const trailing = i.condition === "trailing_stop" || i.condition === "trailing_tp";
+      if (trailing && !config.enableTrailingOrders) {
+        throw new Error("Las órdenes trailing están desactivadas en esta instalación (pon ENABLE_TRAILING_ORDERS=true para activarlas).");
+      }
       await checkBuyAgainstMemory({ chain: i.chain, output: i.output, overrides: i.thesis.overrides, risksChecked: i.thesis.risks_checked, missionId: mid(ctx), input: i.input, amount: i.amount });
       return json(
         await orders.placeOrder({
@@ -1014,7 +1166,14 @@ export const SIM_TOOLS = [
           condition: i.condition,
           triggerPrice: i.trigger_price,
           inMinutes: i.in_minutes,
-          action: { input: i.input, output: i.output, amount: i.amount ?? 0, sellAll: i.sell_all || undefined, slippageBps: i.slippage_bps },
+          action: {
+            input: i.input,
+            output: i.output,
+            amount: i.amount ?? 0,
+            sellAll: i.sell_all || undefined,
+            slippageBps: i.slippage_bps,
+            ...(trailing ? { trail: { pct: i.trail_pct ?? 0, ...(i.activate_at_pct !== undefined ? { activateAtPct: i.activate_at_pct } : {}) } } : {}),
+          },
           expiresHours: i.expires_hours,
           reasoning: formatThesis(i.thesis),
         }),

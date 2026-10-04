@@ -132,6 +132,9 @@ de GoPlus). Para cualquier otra consulta, usa estas APIs con `http_get`. Todas d
 - En directo ahora: `https://frontend-api-v3.pump.fun/coins/currently-live?limit=50&offset=0&includeNsfw=false`
 - Campos útiles: `mint`, `name`, `symbol`, `created_timestamp` (ms), `usd_market_cap`, `ath_market_cap`,
   `complete` (true = graduado), `real_sol_reserves` (lamports en la curva), `reply_count`, `last_trade_timestamp`, `creator`.
+- Ficha de un token (también si su mint no acaba en "pump", como los de la meta "agency"): `https://frontend-api-v3.pump.fun/coins-v2/<mint>` → `description`, `twitter`, `telegram`, `website`, `reply_count`, `num_participants`, `complete`, `usd_market_cap`, `ath_market_cap`, `security_verdict`, `created_timestamp`, `creator`. (`token_report` ya la consulta para todo token de Solana.)
+- Top holders con flags de riesgo: `https://advanced-api-v2.pump.fun/coins/top-holders/<mint>` → lista `topHolders` con `address`, `amount`, `isDev`, `isSniper`, `isBundler`. La herramienta `pump_holders` la resume (dev, snipers, bundlers). Sin clave.
+- El feed social (leaderboard de traders y "callouts" con comentarios) solo está en la web `https://pump.fun/`, renderizado por JS: no hay API pública que lo sirva (el endpoint `advanced-api-v2.pump.fun/callouts` devuelve 530). Para leerlo hay que usar el **navegador**: abre pump.fun, cierra el diálogo de bienvenida y el aviso de cookies, y lee el texto de la página (el leaderboard está arriba y el feed en la pestaña "Llamados"). `http_get` no lo trae.
 
 **Jupiter** (datos de tokens de Solana)
 - Recientes: `https://lite-api.jup.ag/tokens/v2/recent`

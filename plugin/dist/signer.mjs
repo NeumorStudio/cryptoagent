@@ -38798,6 +38798,13 @@ var init_config = __esm({
       maxStepsPerSession: num("MAX_STEPS_PER_SESSION", 80),
       loopPauseMinutes: num("LOOP_PAUSE_MINUTES", 30),
       watchIntervalSeconds: num("WATCH_INTERVAL_SECONDS", 60),
+      // Fase 1: órdenes trailing (stop y take-profit con seguimiento). Apagadas por defecto hasta validarlas.
+      enableTrailingOrders: process.env.ENABLE_TRAILING_ORDERS === "true",
+      // Fase 2: carril rápido del monitor. Reacciona al segundo a las órdenes trailing de la posición recién
+      // abierta, con un presupuesto de cotizaciones por tick para no comerse el de Jupiter (1 req/s compartido).
+      enableFastMonitor: process.env.ENABLE_FAST_MONITOR === "true",
+      monitorFastSeconds: num("MONITOR_FAST_SECONDS", 1),
+      fastMonitorQuotesPerTick: num("FAST_MONITOR_QUOTES_PER_TICK", 1),
       browserHeadful: process.env.BROWSER_HEADFUL === "true",
       // DATA_DIR permite usar otra base de datos (p. ej. para pruebas) sin tocar la simulación principal.
       dataDir: resolveDataDir()
@@ -39304,6 +39311,33 @@ var init_migrations = __esm({
         up: (db2) => {
           db2.exec("ALTER TABLE scan_seen ADD COLUMN deadline_price_usd REAL");
         }
+      },
+      {
+        version: 19,
+        description: "\xD3rdenes trailing (stop y take-profit con seguimiento): el m\xE1ximo de la posici\xF3n se guarda en la orden",
+        up: (db2) => {
+          db2.exec("ALTER TABLE orders ADD COLUMN trail_peak REAL");
+        }
+      },
+      {
+        version: 20,
+        description: "Modo continuo (sin plazo forzoso) y tabla de smart wallets para rastreo de billeteras rentables",
+        up: (db2) => {
+          db2.exec(`
+        ALTER TABLE missions ADD COLUMN continuous INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS smart_wallets (
+          address TEXT PRIMARY KEY,
+          label TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          win_rate REAL,
+          avg_trade_usd REAL,
+          notes TEXT,
+          last_seen_at TEXT,
+          active INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_smart_wallets_active ON smart_wallets (active);
+      `);
+        }
       }
     ];
     MAX_BACKUPS = 10;
@@ -39665,6 +39699,9 @@ var init_http = __esm({
       // GeckoTerminal gratis: unas 30 peticiones por minuto. La usan a la vez el escaneo del trader y los
       // contrafactuales del revisor; sin turnos, el revisor se quedaba sin velas (HTTP 429).
       "api.geckoterminal.com": 2100,
+      // pump.fun (web y analytics): sin límite publicado, se va despacio.
+      "frontend-api-v3.pump.fun": 1200,
+      "advanced-api-v2.pump.fun": 1500,
       // Binance limita por "peso" (6000 por minuto e IP); si se pasa, bloquea la IP (HTTP 418).
       "api.binance.com": 100
     };
@@ -40589,8 +40626,9 @@ async function tokenReport(mint) {
         risks: (r.risks ?? []).map((x) => `${x.level}: ${x.name}${x.value ? ` (${x.value})` : ""}`)
       };
     }),
-    mint.endsWith("pump") ? attempt("pumpfun", async () => {
+    attempt("pumpfun", async () => {
       const c = await fetchJson(`https://frontend-api-v3.pump.fun/coins-v2/${mint}`);
+      if (!c || !c.mint) throw new Error("sin datos en pump.fun");
       return {
         description: c.description,
         twitter: c.twitter,
@@ -40605,7 +40643,7 @@ async function tokenReport(mint) {
         createdMinutesAgo: ageMinutes2(c.created_timestamp),
         url: `https://pump.fun/coin/${mint}`
       };
-    }) : Promise.resolve(void 0)
+    }).then((r) => r && typeof r === "object" && "error" in r ? void 0 : r)
   ]);
   const volumeCheck = volumeJupiterVsDex(jupiter, dexscreener);
   return { mint, jupiter, dexscreener, ...volumeCheck ? { volumeCheck } : {}, rugcheck, ...pumpfun ? { pumpfun } : {} };

@@ -60,7 +60,7 @@ export async function statusReport(missionId?: number): Promise<string> {
     }
     const orders = listOrders(m.id, "open");
     if (orders.length) {
-      lines.push(`Órdenes abiertas: ${orders.map((o: any) => (o.condition === "time" ? `#${o.id} a las ${hhmm(o.executes_at)}` : `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "≥" : "≤"} ${o.trigger_price}`)).join(" · ")}`);
+      lines.push(`Órdenes abiertas: ${orders.map((o: any) => (o.condition === "time" ? `#${o.id} a las ${hhmm(o.executes_at)}` : o.condition === "trailing_stop" || o.condition === "trailing_tp" ? `#${o.id} ${o.condition === "trailing_stop" ? "trailing stop" : "trailing take-profit"} ${o.trail_pct} %${o.activate_at_pct !== undefined ? ` (se arma al +${o.activate_at_pct} %)` : ""}` : `#${o.id} si ${o.trigger_label} ${o.condition === "above" ? "≥" : "≤"} ${o.trigger_price}`)).join(" · ")}`);
     }
   }
 
